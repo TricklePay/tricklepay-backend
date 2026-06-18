@@ -18,7 +18,8 @@
   "dependencies": {
     "@prisma/client": "^6.2.1",
     "@stellar/stellar-sdk": "^13.1.0",
-    "fastify": "^5.2.1"
+    "fastify": "^5.2.1",
+    "pino": "^9.6.0"
   },
   "devDependencies": {
     "prisma": "^6.2.1",
