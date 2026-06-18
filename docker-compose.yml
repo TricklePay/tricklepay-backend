@@ -1,0 +1,36 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: tricklepay
+      POSTGRES_PASSWORD: tricklepay
+      POSTGRES_DB: tricklepay
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tricklepay"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://tricklepay:tricklepay@postgres:5432/tricklepay
+      NETWORK: testnet
+      STREAM_CONTRACT_ID: ${STREAM_CONTRACT_ID}
+      PORT: 3000
+      HOST: 0.0.0.0
+    ports:
+      - "3000:3000"
+    # Sync the schema, then start. db push is idempotent and needs no migration
+    # files, which keeps the MVP setup simple.
+    command: sh -c "npx prisma db push --skip-generate && node dist/index.js"
+
+volumes:
+  pgdata:
