@@ -1,0 +1,42 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// A stream as last seen on-chain. Amounts are 128-bit integers in the
+// contract, so they are stored as wide fixed-point decimals; times are Unix
+// seconds. `updatedLedger` records the ledger of the most recent event applied
+// to this row, which makes event replay idempotent.
+model Stream {
+  streamId      BigInt   @id
+  sender        String
+  recipient     String
+  token         String
+  totalAmount   Decimal  @db.Decimal(40, 0)
+  withdrawn     Decimal  @default(0) @db.Decimal(40, 0)
+  startTime     BigInt
+  endTime       BigInt
+  cliffTime     BigInt
+  cancelled     Boolean  @default(false)
+  createdLedger Int
+  updatedLedger Int
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([sender])
+  @@index([recipient])
+}
+
+// Single-row bookkeeping for the indexer: the last ledger fully processed and
+// the RPC paging cursor to resume from. Keyed by a fixed string so there is
+// exactly one row per indexed stream.
+model IndexerState {
+  id         String   @id
+  lastLedger Int      @default(0)
+  cursor     String?
+  updatedAt  DateTime @updatedAt
+}
