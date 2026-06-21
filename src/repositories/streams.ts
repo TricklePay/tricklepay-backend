@@ -61,15 +61,24 @@ export async function getStream(streamId: bigint): Promise<Stream | null> {
   return prisma.stream.findUnique({ where: { streamId } });
 }
 
-export async function listStreams(filter: StreamFilter): Promise<Stream[]> {
+function whereFromFilter(filter: StreamFilter): Prisma.StreamWhereInput {
   const where: Prisma.StreamWhereInput = {};
   if (filter.sender) where.sender = filter.sender;
   if (filter.recipient) where.recipient = filter.recipient;
+  return where;
+}
 
+export async function listStreams(filter: StreamFilter): Promise<Stream[]> {
   return prisma.stream.findMany({
-    where,
+    where: whereFromFilter(filter),
     orderBy: { streamId: "desc" },
     take: filter.limit ?? 50,
     skip: filter.offset ?? 0,
   });
+}
+
+// Total number of streams matching the filter, ignoring limit and offset, so a
+// client can tell how many pages exist.
+export async function countStreams(filter: StreamFilter): Promise<number> {
+  return prisma.stream.count({ where: whereFromFilter(filter) });
 }

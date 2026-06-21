@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import type { Stream } from "@prisma/client";
-import { getStream, listStreams } from "../repositories/streams.js";
+import { countStreams, getStream, listStreams } from "../repositories/streams.js";
 import { vestedAmount, withdrawableAmount } from "../lib/vesting.js";
 
 const MAX_LIMIT = 100;
@@ -67,14 +67,16 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
       offset?: string;
     };
 
-    const streams = await listStreams({
-      sender: query.sender,
-      recipient: query.recipient,
-      limit: parseLimit(query.limit),
-      offset: parseOffset(query.offset),
-    });
+    const limit = parseLimit(query.limit);
+    const offset = parseOffset(query.offset);
+    const filter = { sender: query.sender, recipient: query.recipient };
 
-    return { streams: streams.map(toView) };
+    const [streams, total] = await Promise.all([
+      listStreams({ ...filter, limit, offset }),
+      countStreams(filter),
+    ]);
+
+    return { streams: streams.map(toView), total, limit, offset };
   });
 
   app.get("/streams/:id", async (request, reply) => {
