@@ -28,6 +28,9 @@ function toView(stream: Stream) {
   const withdrawn = BigInt(stream.withdrawn.toString());
   const vested = vestedAmount(total, stream.startTime, stream.endTime, stream.cliffTime, now);
   const withdrawable = withdrawableAmount(vested, withdrawn);
+  const locked = total - vested;
+  // Vesting progress in basis points, from 0 to 10000, matching the contract.
+  const progress = total === 0n ? 10000 : Number((vested * 10000n) / total);
 
   return {
     id: stream.streamId.toString(),
@@ -38,6 +41,8 @@ function toView(stream: Stream) {
     withdrawn: withdrawn.toString(),
     vested: vested.toString(),
     withdrawable: withdrawable.toString(),
+    locked: locked.toString(),
+    progress,
     startTime: stream.startTime.toString(),
     endTime: stream.endTime.toString(),
     cliffTime: stream.cliffTime.toString(),
