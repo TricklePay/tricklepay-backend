@@ -68,13 +68,18 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
     const query = request.query as {
       sender?: string;
       recipient?: string;
+      token?: string;
       limit?: string;
       offset?: string;
     };
 
     const limit = parseLimit(query.limit);
     const offset = parseOffset(query.offset);
-    const filter = { sender: query.sender, recipient: query.recipient };
+    const filter = {
+      sender: query.sender,
+      recipient: query.recipient,
+      token: query.token,
+    };
 
     const [streams, total] = await Promise.all([
       listStreams({ ...filter, limit, offset }),

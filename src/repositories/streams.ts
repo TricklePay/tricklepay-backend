@@ -18,6 +18,7 @@ export interface UpsertStreamInput {
 export interface StreamFilter {
   sender?: string;
   recipient?: string;
+  token?: string;
   limit?: number;
   offset?: number;
 }
@@ -65,6 +66,7 @@ function whereFromFilter(filter: StreamFilter): Prisma.StreamWhereInput {
   const where: Prisma.StreamWhereInput = {};
   if (filter.sender) where.sender = filter.sender;
   if (filter.recipient) where.recipient = filter.recipient;
+  if (filter.token) where.token = filter.token;
   return where;
 }
 
