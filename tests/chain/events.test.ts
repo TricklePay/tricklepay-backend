@@ -44,6 +44,9 @@ describe("decodeEvent", () => {
       recipient: RECIPIENT,
       token: TOKEN,
       totalAmount: 10_000_000n * UNIT,
+      startTime: 1735689600n,
+      endTime: 1767225600n,
+      cliffTime: 1740000000n,
       ledger: 56123890,
       txHash: "9f2a1c7b04e5d3806a1f9c2be47d05138af6e29c0b7143d5e8a26f90cd41b7e3",
     });
@@ -89,15 +92,40 @@ describe("decodeEvent", () => {
     });
   });
 
-  it("ignores payload fields it does not store", () => {
-    // The created payload also carries start_time, end_time and cliff_time; the
-    // indexer reads those from `get_stream` instead, so they must not leak into
-    // the decoded event.
+  it("round-trips the schedule fields from the created payload", () => {
+    // The contract carries start_time, end_time and cliff_time on Created so an
+    // indexer can record the whole schedule from the event alone. They are u64
+    // seconds; the bigint literals below also pin the type, since toMatchObject
+    // compares primitives strictly and 1735689600n !== 1735689600.
+    expect(decodeEvent(page.events[CREATED])).toMatchObject({
+      startTime: 1735689600n, // 2025-01-01T00:00:00Z
+      endTime: 1767225600n, // 2026-01-01T00:00:00Z
+      cliffTime: 1740000000n, // between start and end
+    });
+  });
+
+  it("round-trips a schedule with no cliff and a zero start", () => {
+    // cliff_time == start_time is how the contract expresses "no cliff"; the
+    // decoder must pass the value through rather than normalise it away.
+    expect(decodeEvent(page.events[CREATED_AT_LIMITS])).toMatchObject({
+      startTime: 0n,
+      endTime: 1n,
+      cliffTime: 0n,
+    });
+  });
+
+  it("decodes the created payload into exactly the declared fields", () => {
+    // The whole Created payload is now consumed — topics for the addresses, the
+    // value map for the id, token, amount and schedule. Nothing is dropped, and
+    // nothing extra leaks in.
     expect(Object.keys(decodeEvent(page.events[CREATED]) ?? {}).sort()).toEqual([
+      "cliffTime",
+      "endTime",
       "kind",
       "ledger",
       "recipient",
       "sender",
+      "startTime",
       "streamId",
       "token",
       "totalAmount",
