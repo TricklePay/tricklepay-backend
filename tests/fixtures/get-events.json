@@ -1,0 +1,102 @@
+{
+  "jsonrpc": "2.0",
+  "id": 8675309,
+  "result": {
+    "events": [
+      {
+        "type": "contract",
+        "ledger": 56123890,
+        "ledgerClosedAt": "2025-11-03T09:14:22Z",
+        "contractId": "CDMB62RVYAXJJNYYH7K442SHSAJIXTZ6K7JANGSMQF2T7MHCTVSK75SW",
+        "id": "0241050272077447168-0000000001",
+        "pagingToken": "0241050272077447168-0000000001",
+        "topic": [
+          "AAAADwAAAAdjcmVhdGVkAA==",
+          "AAAAEgAAAAAAAAAAO5kROA7+mIugqJAOsc/kTzZvfb6Ua+0HckD39iTfFcU=",
+          "AAAAEgAAAAAAAAAAYvwdC9CRsrYcDdZWNGsqaNfTR8bywsjubQRHAlb8Bfc="
+        ],
+        "value": "AAAAEQAAAAEAAAAGAAAADwAAAApjbGlmZl90aW1lAAAAAAAFAAAAAGe2SwAAAAAPAAAACGVuZF90aW1lAAAABQAAAABpVbkAAAAADwAAAAJpZAAAAAAABQAAAAAAAAAqAAAADwAAAApzdGFydF90aW1lAAAAAAAFAAAAAGd0hYAAAAAPAAAABXRva2VuAAAAAAAAEgAAAAFLLR58mg82WB3LR+KQWvhjEHK+TZw/pQgeayfUDPkTpQAAAA8AAAAMdG90YWxfYW1vdW50AAAACgAAAAAAAAAAAABa8xB6QAA=",
+        "inSuccessfulContractCall": true,
+        "txHash": "9f2a1c7b04e5d3806a1f9c2be47d05138af6e29c0b7143d5e8a26f90cd41b7e3"
+      },
+      {
+        "type": "contract",
+        "ledger": 56201455,
+        "ledgerClosedAt": "2025-11-08T17:41:05Z",
+        "contractId": "CDMB62RVYAXJJNYYH7K442SHSAJIXTZ6K7JANGSMQF2T7MHCTVSK75SW",
+        "id": "0241383411213664256-0000000001",
+        "pagingToken": "0241383411213664256-0000000001",
+        "topic": [
+          "AAAADwAAAAl3aXRoZHJhd24AAAA=",
+          "AAAAEgAAAAAAAAAAYvwdC9CRsrYcDdZWNGsqaNfTR8bywsjubQRHAlb8Bfc="
+        ],
+        "value": "AAAAEQAAAAEAAAACAAAADwAAAAZhbW91bnQAAAAAAAoAAAAAAAAAAAAAFrzEHpAAAAAADwAAAAJpZAAAAAAABQAAAAAAAAAq",
+        "inSuccessfulContractCall": true,
+        "txHash": "3c8e05f19a2d47b6c0138e5fa9270db461c39e8057af2d16b904ce7328fd51a0"
+      },
+      {
+        "type": "contract",
+        "ledger": 56290012,
+        "ledgerClosedAt": "2025-11-14T02:58:37Z",
+        "contractId": "CDMB62RVYAXJJNYYH7K442SHSAJIXTZ6K7JANGSMQF2T7MHCTVSK75SW",
+        "id": "0241763760638787584-0000000001",
+        "pagingToken": "0241763760638787584-0000000001",
+        "topic": [
+          "AAAADwAAAAljYW5jZWxsZWQAAAA=",
+          "AAAAEgAAAAAAAAAAO5kROA7+mIugqJAOsc/kTzZvfb6Ua+0HckD39iTfFcU="
+        ],
+        "value": "AAAAEQAAAAEAAAADAAAADwAAAAJpZAAAAAAABQAAAAAAAAAqAAAADwAAABByZWNpcGllbnRfYW1vdW50AAAACgAAAAAAAAAAAAAbSOtX4AAAAAAPAAAADXNlbmRlcl9yZWZ1bmQAAAAAAAAKAAAAAAAAAAAAAD+qJSJgAA==",
+        "inSuccessfulContractCall": true,
+        "txHash": "c1740b3e96af52d80e2b6c19d7503fa8412e7bd6039c85af17e2604db3958cf1"
+      },
+      {
+        "type": "contract",
+        "ledger": 56290013,
+        "ledgerClosedAt": "2025-11-14T02:58:42Z",
+        "contractId": "CDMB62RVYAXJJNYYH7K442SHSAJIXTZ6K7JANGSMQF2T7MHCTVSK75SW",
+        "id": "0241763764928512000-0000000001",
+        "pagingToken": "0241763764928512000-0000000001",
+        "topic": [
+          "AAAADwAAAAdjcmVhdGVkAA==",
+          "AAAAEgAAAAEvmnwE4bNY1kcK6RLF2PMGGkvpfSA4bPUZSn3gs8YoFQ==",
+          "AAAAEgAAAAAAAAAAYvwdC9CRsrYcDdZWNGsqaNfTR8bywsjubQRHAlb8Bfc="
+        ],
+        "value": "AAAAEQAAAAEAAAAGAAAADwAAAApjbGlmZl90aW1lAAAAAAAFAAAAAAAAAAAAAAAPAAAACGVuZF90aW1lAAAABQAAAAAAAAABAAAADwAAAAJpZAAAAAAABf//////////AAAADwAAAApzdGFydF90aW1lAAAAAAAFAAAAAAAAAAAAAAAPAAAABXRva2VuAAAAAAAAEgAAAAFLLR58mg82WB3LR+KQWvhjEHK+TZw/pQgeayfUDPkTpQAAAA8AAAAMdG90YWxfYW1vdW50AAAACn////////////////////8=",
+        "inSuccessfulContractCall": true,
+        "txHash": "6b09d24fa1c78e35029bd6417ca8f0e592314db7086fa5cd2e13947b6a0cf825"
+      },
+      {
+        "type": "contract",
+        "ledger": 56290014,
+        "ledgerClosedAt": "2025-11-14T02:58:47Z",
+        "contractId": "CDMB62RVYAXJJNYYH7K442SHSAJIXTZ6K7JANGSMQF2T7MHCTVSK75SW",
+        "id": "0241763769225576448-0000000001",
+        "pagingToken": "0241763769225576448-0000000001",
+        "topic": [
+          "AAAADwAAAAZwYXVzZWQAAA==",
+          "AAAAEgAAAAAAAAAAkbPYTO1f31Jco/3JnYPPxQ3O5X2u5g2LESvL8v4CguQ="
+        ],
+        "value": "AAAABQAAAABpFprn",
+        "inSuccessfulContractCall": true,
+        "txHash": "e5387a0c9d16b42fa70e39c85d201fb6473ac09e158d6b2f04713ca9856de203"
+      },
+      {
+        "type": "contract",
+        "ledger": 56290015,
+        "ledgerClosedAt": "2025-11-14T02:58:52Z",
+        "contractId": "CDMB62RVYAXJJNYYH7K442SHSAJIXTZ6K7JANGSMQF2T7MHCTVSK75SW",
+        "id": "0241763773516349440-0000000001",
+        "pagingToken": "0241763773516349440-0000000001",
+        "topic": [
+          "AAAADwAAABFzY2hlZHVsZV9leHRlbmRlZAAAAA==",
+          "AAAAEgAAAAAAAAAAO5kROA7+mIugqJAOsc/kTzZvfb6Ua+0HckD39iTfFcU="
+        ],
+        "value": "AAAAEQAAAAEAAAACAAAADwAAAAJpZAAAAAAABQAAAAAAAAAqAAAADwAAAAxuZXdfZW5kX3RpbWUAAAAFAAAAAGs27IA=",
+        "inSuccessfulContractCall": true,
+        "txHash": "0a4f18cd73e690b25a8c31df04629e7b18d5a0c396f24817be05d3c72a941f6e"
+      }
+    ],
+    "latestLedger": 56290021,
+    "cursor": "0241763773516349440-0000000001"
+  }
+}

@@ -67,8 +67,10 @@ npm run test:watch
 ```
 
 They cover the parts of the service that have to agree with something outside
-it, starting with `lib/vesting.ts`, which mirrors the contract's vesting math
-case for case. `npm run typecheck` covers the tests as well as `src`.
+it: `lib/vesting.ts`, which mirrors the contract's vesting math case for case,
+and `chain/events.ts`, which is decoded from a stored Soroban RPC `getEvents`
+response — see [tests/fixtures/](tests/fixtures/README.md) for its provenance
+and how to refresh it. `npm run typecheck` covers the tests as well as `src`.
 
 ## Configuration
 
@@ -103,6 +105,10 @@ src/
 tests/
   lib/
     vesting.test.ts   vesting math, mirroring the contract's Rust tests
+  chain/
+    events.test.ts    event decoding against captured RPC payloads
+  fixtures/
+    get-events.json   a Soroban RPC getEvents response, as the RPC returns it
 prisma/
   schema.prisma       Stream and IndexerState models
 ```
