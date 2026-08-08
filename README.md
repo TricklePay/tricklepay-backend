@@ -22,6 +22,15 @@ Reading full state rather than trusting event payloads keeps the mirror correct
 regardless of which event fired, and makes re-processing an event harmless — so
 the indexer can crash and resume without corrupting data.
 
+`Created` is the one event that carries a whole stream: sender, recipient,
+token, total, and the `startTime`/`endTime`/`cliffTime` schedule, with
+`withdrawn` at zero and `cancelled` false by definition. All of it is decoded
+(see `chain/events.ts`), so that event could stand in for the `get_stream` read.
+The indexer still makes the read, deliberately: a replayed `Created` would
+otherwise reset `withdrawn` to zero on a stream that has since paid out.
+Skipping it would first need the upsert to become create-only or guarded on
+`updatedLedger`.
+
 The API reads only from Postgres. On every request it recomputes vested and
 withdrawable amounts with the same linear formula the contract uses, against the
 current clock, so the numbers are always current without a chain round-trip.

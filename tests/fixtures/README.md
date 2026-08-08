@@ -19,10 +19,10 @@ The page holds six events, in this order:
 
 | # | Event | Covers |
 | --- | --- | --- |
-| 0 | `created` | the full mapping, account addresses on both sides |
+| 0 | `created` | the full mapping, account addresses on both sides, a cliff between start and end |
 | 1 | `withdrawn` | delta-only payload |
 | 2 | `cancelled` | both sides of the split |
-| 3 | `created` | max `u64` id, max `i128` total, a contract address as sender |
+| 3 | `created` | max `u64` id, max `i128` total, a contract address as sender, and a schedule with no cliff |
 | 4 | `paused` | an unknown event whose value is a bare scalar, not a map |
 | 5 | `schedule_extended` | an unknown event whose value is a map |
 
