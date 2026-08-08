@@ -1,0 +1,12 @@
+// Type checking configuration for the test suite. The base `tsconfig.json`
+// only covers `src` because it also drives the build; this one widens the
+// program to the tests and the Vitest config without emitting anything.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["src/**/*", "tests/**/*", "vitest.config.ts"],
+  "exclude": ["node_modules", "dist"]
+}

@@ -56,6 +56,20 @@ STREAM_CONTRACT_ID=C... docker compose up
 
 The API listens on `http://localhost:3000`.
 
+## Testing
+
+Unit tests run under [Vitest](https://vitest.dev) and need neither a database
+nor a network connection:
+
+```bash
+npm test          # single run, as CI does it
+npm run test:watch
+```
+
+They cover the parts of the service that have to agree with something outside
+it, starting with `lib/vesting.ts`, which mirrors the contract's vesting math
+case for case. `npm run typecheck` covers the tests as well as `src`.
+
 ## Configuration
 
 All configuration is read from the environment; see `.env.example` for the full
@@ -86,6 +100,9 @@ src/
     vesting.ts        linear vesting math, mirroring the contract
   routes/
     streams.ts        GET /streams and GET /streams/:id
+tests/
+  lib/
+    vesting.test.ts   vesting math, mirroring the contract's Rust tests
 prisma/
   schema.prisma       Stream and IndexerState models
 ```
