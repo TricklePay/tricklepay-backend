@@ -17,6 +17,12 @@ export interface CreatedEvent extends BaseEvent {
   recipient: string;
   token: string;
   totalAmount: bigint;
+  // The vesting schedule, in Unix seconds. The contract puts these in the
+  // payload so a consumer can record the whole stream from the event alone,
+  // without a follow-up `get_stream` call.
+  startTime: bigint;
+  endTime: bigint;
+  cliffTime: bigint;
 }
 
 export interface WithdrawnEvent extends BaseEvent {
@@ -58,6 +64,9 @@ export function decodeEvent(event: rpc.Api.EventResponse): StreamEvent | null {
         streamId: data.id as bigint,
         token: data.token as string,
         totalAmount: data.total_amount as bigint,
+        startTime: data.start_time as bigint,
+        endTime: data.end_time as bigint,
+        cliffTime: data.cliff_time as bigint,
       };
     case "withdrawn":
       return {

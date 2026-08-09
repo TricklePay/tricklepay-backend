@@ -22,6 +22,15 @@ Reading full state rather than trusting event payloads keeps the mirror correct
 regardless of which event fired, and makes re-processing an event harmless — so
 the indexer can crash and resume without corrupting data.
 
+`Created` is the one event that carries a whole stream: sender, recipient,
+token, total, and the `startTime`/`endTime`/`cliffTime` schedule, with
+`withdrawn` at zero and `cancelled` false by definition. All of it is decoded
+(see `chain/events.ts`), so that event could stand in for the `get_stream` read.
+The indexer still makes the read, deliberately: a replayed `Created` would
+otherwise reset `withdrawn` to zero on a stream that has since paid out.
+Skipping it would first need the upsert to become create-only or guarded on
+`updatedLedger`.
+
 The API reads only from Postgres. On every request it recomputes vested and
 withdrawable amounts with the same linear formula the contract uses, against the
 current clock, so the numbers are always current without a chain round-trip.
@@ -56,6 +65,22 @@ STREAM_CONTRACT_ID=C... docker compose up
 
 The API listens on `http://localhost:3000`.
 
+## Testing
+
+Unit tests run under [Vitest](https://vitest.dev) and need neither a database
+nor a network connection:
+
+```bash
+npm test          # single run, as CI does it
+npm run test:watch
+```
+
+They cover the parts of the service that have to agree with something outside
+it: `lib/vesting.ts`, which mirrors the contract's vesting math case for case,
+and `chain/events.ts`, which is decoded from a stored Soroban RPC `getEvents`
+response — see [tests/fixtures/](tests/fixtures/README.md) for its provenance
+and how to refresh it. `npm run typecheck` covers the tests as well as `src`.
+
 ## Configuration
 
 All configuration is read from the environment; see `.env.example` for the full
@@ -86,6 +111,13 @@ src/
     vesting.ts        linear vesting math, mirroring the contract
   routes/
     streams.ts        GET /streams and GET /streams/:id
+tests/
+  lib/
+    vesting.test.ts   vesting math, mirroring the contract's Rust tests
+  chain/
+    events.test.ts    event decoding against captured RPC payloads
+  fixtures/
+    get-events.json   a Soroban RPC getEvents response, as the RPC returns it
 prisma/
   schema.prisma       Stream and IndexerState models
 ```
