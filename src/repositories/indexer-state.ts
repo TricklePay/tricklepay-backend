@@ -4,21 +4,39 @@ import { prisma } from "../db.js";
 // one row of bookkeeping.
 const STATE_ID = "stream";
 
-export interface IndexerCursor {
+// Where the indexer has got to. `lastLedger` is its own progress and
+// `chainLedger` the chain's, kept apart so the gap between them is visible;
+// `cursor` is the RPC paging token to resume from.
+export interface IndexerPosition {
   lastLedger: number;
+  chainLedger: number;
   cursor: string | null;
 }
 
-export async function getIndexerCursor(): Promise<IndexerCursor | null> {
-  const state = await prisma.indexerState.findUnique({ where: { id: STATE_ID } });
-  if (!state) return null;
-  return { lastLedger: state.lastLedger, cursor: state.cursor };
+export interface StoredPosition extends IndexerPosition {
+  // When the position was last written. A position that has stopped moving is
+  // indistinguishable from a quiet contract without this.
+  updatedAt: Date;
 }
 
-export async function saveIndexerCursor(lastLedger: number, cursor: string | null): Promise<void> {
+export async function getIndexerPosition(): Promise<StoredPosition | null> {
+  const state = await prisma.indexerState.findUnique({ where: { id: STATE_ID } });
+  if (!state) return null;
+  return {
+    lastLedger: state.lastLedger,
+    chainLedger: state.chainLedger,
+    cursor: state.cursor,
+    updatedAt: state.updatedAt,
+  };
+}
+
+// Writes the position reached by a completed poll. `lastLedger` is expected to
+// move forward only; the caller carries it across ticks and raises it as events
+// are applied, so a poll that applied nothing leaves it where it was.
+export async function saveIndexerPosition(position: IndexerPosition): Promise<void> {
   await prisma.indexerState.upsert({
     where: { id: STATE_ID },
-    create: { id: STATE_ID, lastLedger, cursor },
-    update: { lastLedger, cursor },
+    create: { id: STATE_ID, ...position },
+    update: position,
   });
 }
