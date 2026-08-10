@@ -37,12 +37,19 @@ model Stream {
   @@index([recipient])
 }
 
-// Single-row bookkeeping for the indexer: the last ledger fully processed and
-// the RPC paging cursor to resume from. Keyed by a fixed string so there is
-// exactly one row per indexed stream.
+// Single-row bookkeeping for the indexer: how far it has actually got, how far
+// the chain had got when it last looked, and the RPC paging cursor to resume
+// from. Keyed by a fixed string so there is exactly one row per indexed stream.
 model IndexerState {
-  id         String   @id
-  lastLedger Int      @default(0)
-  cursor     String?
-  updatedAt  DateTime @updatedAt
+  id          String   @id
+  // The indexer's own position: the highest ledger whose events it has applied.
+  // During a backfill this sits well behind the chain, which is the point of
+  // storing it — it is the figure that can show lag.
+  lastLedger  Int      @default(0)
+  // The chain's latest ledger as of the last poll, so lag is the difference
+  // between the two rather than something an operator has to ask the network
+  // for. Stale if the indexer has stopped, which `updatedAt` reveals.
+  chainLedger Int      @default(0)
+  cursor      String?
+  updatedAt   DateTime @updatedAt
 }
