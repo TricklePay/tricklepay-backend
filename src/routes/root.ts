@@ -10,6 +10,7 @@ export async function rootRoutes(app: FastifyInstance): Promise<void> {
       endpoints: [
         { method: "GET", path: "/health", description: "Liveness check" },
         { method: "GET", path: "/status", description: "Indexer progress" },
+        { method: "GET", path: "/metrics", description: "Prometheus metrics" },
         {
           method: "GET",
           path: "/streams",
