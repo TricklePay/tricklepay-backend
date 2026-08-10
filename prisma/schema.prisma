@@ -10,7 +10,8 @@ datasource db {
 // A stream as last seen on-chain. Amounts are 128-bit integers in the
 // contract, so they are stored as wide fixed-point decimals; times are Unix
 // seconds. `updatedLedger` records the ledger of the most recent event applied
-// to this row, which makes event replay idempotent.
+// to this row, and `lastEventId` the event itself, which makes event replay
+// idempotent.
 model Stream {
   streamId      BigInt   @id
   sender        String
@@ -24,6 +25,11 @@ model Stream {
   cancelled     Boolean  @default(false)
   createdLedger Int
   updatedLedger Int
+  // Id of the last event applied to this row, in the RPC's `TOID-index` form.
+  // Ledger alone is too coarse to tell two events in one ledger apart, so this
+  // is what a delta update guards on. Null only on rows stored before this
+  // column existed, which a delta update treats as "nothing applied yet".
+  lastEventId   String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 

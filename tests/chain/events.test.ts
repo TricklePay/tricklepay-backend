@@ -47,7 +47,9 @@ describe("decodeEvent", () => {
       startTime: 1735689600n,
       endTime: 1767225600n,
       cliffTime: 1740000000n,
+      id: "0241050272077447168-0000000001",
       ledger: 56123890,
+      closedAt: 1762161262n, // 2025-11-03T09:14:22Z
       txHash: "9f2a1c7b04e5d3806a1f9c2be47d05138af6e29c0b7143d5e8a26f90cd41b7e3",
     });
   });
@@ -58,7 +60,9 @@ describe("decodeEvent", () => {
       streamId: 42n,
       recipient: RECIPIENT,
       amount: 2_500_000n * UNIT,
+      id: "0241383411213664256-0000000001",
       ledger: 56201455,
+      closedAt: 1762623665n, // 2025-11-08T17:41:05Z
       txHash: "3c8e05f19a2d47b6c0138e5fa9270db461c39e8057af2d16b904ce7328fd51a0",
     });
   });
@@ -70,7 +74,9 @@ describe("decodeEvent", () => {
       sender: SENDER,
       recipientAmount: 3_000_000n * UNIT,
       senderRefund: 7_000_000n * UNIT,
+      id: "0241763760638787584-0000000001",
       ledger: 56290012,
+      closedAt: 1763089117n, // 2025-11-14T02:58:37Z
       txHash: "c1740b3e96af52d80e2b6c19d7503fa8412e7bd6039c85af17e2604db3958cf1",
     });
   });
@@ -120,7 +126,9 @@ describe("decodeEvent", () => {
     // nothing extra leaks in.
     expect(Object.keys(decodeEvent(page.events[CREATED]) ?? {}).sort()).toEqual([
       "cliffTime",
+      "closedAt",
       "endTime",
+      "id",
       "kind",
       "ledger",
       "recipient",
@@ -130,6 +138,28 @@ describe("decodeEvent", () => {
       "token",
       "totalAmount",
       "txHash",
+    ]);
+  });
+
+  it("carries the event id and close time from the RPC envelope", () => {
+    // The envelope fields, not the payload: the id makes applying an event
+    // idempotent across a replayed page, and the close time is the clock the
+    // contract saw, which a cancellation freezes the stream at.
+    const decoded = page.events.map(decodeEvent).filter((event) => event !== null);
+
+    expect(decoded.map((event) => event.id)).toEqual([
+      "0241050272077447168-0000000001",
+      "0241383411213664256-0000000001",
+      "0241763760638787584-0000000001",
+      "0241763764928512000-0000000001",
+    ]);
+    // Fixed width and zero padded, so sorting them as strings is chain order.
+    expect([...decoded].map((event) => event.id).sort()).toEqual(decoded.map((event) => event.id));
+    expect(decoded.map((event) => event.closedAt)).toEqual([
+      1762161262n,
+      1762623665n,
+      1763089117n,
+      1763089122n,
     ]);
   });
 

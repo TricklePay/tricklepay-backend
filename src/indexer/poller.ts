@@ -69,9 +69,14 @@ export class Poller {
     for (const raw of page.events) {
       const event = decodeEvent(raw);
       if (!event) continue;
-      await applyEvent(this.server, this.config.contractId, this.config.networkPassphrase, event);
+      const outcome = await applyEvent(
+        this.server,
+        this.config.contractId,
+        this.config.networkPassphrase,
+        event,
+      );
       this.log.info(
-        { kind: event.kind, streamId: event.streamId.toString(), ledger: event.ledger },
+        { kind: event.kind, streamId: event.streamId.toString(), ledger: event.ledger, outcome },
         "applied event",
       );
     }

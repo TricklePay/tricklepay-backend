@@ -6,7 +6,17 @@ import type { rpc } from "@stellar/stellar-sdk";
 // topics are the indexed fields, and the value is a map of the rest.
 
 interface BaseEvent {
+  // The RPC's globally unique event id, `TOID-index`. Both halves are zero
+  // padded to a fixed width, so comparing ids as strings orders them the way
+  // the chain emitted them. Recording the last id applied to a stream is what
+  // lets a delta event (a withdrawal amount) be applied exactly once even when
+  // a page of events is replayed.
+  id: string;
   ledger: number;
+  // Ledger close time in Unix seconds: the clock the contract itself saw when
+  // it emitted this event, and so the timestamp it wrote into any state the
+  // event describes.
+  closedAt: bigint;
   txHash: string;
 }
 
@@ -42,6 +52,12 @@ export interface CancelledEvent extends BaseEvent {
 
 export type StreamEvent = CreatedEvent | WithdrawnEvent | CancelledEvent;
 
+// The RPC reports ledger close time as an RFC 3339 timestamp; the contract
+// works in whole Unix seconds, so the two agree once the string is converted.
+function closedAtSeconds(ledgerClosedAt: string): bigint {
+  return BigInt(Math.floor(Date.parse(ledgerClosedAt) / 1000));
+}
+
 // Decodes one RPC event into a typed stream event, or returns null if the
 // event is not one this indexer understands. Unknown events are skipped rather
 // than treated as errors so the contract can add events without breaking the
@@ -52,7 +68,12 @@ export function decodeEvent(event: rpc.Api.EventResponse): StreamEvent | null {
 
   const name = scValToNative(topics[0]) as string;
   const data = scValToNative(event.value) as Record<string, bigint | string>;
-  const base: BaseEvent = { ledger: event.ledger, txHash: event.txHash };
+  const base: BaseEvent = {
+    id: event.id,
+    ledger: event.ledger,
+    closedAt: closedAtSeconds(event.ledgerClosedAt),
+    txHash: event.txHash,
+  };
 
   switch (name) {
     case "created":
