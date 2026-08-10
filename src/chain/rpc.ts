@@ -9,6 +9,11 @@ export function createRpcServer(config: Config): rpc.Server {
   });
 }
 
+// How many events to ask the RPC for at a time. The poller compares a page's
+// size against this to tell a full page — there is more behind it — from a
+// short one, so the request and that comparison must share the number.
+export const EVENT_PAGE_LIMIT = 100;
+
 export interface EventPage {
   events: rpc.Api.EventResponse[];
   latestLedger: number;
@@ -25,7 +30,7 @@ export async function getContractEvents(
 ): Promise<EventPage> {
   const request: rpc.Server.GetEventsRequest = {
     filters: [{ type: "contract", contractIds: [contractId] }],
-    limit: options.limit ?? 100,
+    limit: options.limit ?? EVENT_PAGE_LIMIT,
   };
 
   // The RPC accepts either a cursor or a start ledger, not both.
