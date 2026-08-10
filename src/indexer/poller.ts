@@ -1,7 +1,7 @@
 import { rpc } from "@stellar/stellar-sdk";
 import type { Config } from "../config.js";
 import type { Logger } from "../logger.js";
-import { getContractEvents } from "../chain/rpc.js";
+import { EVENT_PAGE_LIMIT, getContractEvents, type EventPage } from "../chain/rpc.js";
 import { decodeEvent } from "../chain/events.js";
 import { applyEvent } from "./apply.js";
 import { getIndexerCursor, saveIndexerCursor } from "../repositories/indexer-state.js";
@@ -9,6 +9,18 @@ import { getIndexerCursor, saveIndexerCursor } from "../repositories/indexer-sta
 interface Position {
   cursor?: string;
   startLedger?: number;
+}
+
+// Whether a page is the end of what the RPC has to give. A page the RPC could
+// not fill means there is nothing further right now; a full one means there is
+// more behind it and the next page should be fetched immediately.
+//
+// The cursor is checked too, as a stop for a page that is full but has not
+// moved on. Fetching that page again would return the same events forever, so
+// it is treated as the end of the backlog and left for the next tick rather
+// than retried without pause.
+export function isBacklogDrained(page: EventPage, requestedCursor?: string): boolean {
+  return page.events.length < EVENT_PAGE_LIMIT || page.cursor === requestedCursor;
 }
 
 // Polls the contract for new events and applies them to the database. Runs
@@ -37,6 +49,9 @@ export class Poller {
       } catch (err) {
         this.log.error({ err }, "poll iteration failed");
       }
+      // Checked before sleeping, so a stop does not have to wait out an
+      // interval that exists only to pace an idle indexer.
+      if (!this.running) break;
       await sleep(this.config.pollIntervalMs);
     }
   }
@@ -63,9 +78,43 @@ export class Poller {
     return { startLedger: latest.sequence };
   }
 
+  // Fetches and applies pages until the RPC has nothing further to give, then
+  // returns so the loop can sleep. Sleeping between pages would cap indexing at
+  // one page per poll interval — twenty events a second at the default, which
+  // turns a hundred thousand event backfill into hours of waiting on a timer
+  // rather than on the network. A caught-up indexer drains in a single page and
+  // sleeps as before, so the interval still governs how often it looks.
+  //
+  // The cursor is saved after every page, so a backlog interrupted part way
+  // through resumes where it stopped rather than starting the tick over.
   private async tick(position: Position): Promise<Position> {
-    const page = await getContractEvents(this.server, this.config.contractId, position);
+    let current = position;
+    let pages = 0;
+    let events = 0;
 
+    // `running` is checked between pages as well, so a stop during a long
+    // backfill takes effect at the next page boundary instead of at the end of
+    // the whole backlog.
+    while (this.running) {
+      const page = await getContractEvents(this.server, this.config.contractId, current);
+      await this.applyPage(page);
+      await saveIndexerCursor(page.latestLedger, page.cursor);
+
+      pages += 1;
+      events += page.events.length;
+      const drained = isBacklogDrained(page, current.cursor);
+      // Once a page is fetched, always continue from its cursor.
+      current = { cursor: page.cursor };
+      if (drained) break;
+    }
+
+    if (pages > 1) {
+      this.log.info({ pages, events }, "drained event backlog");
+    }
+    return current;
+  }
+
+  private async applyPage(page: EventPage): Promise<void> {
     for (const raw of page.events) {
       const event = decodeEvent(raw);
       if (!event) continue;
@@ -80,10 +129,6 @@ export class Poller {
         "applied event",
       );
     }
-
-    await saveIndexerCursor(page.latestLedger, page.cursor);
-    // Once a page is fetched, always continue from its cursor.
-    return { cursor: page.cursor };
   }
 }
 
