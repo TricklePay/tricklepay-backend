@@ -11,6 +11,12 @@ import capture from "../fixtures/get-events.json" with { type: "json" };
 //
 // The captured page is fed in as the RPC would return it, so the ledgers being
 // asserted are decoded from real event XDR rather than made up here.
+// How the poller paces itself against a backlog. The RPC, the database and the
+// apply step are stubbed, so what these tests measure is the fetch pattern: how
+// many pages one tick pulls before it returns to the loop and sleeps.
+//
+// Pages are built from the captured RPC response, so the events flowing through
+// are decoded from real XDR rather than stood in for.
 
 const chain = vi.hoisted(() => ({
   getContractEvents: vi.fn(),
@@ -48,7 +54,8 @@ const config: Config = {
   networkPassphrase: "Test SDF Network ; September 2015",
   rpcUrl: "https://soroban-testnet.stellar.org",
   contractId: "CDMB62RVYAXJJNYYH7K442SHSAJIXTZ6K7JANGSMQF2T7MHCTVSK75SW",
-  // The loop sleeps between ticks; zero keeps the tests instant.
+  // The loop sleeps between ticks; zero keeps the tests instant without
+  // changing which pages a tick fetches.
   pollIntervalMs: 0,
   startLedger: 0,
 };
@@ -70,6 +77,21 @@ async function pollOnce(overrides: Partial<Config> = {}) {
 
 function pageOf(events: rpc.Api.EventResponse[], latestLedger = CHAIN_HEAD) {
   return { events, latestLedger, cursor: CURSOR };
+const server = { getLatestLedger: vi.fn() };
+
+function poller(overrides: Partial<Config> = {}) {
+  return new Poller(server as unknown as rpc.Server, { ...config, ...overrides }, log);
+}
+
+// A page the RPC could not fill: the backlog is drained.
+function shortPage(cursor: string) {
+  return { events: captured.events, latestLedger: CHAIN_HEAD, cursor };
+}
+
+// A page filled to the limit: there is more behind it.
+function fullPage(cursor: string) {
+  const events = Array.from({ length: EVENT_PAGE_LIMIT }, () => captured.events[0]);
+  return { events, latestLedger: CHAIN_HEAD, cursor };
 }
 
 beforeEach(() => {

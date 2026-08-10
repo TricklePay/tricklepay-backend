@@ -15,21 +15,28 @@ It backs the TricklePay web client and pairs with the
 
 ## How it works
 
-The contract emits `Created`, `Withdrawn`, and `Cancelled` events. The indexer
-reads each event to learn which stream changed, then reads that stream's full
-authoritative state with a `get_stream` simulation and upserts it into Postgres.
-Reading full state rather than trusting event payloads keeps the mirror correct
-regardless of which event fired, and makes re-processing an event harmless — so
-the indexer can crash and resume without corrupting data.
+The contract emits `Created`, `Withdrawn`, and `Cancelled` events, and between
+them they carry everything the mirror needs. `Created` holds a whole stream —
+sender, recipient, token, total, and the `startTime`/`endTime`/`cliffTime`
+schedule, with `withdrawn` at zero and `cancelled` false by definition — while
+`Withdrawn` and `Cancelled` carry the deltas that move one. So the indexer
+writes each event straight to Postgres: one query per event and no chain
+round-trip. That is what makes a backfill cheap, since an historical event costs
+a database write rather than an RPC simulation.
 
-`Created` is the one event that carries a whole stream: sender, recipient,
-token, total, and the `startTime`/`endTime`/`cliffTime` schedule, with
-`withdrawn` at zero and `cancelled` false by definition. All of it is decoded
-(see `chain/events.ts`), so that event could stand in for the `get_stream` read.
-The indexer still makes the read, deliberately: a replayed `Created` would
-otherwise reset `withdrawn` to zero on a stream that has since paid out.
-Skipping it would first need the upsert to become create-only or guarded on
-`updatedLedger`.
+Applying an event twice therefore has to be harmless, because the indexer saves
+its cursor only after finishing a page and re-reads that page if it restarts
+mid-way. Each row records the id of the last event applied to it — the RPC's
+zero-padded `TOID-index`, which compares as a string in chain order. `Created`
+inserts only when the stream is absent, so a replay cannot reset `withdrawn` on
+a stream that has since paid out, and a delta applies only to a row whose last
+event predates it. Replaying a page changes nothing.
+
+`get_stream` remains for reconciliation. When a delta arrives for a stream that
+is not stored — an indexer backfilling from a ledger after that stream was
+created, say — there is nothing to apply it to, so full contract state is read
+once and the row written whole. That is one read per stream, not per event: from
+then on the stream is back on the event path.
 
 Alongside the stream rows the indexer keeps one row of bookkeeping: the RPC
 cursor to resume from, the highest ledger it has actually applied events
@@ -132,7 +139,7 @@ src/
   chain/
     rpc.ts            Soroban RPC client and event fetcher
     events.ts         decode contract events from ScVal
-    contract.ts       read full stream state via get_stream
+    contract.ts       read full stream state via get_stream, to reconcile
   indexer/
     apply.ts          apply a decoded event to the database
     poller.ts         poll loop with cursor persistence
@@ -153,6 +160,7 @@ tests/
     poller.test.ts    which ledger a poll records as reached
   routes/
     status.test.ts    reported progress and lag
+    apply.test.ts     event to database write routing, with no chain calls
   fixtures/
     get-events.json   a Soroban RPC getEvents response, as the RPC returns it
 prisma/
