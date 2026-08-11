@@ -37,6 +37,30 @@ model Stream {
   @@index([recipient])
 }
 
+// An event that the indexer failed to apply. Recorded so that an operator can
+// find it without tailing logs. The row is upserted on each failure so the
+// error reflects the most recent attempt and `failureCount` shows how many
+// times the same event has been retried. A succeeding replay clears the row.
+model FailedEvent {
+  // The RPC's `TOID-index` event id, unique per event on chain.
+  eventId      String   @id
+  // The event kind (created / withdrawn / cancelled) or "unknown" when
+  // decoding failed before the kind could be read.
+  kind         String
+  // Stream id, as a string so the model carries no dependency on bigint
+  // serialisation. Null when the event could not be decoded at all.
+  streamId     String?
+  ledger       Int
+  // Most recent error message.
+  error        String
+  // How many times this event has failed.
+  failureCount Int      @default(1)
+  firstFailedAt DateTime @default(now())
+  lastFailedAt  DateTime @updatedAt
+
+  @@index([ledger])
+}
+
 // Single-row bookkeeping for the indexer: how far it has actually got, how far
 // the chain had got when it last looked, and the RPC paging cursor to resume
 // from. Keyed by a fixed string so there is exactly one row per indexed stream.

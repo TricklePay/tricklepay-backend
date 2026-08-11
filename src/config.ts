@@ -92,7 +92,7 @@ export function loadConfig(): Config {
     databaseUrl: required("DATABASE_URL"),
     network,
     networkPassphrase,
-    rpcUrl,
+    rpcUrl: optional("SOROBAN_RPC_URL", DEFAULT_RPC_URLS[network]),
     contractId: required("STREAM_CONTRACT_ID"),
     pollIntervalMs: integer("INDEXER_POLL_INTERVAL_MS", 5000),
     startLedger: integer("INDEXER_START_LEDGER", 0),

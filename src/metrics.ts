@@ -247,6 +247,13 @@ export const pollErrors = new Counter(
   "Total poll iterations that failed with an unhandled error.",
 );
 
+/** Total individual events that failed to apply and were skipped. */
+export const eventsFailed = new Counter(
+  "tricklepay_indexer_events_failed",
+  "Total individual events that failed to apply and were skipped.",
+  ["kind"],
+);
+
 // HTTP ----------------------------------------------------------------------
 
 /** HTTP request durations in milliseconds, by method and route. */
