@@ -5,11 +5,18 @@ import { EVENT_PAGE_LIMIT, getContractEvents, type EventPage } from "../chain/rp
 import { decodeEvent } from "../chain/events.js";
 import { applyEvent } from "./apply.js";
 import { getIndexerPosition, saveIndexerPosition } from "../repositories/indexer-state.js";
+import {
+  eventsApplied,
+  indexerLagLedgers,
+  pagesFetched,
+  pollErrors,
+  rpcErrors,
+} from "../metrics.js";
 
 // The loop's state between ticks: where to read from next, and how far the
 // indexer has actually got. `lastLedger` is carried across ticks because a page
 // that applies nothing must leave it alone rather than reset it.
-interface Progress {
+interface Position {
   cursor?: string;
   startLedger?: number;
   lastLedger: number;
@@ -45,13 +52,14 @@ export class Poller {
 
   async start(): Promise<void> {
     this.running = true;
-    let progress = await this.resolveStart();
+    let position = await this.resolveStart();
 
     while (this.running) {
       try {
-        progress = await this.tick(progress);
+        position = await this.tick(position);
       } catch (err) {
         this.log.error({ err }, "poll iteration failed");
+        pollErrors.inc();
       }
       // Checked before sleeping, so a stop does not have to wait out an
       // interval that exists only to pace an idle indexer.
@@ -73,7 +81,7 @@ export class Poller {
   // stored. A backfill has processed nothing at or after its start ledger, so
   // it claims the one below. Starting from the chain's head means deliberately
   // skipping everything before it, so that head is already fully processed.
-  private async resolveStart(): Promise<Progress> {
+  private async resolveStart(): Promise<Position> {
     const saved = await getIndexerPosition();
     if (saved?.cursor) {
       this.log.info({ cursor: saved.cursor }, "resuming from saved cursor");
@@ -88,21 +96,6 @@ export class Poller {
     return { startLedger: latest.sequence, lastLedger: latest.sequence };
   }
 
-  private async tick(progress: Progress): Promise<Progress> {
-    const page = await getContractEvents(this.server, this.config.contractId, {
-      cursor: progress.cursor,
-      startLedger: progress.startLedger,
-    });
-
-    let lastLedger = progress.lastLedger;
-    for (const raw of page.events) {
-      const event = decodeEvent(raw);
-      if (!event) continue;
-      await applyEvent(this.server, this.config.contractId, this.config.networkPassphrase, event);
-      // Raised only once the write has landed. If applying throws, the tick
-      // aborts without saving, so the page is read again and this ledger is
-      // never claimed as processed on the strength of a write that failed.
-      lastLedger = Math.max(lastLedger, event.ledger);
   // Fetches and applies pages until the RPC has nothing further to give, then
   // returns so the loop can sleep. Sleeping between pages would cap indexing at
   // one page per poll interval — twenty events a second at the default, which
@@ -121,15 +114,21 @@ export class Poller {
     // backfill takes effect at the next page boundary instead of at the end of
     // the whole backlog.
     while (this.running) {
-      const page = await getContractEvents(this.server, this.config.contractId, current);
-      await this.applyPage(page);
-      await saveIndexerCursor(page.latestLedger, page.cursor);
+      let page: EventPage;
+      try {
+        page = await getContractEvents(this.server, this.config.contractId, current);
+      } catch (err) {
+        rpcErrors.inc({ operation: "getContractEvents" });
+        throw err;
+      }
 
+      pagesFetched.inc();
+      const nextPosition = await this.applyPage(page, current.lastLedger);
+      current = nextPosition;
       pages += 1;
       events += page.events.length;
-      const drained = isBacklogDrained(page, current.cursor);
-      // Once a page is fetched, always continue from its cursor.
-      current = { cursor: page.cursor };
+
+      const drained = isBacklogDrained(page, position.cursor);
       if (drained) break;
     }
 
@@ -139,7 +138,9 @@ export class Poller {
     return current;
   }
 
-  private async applyPage(page: EventPage): Promise<void> {
+  private async applyPage(page: EventPage, previousLastLedger: number): Promise<Position> {
+    let lastLedger = previousLastLedger;
+
     for (const raw of page.events) {
       const event = decodeEvent(raw);
       if (!event) continue;
@@ -153,11 +154,21 @@ export class Poller {
         { kind: event.kind, streamId: event.streamId.toString(), ledger: event.ledger, outcome },
         "applied event",
       );
+      // Raised only once the write has landed. If applying throws, the tick
+      // aborts without saving, so the page is read again and this ledger is
+      // never claimed as processed on the strength of a write that failed.
+      lastLedger = Math.max(lastLedger, event.ledger);
+      eventsApplied.inc({ kind: event.kind, outcome });
     }
 
     // `page.latestLedger` is the chain's head, not this indexer's position, so
     // it is stored as such: the two together are what make lag visible.
     await saveIndexerPosition({ lastLedger, chainLedger: page.latestLedger, cursor: page.cursor });
+
+    // Update the lag gauge. Never negative: the indexer's position cannot
+    // outrun the chain head that was observed in the same poll.
+    indexerLagLedgers.set(Math.max(0, page.latestLedger - lastLedger));
+
     // Once a page is fetched, always continue from its cursor.
     return { cursor: page.cursor, lastLedger };
   }
