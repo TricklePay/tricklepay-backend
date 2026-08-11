@@ -11,6 +11,12 @@ import capture from "../fixtures/get-events.json" with { type: "json" };
 //
 // The captured page is fed in as the RPC would return it, so the ledgers being
 // asserted are decoded from real event XDR rather than made up here.
+// How the poller paces itself against a backlog. The RPC, the database and the
+// apply step are stubbed, so what these tests measure is the fetch pattern: how
+// many pages one tick pulls before it returns to the loop and sleeps.
+//
+// Pages are built from the captured RPC response, so the events flowing through
+// are decoded from real XDR rather than stood in for.
 
 const chain = vi.hoisted(() => ({
   getContractEvents: vi.fn(),
@@ -56,6 +62,8 @@ const config: Config = {
   rpcUrl: "https://soroban-testnet.stellar.org",
   contractId: "CDMB62RVYAXJJNYYH7K442SHSAJIXTZ6K7JANGSMQF2T7MHCTVSK75SW",
   // Zero keeps the tests instant without changing which pages a tick fetches.
+  // The loop sleeps between ticks; zero keeps the tests instant without
+  // changing which pages a tick fetches.
   pollIntervalMs: 0,
   startLedger: 0,
 };
@@ -85,6 +93,29 @@ beforeEach(() => {
   indexer.applyEvent.mockResolvedValue("applied");
   failedEvents.recordFailedEvent.mockResolvedValue(undefined);
   failedEvents.clearFailedEvent.mockResolvedValue(undefined);
+function pageOf(events: rpc.Api.EventResponse[], latestLedger = CHAIN_HEAD) {
+  return { events, latestLedger, cursor: CURSOR };
+const server = { getLatestLedger: vi.fn() };
+
+function poller(overrides: Partial<Config> = {}) {
+  return new Poller(server as unknown as rpc.Server, { ...config, ...overrides }, log);
+}
+
+// A page the RPC could not fill: the backlog is drained.
+function shortPage(cursor: string) {
+  return { events: captured.events, latestLedger: CHAIN_HEAD, cursor };
+}
+
+// A page filled to the limit: there is more behind it.
+function fullPage(cursor: string) {
+  const events = Array.from({ length: EVENT_PAGE_LIMIT }, () => captured.events[0]);
+  return { events, latestLedger: CHAIN_HEAD, cursor };
+}
+
+beforeEach(() => {
+  vi.resetAllMocks();
+  indexerState.getIndexerPosition.mockResolvedValue(null);
+  indexer.applyEvent.mockResolvedValue(undefined);
   getLatestLedger.mockResolvedValue({ sequence: CHAIN_HEAD });
 });
 
@@ -222,5 +253,19 @@ describe("Poller", () => {
     const [saved] = indexerState.saveIndexerPosition.mock.calls[0];
     // The third decoded event is at ledger 56290012; the fourth fails.
     expect(saved.lastLedger).toBeLessThan(LAST_APPLIED);
+  it("saves nothing when applying an event fails", async () => {
+    // A half-applied page must not be recorded as reached; the tick aborts, the
+    // cursor stays where it was, and the page is read again next time.
+    chain.getContractEvents.mockResolvedValue(pageOf(page.events));
+
+    const poller = new Poller(server, { ...config, startLedger: 56000000 }, log);
+    indexer.applyEvent.mockImplementation(async () => {
+      poller.stop();
+      throw new Error("database unavailable");
+    });
+
+    await poller.start();
+
+    expect(indexerState.saveIndexerPosition).not.toHaveBeenCalled();
   });
 });

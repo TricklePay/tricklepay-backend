@@ -1,0 +1,234 @@
+// Shared JSON Schema definitions for every API response shape.
+//
+// Defining schemas here rather than inline in route files serves two purposes:
+// 1. @fastify/swagger picks them up and emits them as reusable $components so
+//    the generated OpenAPI spec stays tidy and client generators can produce
+//    named types (StreamView, StreamListResponse, …) instead of anonymous ones.
+// 2. Fastify uses the response schemas to serialise and validate outgoing JSON,
+//    which is a small but free correctness win.
+//
+// All numeric token amounts are serialised as decimal strings because they are
+// 128-bit integers that exceed the safe range of a JavaScript number, and
+// therefore of IEEE 754 double-precision JSON numbers.
+
+// ---------------------------------------------------------------------------
+// $id constants — used both here and when referencing the schema from routes.
+// ---------------------------------------------------------------------------
+export const STREAM_VIEW_SCHEMA_ID = "StreamView";
+export const STREAM_LIST_RESPONSE_SCHEMA_ID = "StreamListResponse";
+export const INDEXER_STATUS_SCHEMA_ID = "IndexerStatus";
+export const ERROR_SCHEMA_ID = "ApiError";
+
+// ---------------------------------------------------------------------------
+// StreamView — a single token stream as the API renders it.
+// ---------------------------------------------------------------------------
+export const streamViewSchema = {
+  $id: STREAM_VIEW_SCHEMA_ID,
+  type: "object",
+  description:
+    "A token stream as stored by the indexer. Amount fields are decimal strings " +
+    "because the contract uses 128-bit integers that exceed JavaScript's safe integer range.",
+  required: [
+    "id",
+    "sender",
+    "recipient",
+    "token",
+    "totalAmount",
+    "withdrawn",
+    "vested",
+    "withdrawable",
+    "locked",
+    "progress",
+    "startTime",
+    "endTime",
+    "cliffTime",
+    "cancelled",
+    "status",
+  ],
+  properties: {
+    id: {
+      type: "string",
+      description: "Unique stream identifier (uint64, decimal string).",
+      examples: ["42"],
+    },
+    sender: {
+      type: "string",
+      description: "Stellar address of the stream creator.",
+      examples: ["GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"],
+    },
+    recipient: {
+      type: "string",
+      description: "Stellar address of the stream recipient.",
+      examples: ["GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H"],
+    },
+    token: {
+      type: "string",
+      description: "Stellar address of the streamed token contract.",
+      examples: ["CBFS2HT4TIHTMWA5ZND6FEC27BRRA4V6JWOD7JIIDZVSPVAM7EJ2LZS7"],
+    },
+    totalAmount: {
+      type: "string",
+      description: "Total tokens locked in the stream (uint128, decimal string).",
+      examples: ["100000000000000"],
+    },
+    withdrawn: {
+      type: "string",
+      description: "Total tokens already withdrawn by the recipient (uint128, decimal string).",
+      examples: ["25000000000000"],
+    },
+    vested: {
+      type: "string",
+      description:
+        "Tokens that have vested as of the time this response was generated (uint128, decimal string).",
+      examples: ["50000000000000"],
+    },
+    withdrawable: {
+      type: "string",
+      description:
+        "Tokens the recipient may withdraw right now: vested minus already withdrawn (uint128, decimal string).",
+      examples: ["25000000000000"],
+    },
+    locked: {
+      type: "string",
+      description: "Tokens not yet vested (uint128, decimal string).",
+      examples: ["50000000000000"],
+    },
+    progress: {
+      type: "integer",
+      description:
+        "Vesting progress in basis points (0–10000). 10000 means fully vested.",
+      minimum: 0,
+      maximum: 10000,
+      examples: [5000],
+    },
+    startTime: {
+      type: "string",
+      description: "Vesting start time (Unix seconds, decimal string).",
+      examples: ["1735689600"],
+    },
+    endTime: {
+      type: "string",
+      description: "Vesting end time (Unix seconds, decimal string).",
+      examples: ["1767225600"],
+    },
+    cliffTime: {
+      type: "string",
+      description:
+        "Cliff time: nothing vests before this (Unix seconds, decimal string).",
+      examples: ["1740000000"],
+    },
+    cancelled: {
+      type: "boolean",
+      description: "Whether the stream has been cancelled.",
+    },
+    status: {
+      type: "string",
+      enum: ["pending", "streaming", "completed", "cancelled"],
+      description:
+        "Derived lifecycle status: pending (not yet started), streaming (active), " +
+        "completed (fully vested), cancelled.",
+    },
+  },
+} as const;
+
+// ---------------------------------------------------------------------------
+// StreamListResponse — paginated list of streams.
+// ---------------------------------------------------------------------------
+export const streamListResponseSchema = {
+  $id: STREAM_LIST_RESPONSE_SCHEMA_ID,
+  type: "object",
+  description: "Paginated list of streams.",
+  required: ["streams", "total", "limit", "offset"],
+  properties: {
+    streams: {
+      type: "array",
+      items: { $ref: STREAM_VIEW_SCHEMA_ID },
+      description: "The streams on this page.",
+    },
+    total: {
+      type: "integer",
+      description: "Total number of streams matching the query filters.",
+      examples: [123],
+    },
+    limit: {
+      type: "integer",
+      description: "Maximum number of streams returned on this page.",
+      examples: [50],
+    },
+    offset: {
+      type: "integer",
+      description: "Zero-based index of the first stream on this page.",
+      examples: [0],
+    },
+  },
+} as const;
+
+// ---------------------------------------------------------------------------
+// IndexerStatus — indexer progress report.
+// ---------------------------------------------------------------------------
+export const indexerStatusSchema = {
+  $id: INDEXER_STATUS_SCHEMA_ID,
+  type: "object",
+  description: "Indexer progress relative to the chain.",
+  required: ["indexer", "chain", "lagLedgers"],
+  properties: {
+    indexer: {
+      type: "object",
+      required: ["initialized", "lastLedger", "cursor", "updatedAt"],
+      properties: {
+        initialized: {
+          type: "boolean",
+          description: "False until the indexer completes its first poll.",
+        },
+        lastLedger: {
+          type: "integer",
+          description: "Highest ledger whose events the indexer has applied.",
+          examples: [56290013],
+        },
+        cursor: {
+          type: ["string", "null"],
+          description: "RPC paging cursor to resume from, or null before the first poll.",
+        },
+        updatedAt: {
+          type: ["string", "null"],
+          format: "date-time",
+          description: "When the position was last written, or null before the first poll.",
+        },
+      },
+    },
+    chain: {
+      type: "object",
+      required: ["latestLedger"],
+      properties: {
+        latestLedger: {
+          type: "integer",
+          description: "Chain's latest ledger as of the last poll.",
+          examples: [56999999],
+        },
+      },
+    },
+    lagLedgers: {
+      type: ["integer", "null"],
+      description:
+        "Ledgers the indexer is behind the chain. Null before the first poll. Never negative.",
+      examples: [709986],
+    },
+  },
+} as const;
+
+// ---------------------------------------------------------------------------
+// ApiError — error response envelope.
+// ---------------------------------------------------------------------------
+export const apiErrorSchema = {
+  $id: ERROR_SCHEMA_ID,
+  type: "object",
+  description: "Error response.",
+  required: ["error"],
+  properties: {
+    error: {
+      type: "string",
+      description: "Human-readable error message.",
+      examples: ["stream not found"],
+    },
+  },
+} as const;

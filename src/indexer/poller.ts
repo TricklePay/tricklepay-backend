@@ -13,6 +13,7 @@ import {
 import {
   eventsApplied,
   eventsFailed,
+  eventsApplied,
   indexerLagLedgers,
   pagesFetched,
   pollErrors,
@@ -190,7 +191,9 @@ export class Poller {
         { kind: event.kind, streamId: event.streamId.toString(), ledger: event.ledger, outcome },
         "applied event",
       );
-      // Raised only once the write has landed.
+      // Raised only once the write has landed. If applying throws, the tick
+      // aborts without saving, so the page is read again and this ledger is
+      // never claimed as processed on the strength of a write that failed.
       lastLedger = Math.max(lastLedger, event.ledger);
       eventsApplied.inc({ kind: event.kind, outcome });
     }

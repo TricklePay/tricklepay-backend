@@ -2,6 +2,14 @@ import type { FastifyInstance } from "fastify";
 import type { Stream } from "@prisma/client";
 import { countStreams, getStream, listStreams } from "../repositories/streams.js";
 import { vestedAmount, withdrawableAmount } from "../lib/vesting.js";
+import {
+  apiErrorSchema,
+  ERROR_SCHEMA_ID,
+  streamListResponseSchema,
+  STREAM_LIST_RESPONSE_SCHEMA_ID,
+  streamViewSchema,
+  STREAM_VIEW_SCHEMA_ID,
+} from "../schema.js";
 
 const MAX_LIMIT = 100;
 const DEFAULT_LIMIT = 50;
@@ -64,46 +72,120 @@ function parseOffset(raw: string | undefined): number {
 }
 
 export async function streamRoutes(app: FastifyInstance): Promise<void> {
-  app.get("/streams", async (request) => {
-    const query = request.query as {
-      sender?: string;
-      recipient?: string;
-      token?: string;
-      limit?: string;
-      offset?: string;
-    };
+  // Ensure the shared schemas are available whether this plugin is registered
+  // on a full server (which calls addSchema centrally) or a bare Fastify
+  // instance in tests. Fastify deduplicates by $id, so calling addSchema when
+  // the schema is already present throws; we guard against that here.
+  if (!app.getSchema(STREAM_VIEW_SCHEMA_ID)) app.addSchema(streamViewSchema);
+  if (!app.getSchema(STREAM_LIST_RESPONSE_SCHEMA_ID)) app.addSchema(streamListResponseSchema);
+  if (!app.getSchema(ERROR_SCHEMA_ID)) app.addSchema(apiErrorSchema);
 
-    const limit = parseLimit(query.limit);
-    const offset = parseOffset(query.offset);
-    const filter = {
-      sender: query.sender,
-      recipient: query.recipient,
-      token: query.token,
-    };
+  app.get(
+    "/streams",
+    {
+      schema: {
+        summary: "List streams",
+        description:
+          "Returns a paginated list of token streams. Optionally filter by sender, recipient, or token address.",
+        tags: ["streams"],
+        querystring: {
+          type: "object",
+          properties: {
+            sender: {
+              type: "string",
+              description: "Filter by sender Stellar address.",
+            },
+            recipient: {
+              type: "string",
+              description: "Filter by recipient Stellar address.",
+            },
+            token: {
+              type: "string",
+              description: "Filter by token contract Stellar address.",
+            },
+            limit: {
+              type: "string",
+              description: `Maximum results to return. Capped at ${MAX_LIMIT}. Defaults to ${DEFAULT_LIMIT}.`,
+            },
+            offset: {
+              type: "string",
+              description: "Zero-based offset for pagination. Defaults to 0.",
+            },
+          },
+          additionalProperties: false,
+        },
+        response: {
+          200: { $ref: STREAM_LIST_RESPONSE_SCHEMA_ID },
+        },
+      },
+    },
+    async (request) => {
+      const query = request.query as {
+        sender?: string;
+        recipient?: string;
+        token?: string;
+        limit?: string;
+        offset?: string;
+      };
 
-    const [streams, total] = await Promise.all([
-      listStreams({ ...filter, limit, offset }),
-      countStreams(filter),
-    ]);
+      const limit = parseLimit(query.limit);
+      const offset = parseOffset(query.offset);
+      const filter = {
+        sender: query.sender,
+        recipient: query.recipient,
+        token: query.token,
+      };
 
-    return { streams: streams.map(toView), total, limit, offset };
-  });
+      const [streams, total] = await Promise.all([
+        listStreams({ ...filter, limit, offset }),
+        countStreams(filter),
+      ]);
 
-  app.get("/streams/:id", async (request, reply) => {
-    const { id } = request.params as { id: string };
+      return { streams: streams.map(toView), total, limit, offset };
+    },
+  );
 
-    let streamId: bigint;
-    try {
-      streamId = BigInt(id);
-    } catch {
-      return reply.code(400).send({ error: "invalid stream id" });
-    }
+  app.get(
+    "/streams/:id",
+    {
+      schema: {
+        summary: "Get stream by id",
+        description: "Returns a single token stream by its numeric id.",
+        tags: ["streams"],
+        params: {
+          type: "object",
+          required: ["id"],
+          properties: {
+            id: {
+              type: "string",
+              description: "Stream id (uint64, decimal string).",
+              examples: ["42"],
+            },
+          },
+        },
+        response: {
+          200: { $ref: STREAM_VIEW_SCHEMA_ID },
+          400: { $ref: ERROR_SCHEMA_ID },
+          404: { $ref: ERROR_SCHEMA_ID },
+        },
+      },
+    },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
 
-    const stream = await getStream(streamId);
-    if (!stream) {
-      return reply.code(404).send({ error: "stream not found" });
-    }
+      let streamId: bigint;
+      try {
+        streamId = BigInt(id);
+      } catch {
+        return reply.code(400).send({ error: "invalid stream id" });
+      }
 
-    return toView(stream);
-  });
+      const stream = await getStream(streamId);
+      if (!stream) {
+        return reply.code(404).send({ error: "stream not found" });
+      }
+
+      return toView(stream);
+    },
+  );
 }

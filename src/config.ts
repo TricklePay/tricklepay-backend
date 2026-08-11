@@ -41,6 +41,29 @@ function integer(name: string, fallback: number): number {
   return parsed;
 }
 
+// Returns true when the URL resolves to a loopback address (localhost or
+// 127.x.x.x). These are the only hosts for which plain HTTP is acceptable.
+export function isLocalUrl(url: string): boolean {
+  try {
+    const { hostname } = new URL(url);
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname.startsWith("127.");
+  } catch {
+    return false;
+  }
+}
+
+// Validates that plain HTTP is only used for local endpoints. Throws at config
+// load time so a misconfigured SOROBAN_RPC_URL never silently downgrades a
+// production node.
+function validateRpcUrl(url: string): void {
+  if (url.startsWith("http://") && !isLocalUrl(url)) {
+    throw new Error(
+      `SOROBAN_RPC_URL "${url}" uses plain HTTP on a non-local host. ` +
+        `Remote endpoints must use HTTPS. Use http:// only for localhost or 127.x.x.x.`,
+    );
+  }
+}
+
 export interface Config {
   port: number;
   host: string;
@@ -59,6 +82,9 @@ export function loadConfig(): Config {
   if (!networkPassphrase) {
     throw new Error(`Unknown NETWORK "${network}"; expected "testnet" or "mainnet"`);
   }
+
+  const rpcUrl = optional("SOROBAN_RPC_URL", DEFAULT_RPC_URLS[network]);
+  validateRpcUrl(rpcUrl);
 
   return {
     port: integer("PORT", 3000),
