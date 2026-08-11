@@ -11,12 +11,6 @@ import capture from "../fixtures/get-events.json" with { type: "json" };
 //
 // The captured page is fed in as the RPC would return it, so the ledgers being
 // asserted are decoded from real event XDR rather than made up here.
-// How the poller paces itself against a backlog. The RPC, the database and the
-// apply step are stubbed, so what these tests measure is the fetch pattern: how
-// many pages one tick pulls before it returns to the loop and sleeps.
-//
-// Pages are built from the captured RPC response, so the events flowing through
-// are decoded from real XDR rather than stood in for.
 
 const chain = vi.hoisted(() => ({
   getContractEvents: vi.fn(),
@@ -30,13 +24,20 @@ const indexerState = vi.hoisted(() => ({
 
 const indexer = vi.hoisted(() => ({ applyEvent: vi.fn() }));
 
+const failedEvents = vi.hoisted(() => ({
+  recordFailedEvent: vi.fn(),
+  clearFailedEvent: vi.fn(),
+  failedEventFromDecoded: vi.fn((event: unknown, err: unknown) => ({ eventId: "x", kind: "created", streamId: "1", ledger: 0, error: String(err) })),
+}));
+
 vi.mock("../../src/chain/rpc.js", () => chain);
 vi.mock("../../src/repositories/indexer-state.js", () => indexerState);
 vi.mock("../../src/indexer/apply.js", () => indexer);
+vi.mock("../../src/repositories/failed-events.js", () => failedEvents);
 
 const { Poller } = await import("../../src/indexer/poller.js");
 
-const page = rpc.parseRawEvents(capture.result as unknown as rpc.Api.RawGetEventsResponse);
+const captured = rpc.parseRawEvents(capture.result as unknown as rpc.Api.RawGetEventsResponse);
 
 // Ledgers of the captured events, for the assertions below. The last two are
 // event kinds this indexer does not understand and so never applies.
@@ -54,8 +55,7 @@ const config: Config = {
   networkPassphrase: "Test SDF Network ; September 2015",
   rpcUrl: "https://soroban-testnet.stellar.org",
   contractId: "CDMB62RVYAXJJNYYH7K442SHSAJIXTZ6K7JANGSMQF2T7MHCTVSK75SW",
-  // The loop sleeps between ticks; zero keeps the tests instant without
-  // changing which pages a tick fetches.
+  // Zero keeps the tests instant without changing which pages a tick fetches.
   pollIntervalMs: 0,
   startLedger: 0,
 };
@@ -64,6 +64,10 @@ const log = pino({ level: "silent" });
 
 const getLatestLedger = vi.fn();
 const server = { getLatestLedger } as unknown as rpc.Server;
+
+function pageOf(events: rpc.Api.EventResponse[], latestLedger = CHAIN_HEAD) {
+  return { events, latestLedger, cursor: CURSOR };
+}
 
 // Drives exactly one poll: the loop is stopped from inside the save, which is
 // the last thing a tick does, so `start()` returns after a single iteration.
@@ -75,29 +79,12 @@ async function pollOnce(overrides: Partial<Config> = {}) {
   await poller.start();
 }
 
-function pageOf(events: rpc.Api.EventResponse[], latestLedger = CHAIN_HEAD) {
-  return { events, latestLedger, cursor: CURSOR };
-const server = { getLatestLedger: vi.fn() };
-
-function poller(overrides: Partial<Config> = {}) {
-  return new Poller(server as unknown as rpc.Server, { ...config, ...overrides }, log);
-}
-
-// A page the RPC could not fill: the backlog is drained.
-function shortPage(cursor: string) {
-  return { events: captured.events, latestLedger: CHAIN_HEAD, cursor };
-}
-
-// A page filled to the limit: there is more behind it.
-function fullPage(cursor: string) {
-  const events = Array.from({ length: EVENT_PAGE_LIMIT }, () => captured.events[0]);
-  return { events, latestLedger: CHAIN_HEAD, cursor };
-}
-
 beforeEach(() => {
   vi.resetAllMocks();
   indexerState.getIndexerPosition.mockResolvedValue(null);
-  indexer.applyEvent.mockResolvedValue(undefined);
+  indexer.applyEvent.mockResolvedValue("applied");
+  failedEvents.recordFailedEvent.mockResolvedValue(undefined);
+  failedEvents.clearFailedEvent.mockResolvedValue(undefined);
   getLatestLedger.mockResolvedValue({ sequence: CHAIN_HEAD });
 });
 
@@ -106,7 +93,7 @@ describe("Poller", () => {
     // The bug this replaces: the chain's latest ledger was stored as the
     // indexer's position, so a backfill hundreds of thousands of ledgers behind
     // still reported itself level with the chain.
-    chain.getContractEvents.mockResolvedValue(pageOf(page.events));
+    chain.getContractEvents.mockResolvedValue(pageOf(captured.events));
 
     await pollOnce({ startLedger: 56000000 });
 
@@ -120,7 +107,7 @@ describe("Poller", () => {
   it("does not credit itself for events it could not decode", async () => {
     // The page ends with two events of kinds this indexer does not handle. They
     // are skipped, so they cannot advance the position past what was applied.
-    chain.getContractEvents.mockResolvedValue(pageOf(page.events));
+    chain.getContractEvents.mockResolvedValue(pageOf(captured.events));
 
     await pollOnce({ startLedger: 56000000 });
 
@@ -174,19 +161,66 @@ describe("Poller", () => {
     );
   });
 
-  it("saves nothing when applying an event fails", async () => {
-    // A half-applied page must not be recorded as reached; the tick aborts, the
-    // cursor stays where it was, and the page is read again next time.
-    chain.getContractEvents.mockResolvedValue(pageOf(page.events));
+  it("skips a failing event and still saves the cursor", async () => {
+    // The old behavior: a single failing applyEvent aborted the whole tick and
+    // saveIndexerPosition was never called, so the page was refetched forever.
+    // The new behavior: the failing event is logged and skipped; the rest of
+    // the page applies and the cursor advances.
+    chain.getContractEvents.mockResolvedValue(pageOf(captured.events));
 
-    const poller = new Poller(server, { ...config, startLedger: 56000000 }, log);
+    let callCount = 0;
     indexer.applyEvent.mockImplementation(async () => {
-      poller.stop();
-      throw new Error("database unavailable");
+      callCount++;
+      if (callCount === 1) throw new Error("db unavailable");
+      return "applied";
     });
 
-    await poller.start();
+    await pollOnce({ startLedger: 56000000 });
 
-    expect(indexerState.saveIndexerPosition).not.toHaveBeenCalled();
+    // The cursor must have been saved despite the first event failing.
+    expect(indexerState.saveIndexerPosition).toHaveBeenCalled();
+  });
+
+  it("records a failing event in the failed-events store", async () => {
+    // Operators need a queryable record, not just a log line.
+    chain.getContractEvents.mockResolvedValue(pageOf(captured.events));
+    indexer.applyEvent.mockRejectedValue(new Error("constraint violation"));
+
+    await pollOnce({ startLedger: 56000000 });
+
+    expect(failedEvents.recordFailedEvent).toHaveBeenCalled();
+  });
+
+  it("clears the failed-event record after a successful apply", async () => {
+    // Once an event applies cleanly its stale failure row should be removed so
+    // operators only see events that are currently stuck.
+    chain.getContractEvents.mockResolvedValue(pageOf(captured.events));
+    indexer.applyEvent.mockResolvedValue("applied");
+
+    await pollOnce({ startLedger: 56000000 });
+
+    expect(failedEvents.clearFailedEvent).toHaveBeenCalled();
+  });
+
+  it("does not advance lastLedger past the most recent successful event", async () => {
+    // A failing event must not contribute to lastLedger. The page has events at
+    // multiple ledgers; if the last decoded one fails, the position must stop at
+    // the last one that succeeded.
+    chain.getContractEvents.mockResolvedValue(pageOf(captured.events));
+
+    // Fail only the last apply call (the fourth decoded event, ledger 56290013).
+    let callCount = 0;
+    indexer.applyEvent.mockImplementation(async () => {
+      callCount++;
+      if (callCount === 4) throw new Error("last event fails");
+      return "applied";
+    });
+
+    await pollOnce({ startLedger: 56000000 });
+
+    // The position must reflect only the events that actually applied.
+    const [saved] = indexerState.saveIndexerPosition.mock.calls[0];
+    // The third decoded event is at ledger 56290012; the fourth fails.
+    expect(saved.lastLedger).toBeLessThan(LAST_APPLIED);
   });
 });

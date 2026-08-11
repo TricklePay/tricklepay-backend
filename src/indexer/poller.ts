@@ -6,7 +6,13 @@ import { decodeEvent } from "../chain/events.js";
 import { applyEvent } from "./apply.js";
 import { getIndexerPosition, saveIndexerPosition } from "../repositories/indexer-state.js";
 import {
+  clearFailedEvent,
+  failedEventFromDecoded,
+  recordFailedEvent,
+} from "../repositories/failed-events.js";
+import {
   eventsApplied,
+  eventsFailed,
   indexerLagLedgers,
   pagesFetched,
   pollErrors,
@@ -144,19 +150,47 @@ export class Poller {
     for (const raw of page.events) {
       const event = decodeEvent(raw);
       if (!event) continue;
-      const outcome = await applyEvent(
-        this.server,
-        this.config.contractId,
-        this.config.networkPassphrase,
-        event,
-      );
+
+      let outcome: string;
+      try {
+        outcome = await applyEvent(
+          this.server,
+          this.config.contractId,
+          this.config.networkPassphrase,
+          event,
+        );
+      } catch (err) {
+        // Log the failure and record it in the database so an operator can
+        // find it without tailing logs. The event is then skipped so the rest
+        // of the page — and the cursor — are not held hostage by one bad event.
+        this.log.error(
+          { err, kind: event.kind, streamId: event.streamId.toString(), eventId: event.id, ledger: event.ledger },
+          "event apply failed — skipping",
+        );
+        eventsFailed.inc({ kind: event.kind });
+        try {
+          await recordFailedEvent(failedEventFromDecoded(event, err));
+        } catch (recordErr) {
+          // Swallow — a failure to record must not mask the original error or
+          // block the page from advancing.
+          this.log.warn({ err: recordErr }, "could not persist failed-event record");
+        }
+        continue;
+      }
+
+      // The apply succeeded. Remove any stale failed-event row so operators
+      // only see events that are currently stuck.
+      try {
+        await clearFailedEvent(event.id);
+      } catch (clearErr) {
+        this.log.warn({ err: clearErr, eventId: event.id }, "could not clear failed-event record");
+      }
+
       this.log.info(
         { kind: event.kind, streamId: event.streamId.toString(), ledger: event.ledger, outcome },
         "applied event",
       );
-      // Raised only once the write has landed. If applying throws, the tick
-      // aborts without saving, so the page is read again and this ledger is
-      // never claimed as processed on the strength of a write that failed.
+      // Raised only once the write has landed.
       lastLedger = Math.max(lastLedger, event.ledger);
       eventsApplied.inc({ kind: event.kind, outcome });
     }
