@@ -4,7 +4,6 @@ import { disconnect } from "./db.js";
 import { Poller } from "./indexer/poller.js";
 import { logger } from "./logger.js";
 import { rootRoutes } from "./routes/root.js";
-import { metricsRoutes } from "./routes/metrics.js";
 import { statusRoutes } from "./routes/status.js";
 import { streamRoutes } from "./routes/streams.js";
 import { buildServer } from "./server.js";
@@ -12,11 +11,10 @@ import { buildServer } from "./server.js";
 async function main(): Promise<void> {
   const config = loadConfig();
 
-  const app = buildServer();
+  const app = await buildServer();
   await app.register(rootRoutes);
   await app.register(streamRoutes);
   await app.register(statusRoutes);
-  await app.register(metricsRoutes);
 
   const poller = new Poller(createRpcServer(config), config, logger);
   // The indexer runs in the background alongside the HTTP server. A failure
