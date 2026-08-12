@@ -12,7 +12,7 @@ import { buildServer } from "./server.js";
 async function main(): Promise<void> {
   const config = loadConfig();
 
-  const app = buildServer();
+  const app = await buildServer();
   await app.register(rootRoutes);
   await app.register(streamRoutes);
   await app.register(statusRoutes);

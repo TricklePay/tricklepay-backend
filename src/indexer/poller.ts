@@ -13,7 +13,6 @@ import {
 import {
   eventsApplied,
   eventsFailed,
-  eventsApplied,
   indexerLagLedgers,
   pagesFetched,
   pollErrors,
