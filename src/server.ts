@@ -3,6 +3,7 @@ import Fastify, { type FastifyBaseLogger, type FastifyInstance } from "fastify";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import { logger } from "./logger.js";
+import { httpRequestDuration, httpRequestsTotal } from "./metrics.js";
 import {
   apiErrorSchema,
   indexerStatusSchema,
@@ -23,6 +24,20 @@ export async function buildServer(): Promise<FastifyInstance> {
     // Fastify types its logger as FastifyBaseLogger; the pino instance
     // satisfies that interface at runtime.
     loggerInstance: logger as FastifyBaseLogger,
+  });
+
+  // Record every response against the Prometheus counters. `routeOptions.url`
+  // is the route pattern ("/streams/:id") rather than the resolved path, which
+  // keeps the label set bounded no matter how many distinct ids are requested.
+  // Unmatched requests fall back to "unknown" for the same reason.
+  app.addHook("onResponse", async (request, reply) => {
+    const labels = {
+      method: request.method,
+      route: request.routeOptions?.url ?? "unknown",
+      status: String(reply.statusCode),
+    };
+    httpRequestsTotal.inc(labels);
+    httpRequestDuration.observe(labels, reply.elapsedTime);
   });
 
   // The web client fetches this API from the browser, so it is always a

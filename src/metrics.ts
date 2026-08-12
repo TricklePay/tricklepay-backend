@@ -58,11 +58,15 @@ export class Counter {
       `# HELP ${this.name} ${this.help}`,
       `# TYPE ${this.name} counter`,
     ];
+    // Prometheus counters carry a `_total` sample suffix. Most metrics here are
+    // declared without it and have it added; one already ends in `_total`, and
+    // appending again would publish `..._total_total`.
+    const sampleName = this.name.endsWith("_total") ? this.name : `${this.name}_total`;
     if (this.values.size === 0) {
-      lines.push(`${this.name}_total 0`);
+      lines.push(`${sampleName} 0`);
     } else {
       for (const [key, v] of this.values) {
-        lines.push(`${this.name}_total${key} ${v}`);
+        lines.push(`${sampleName}${key} ${v}`);
       }
     }
     return lines.join("\n");
@@ -149,8 +153,15 @@ export class Histogram {
       entry = { counts: new Array<number>(this.buckets.length).fill(0), sum: 0, total: 0 };
       this.data.set(key, entry);
     }
+    // Only the narrowest bucket the value falls into is incremented here.
+    // `serialize` turns these into the cumulative counts Prometheus expects;
+    // incrementing every matching bucket as well would count each observation
+    // once per bucket it fits in.
     for (let i = 0; i < this.buckets.length; i++) {
-      if (value <= this.buckets[i]) entry.counts[i]++;
+      if (value <= this.buckets[i]) {
+        entry.counts[i]++;
+        break;
+      }
     }
     entry.sum += value;
     entry.total++;
