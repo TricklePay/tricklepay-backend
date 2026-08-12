@@ -91,7 +91,7 @@ describe("GET /metrics", () => {
     // the request itself. This test uses a server that has both the hook and the
     // route, mirroring production setup.
     const { buildServer } = await import("../../src/server.js");
-    const app = buildServer();
+    const app = await buildServer();
     await app.register(metricsRoutes);
 
     // First request: recorded by the hook.

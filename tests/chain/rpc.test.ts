@@ -1,4 +1,3 @@
-import { rpc } from "@stellar/stellar-sdk";
 import { describe, expect, it, vi } from "vitest";
 import { createRpcServer } from "../../src/chain/rpc.js";
 import type { Config } from "../../src/config.js";
@@ -9,13 +8,25 @@ import type { Config } from "../../src/config.js";
 // so no live network call is made.
 
 // Capture the options passed to `rpc.Server` without running real networking.
-const serverSpy = vi.spyOn(rpc, "Server").mockImplementation(function (
-  this: rpc.Server,
-  _url: string,
-  _opts?: object,
-) {
-  return this;
-} as unknown as typeof rpc.Server);
+// The SDK's `rpc` namespace is a frozen ESM export, so `Server` cannot be
+// replaced with vi.spyOn; the module itself is mocked instead, keeping every
+// other export intact.
+const serverSpy = vi.hoisted(() => vi.fn());
+
+vi.mock("@stellar/stellar-sdk", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@stellar/stellar-sdk")>();
+  return {
+    ...actual,
+    rpc: {
+      ...actual.rpc,
+      Server: class {
+        constructor(url: string, opts?: object) {
+          serverSpy(url, opts);
+        }
+      },
+    },
+  };
+});
 
 function configWith(rpcUrl: string): Config {
   return {
