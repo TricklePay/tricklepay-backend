@@ -19,6 +19,7 @@
     "prisma:migrate": "prisma migrate dev"
   },
   "dependencies": {
+    "@fastify/cors": "^11.3.0",
     "@prisma/client": "^6.2.1",
     "@stellar/stellar-sdk": "^13.1.0",
     "fastify": "^5.2.1",

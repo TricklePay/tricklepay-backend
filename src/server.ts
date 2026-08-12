@@ -1,3 +1,4 @@
+import cors from "@fastify/cors";
 import Fastify, { type FastifyBaseLogger, type FastifyInstance } from "fastify";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
@@ -9,9 +10,9 @@ import {
   streamViewSchema,
 } from "./schema.js";
 
-// Builds the Fastify instance with the shared logger, the OpenAPI plugin, and
-// the routes that do not depend on external services. Route groups that need
-// the database are registered by the caller during bootstrap.
+// Builds the Fastify instance with the shared logger, CORS, the OpenAPI
+// plugin, and the routes that do not depend on external services. Route groups
+// that need the database are registered by the caller during bootstrap.
 //
 // @fastify/swagger MUST be registered before any routes so that it can observe
 // every route schema. The shared JSON Schema definitions ($id-bearing objects)
@@ -22,6 +23,16 @@ export async function buildServer(): Promise<FastifyInstance> {
     // Fastify types its logger as FastifyBaseLogger; the pino instance
     // satisfies that interface at runtime.
     loggerInstance: logger as FastifyBaseLogger,
+  });
+
+  // The web client fetches this API from the browser, so it is always a
+  // cross-origin caller once the two run on separate ports or hosts. The data
+  // served here is public and read-only, so any origin is reflected by
+  // default; set CORS_ORIGIN to pin deployments to a known frontend. Not
+  // awaited because Fastify defers plugin loading until ready/listen, which
+  // keeps this builder synchronous for its callers.
+  void app.register(cors, {
+    origin: process.env.CORS_ORIGIN ?? true,
   });
 
   // Register shared schemas so routes can reference them with { $ref: "$id" }.
