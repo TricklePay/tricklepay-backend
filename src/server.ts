@@ -73,6 +73,15 @@ export async function buildServer(): Promise<FastifyInstance> {
         // them here — @fastify/swagger discovers them automatically.
       },
     },
+    // Without this, every shared schema is emitted under a positional name
+    // ("def-0", "def-1", ...) and the $ref targets in the routes point at
+    // those. Naming each component after its $id is what makes the spec
+    // readable and keeps generated clients stable as schemas are added.
+    refResolver: {
+      buildLocalReference(json, _baseUri, _fragment, i) {
+        return (json.$id as string | undefined) ?? `def-${i}`;
+      },
+    },
   });
 
   // Serve the interactive Swagger UI at /docs and the raw spec at /docs/json
