@@ -53,12 +53,13 @@ current clock, so the numbers are always current without a chain round-trip.
 | --- | --- | --- |
 | `GET` | `/health` | Liveness check. |
 | `GET` | `/status` | Indexer progress against the chain. |
-| `GET` | `/streams` | List streams. Query params: `sender`, `recipient`, `limit` (max 100), `offset`. |
+| `GET` | `/streams` | List streams. Query params: `sender`, `recipient`, `token`, `limit` (max 100), `offset`. |
 | `GET` | `/streams/:id` | A single stream by id. |
 
 Each stream is returned with its stored fields plus derived `vested`,
-`withdrawable`, and `status` (`pending`, `streaming`, `completed`, or
-`cancelled`). All amounts are strings to preserve 128-bit precision.
+`withdrawable`, `locked`, `progress` (basis points, 0–10000), and `status`
+(`pending`, `streaming`, `completed`, or `cancelled`). All amounts are strings
+to preserve 128-bit precision.
 
 `/status` reports the indexer's own position and the chain's head as two
 separate figures, because only the distance between them means anything:
