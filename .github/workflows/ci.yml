@@ -25,3 +25,48 @@ jobs:
       - run: npm test
 
       - run: npm run build
+
+  migration-check:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: tricklepay_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/tricklepay_test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Validate the migration chain against a clean database.  deploy
+      # applies every pending migration in order; if any step fails the
+      # chain is broken and the workflow stops with a clear error.
+      - name: Validate Prisma migrations
+        run: npx prisma migrate deploy
+
+      # Confirm the generated client matches the schema after migration.
+      - name: Verify generated client is in sync
+        run: npx prisma generate
+
+      # Run the integration suite against the same database.
+      - name: Integration tests
+        run: npx vitest run --project integration
