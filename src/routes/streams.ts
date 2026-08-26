@@ -193,6 +193,7 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
       const offset = parseOffset(query.offset);
       if (offset > MAX_OFFSET) {
         return reply.code(400).send({
+          code: "VALIDATION_ERROR",
           error:
             `offset must not exceed ${MAX_OFFSET}. Page through results in order with limit and offset, ` +
             "or narrow them with the sender, recipient, and token filters.",
@@ -205,7 +206,10 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
         if (!raw) continue;
         const normalized = normalizeAddress(raw);
         if (!normalized) {
-          return reply.code(400).send({ error: `invalid ${field} address` });
+          return reply.code(400).send({
+            code: "VALIDATION_ERROR",
+            error: `invalid ${field} address`,
+          });
         }
         filter[field] = normalized;
       }
@@ -295,12 +299,20 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
       try {
         streamId = BigInt(id);
       } catch {
-        return reply.code(400).send({ error: "invalid stream id", requestId: request.id });
+        return reply.code(400).send({
+          code: "VALIDATION_ERROR",
+          error: "invalid stream id",
+          requestId: request.id,
+        });
       }
 
       const stream = await getStream(streamId);
       if (!stream) {
-        return reply.code(404).send({ error: "stream not found", requestId: request.id });
+        return reply.code(404).send({
+          code: "NOT_FOUND",
+          error: "stream not found",
+          requestId: request.id,
+        });
       }
 
       const etag = `"${stream.updatedLedger}"`;

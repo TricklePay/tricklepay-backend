@@ -3,6 +3,7 @@
 // environment is used, so the same code works in local dev and in production.
 
 import { StrKey } from "@stellar/stellar-sdk";
+import { parseTrustedProxies } from "./proxy.js";
 
 try {
   process.loadEnvFile();
@@ -110,6 +111,7 @@ export interface Config {
   startLedger: number;
   bodyLimit: number;
   queryStringLimit: number;
+  trustedProxies: string[];
 }
 
 export function loadConfig(): Config {
@@ -137,5 +139,7 @@ export function loadConfig(): Config {
     startLedger: integer("INDEXER_START_LEDGER", 0),
     bodyLimit: integer("BODY_LIMIT", 1048576), // 1MB default
     queryStringLimit: integer("QUERY_STRING_LIMIT", 2048), // 2KB default
+    // Forwarded headers are honored only for these direct peers (#75).
+    trustedProxies: parseTrustedProxies(process.env.TRUSTED_PROXIES),
   };
 }
