@@ -12,8 +12,8 @@ import { buildServer } from "./server.js";
 async function main(): Promise<void> {
   const config = loadConfig();
 
-  const app = await buildServer();
-  await app.register(rootRoutes);
+  const app = await buildServer(config);
+  await app.register(rootRoutes(config));
   await app.register(streamRoutes);
   await app.register(statusRoutes);
   await app.register(metricsRoutes);

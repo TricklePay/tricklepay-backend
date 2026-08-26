@@ -10,6 +10,7 @@ import {
   streamListResponseSchema,
   streamViewSchema,
 } from "./schema.js";
+import type { Config } from "./config.js";
 
 // Builds the Fastify instance with the shared logger, CORS, the OpenAPI
 // plugin, and the routes that do not depend on external services. Route groups
@@ -19,11 +20,23 @@ import {
 // every route schema. The shared JSON Schema definitions ($id-bearing objects)
 // are added to the Fastify schema store here so that routes may reference them
 // with $ref and the plugin emits them as reusable OpenAPI components.
-export async function buildServer(): Promise<FastifyInstance> {
+export async function buildServer(config?: Config): Promise<FastifyInstance> {
   const app = Fastify({
     // Fastify types its logger as FastifyBaseLogger; the pino instance
     // satisfies that interface at runtime.
     loggerInstance: logger as FastifyBaseLogger,
+    bodyLimit: config?.bodyLimit,
+    querystringParser: (str: string) => {
+      if (config?.queryStringLimit && str.length > config.queryStringLimit) {
+        throw new Error("query string too long");
+      }
+      const params = new URLSearchParams(str);
+      const result: Record<string, string> = {};
+      params.forEach((value, key) => {
+        result[key] = value;
+      });
+      return result;
+    },
   });
 
   // Record every response against the Prometheus counters. `routeOptions.url`

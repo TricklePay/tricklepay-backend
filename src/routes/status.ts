@@ -12,9 +12,10 @@ import { getIndexerPosition } from "../repositories/indexer-state.js";
 // indexer that has stopped leaves a lag that no longer grows, and this is what
 // tells that apart from one that is genuinely level.
 export async function statusRoutes(app: FastifyInstance): Promise<void> {
-  app.get("/status", async () => {
+  app.get("/status", async (_request, reply) => {
     const position = await getIndexerPosition();
 
+    reply.header("Cache-Control", "no-store");
     return {
       indexer: {
         initialized: position !== null,
