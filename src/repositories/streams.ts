@@ -232,3 +232,26 @@ export async function listStreams(filter: StreamFilter): Promise<Stream[]> {
 export async function countStreams(filter: StreamFilter): Promise<number> {
   return prisma.stream.count({ where: whereFromFilter(filter) });
 }
+
+export interface StreamAggregate {
+  count: number;
+  totalAmount: Prisma.Decimal;
+  withdrawn: Prisma.Decimal;
+}
+
+// Row count plus amount totals for one where clause. The sums run in Postgres
+// over the decimal columns, so totals stay exact no matter how wide the
+// amounts get; they come back as Decimal rather than a JavaScript number.
+export async function aggregateStreams(where: Prisma.StreamWhereInput): Promise<StreamAggregate> {
+  const result = await prisma.stream.aggregate({
+    where,
+    _count: { streamId: true },
+    _sum: { totalAmount: true, withdrawn: true },
+  });
+
+  return {
+    count: result._count.streamId,
+    totalAmount: result._sum.totalAmount ?? new Prisma.Decimal(0),
+    withdrawn: result._sum.withdrawn ?? new Prisma.Decimal(0),
+  };
+}

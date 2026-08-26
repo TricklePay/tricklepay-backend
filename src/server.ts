@@ -8,6 +8,7 @@ import {
   apiErrorSchema,
   indexerStatusSchema,
   streamListResponseSchema,
+  streamSummaryResponseSchema,
   streamViewSchema,
 } from "./schema.js";
 import type { Config } from "./config.js";
@@ -67,6 +68,7 @@ export async function buildServer(config?: Config): Promise<FastifyInstance> {
   // @fastify/swagger will emit them as named components in the spec.
   app.addSchema(streamViewSchema);
   app.addSchema(streamListResponseSchema);
+  app.addSchema(streamSummaryResponseSchema);
   app.addSchema(indexerStatusSchema);
   app.addSchema(apiErrorSchema);
 
