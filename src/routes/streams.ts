@@ -179,12 +179,12 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
       try {
         streamId = BigInt(id);
       } catch {
-        return reply.code(400).send({ error: "invalid stream id" });
+        return reply.code(400).send({ error: "invalid stream id", requestId: request.id });
       }
 
       const stream = await getStream(streamId);
       if (!stream) {
-        return reply.code(404).send({ error: "stream not found" });
+        return reply.code(404).send({ error: "stream not found", requestId: request.id });
       }
 
       const etag = `"${stream.updatedLedger}"`;

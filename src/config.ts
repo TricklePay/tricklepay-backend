@@ -2,6 +2,8 @@
 // the working directory is read when present; otherwise the ambient
 // environment is used, so the same code works in local dev and in production.
 
+import { StrKey } from "@stellar/stellar-sdk";
+
 try {
   process.loadEnvFile();
 } catch {
@@ -41,6 +43,25 @@ function integer(name: string, fallback: number): number {
   return parsed;
 }
 
+// Floor for the poll interval. Anything smaller makes the indexer spin on the
+// RPC between ledgers, so values below it are rejected rather than trusted.
+export const MIN_POLL_INTERVAL_MS = 1000;
+
+function positiveInteger(name: string, fallback: number, min: number): number {
+  const raw = process.env[name];
+  if (!raw || raw.trim() === "") return fallback;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed)) {
+    throw new Error(`Environment variable ${name} must be an integer`);
+  }
+  if (parsed < min) {
+    throw new Error(
+      `Environment variable ${name} must be at least ${min}; a smaller interval would hammer the RPC`,
+    );
+  }
+  return parsed;
+}
+
 // Returns true when the URL resolves to a loopback address (localhost or
 // 127.x.x.x). These are the only hosts for which plain HTTP is acceptable.
 export function isLocalUrl(url: string): boolean {
@@ -60,6 +81,19 @@ function validateRpcUrl(url: string): void {
     throw new Error(
       `SOROBAN_RPC_URL "${url}" uses plain HTTP on a non-local host. ` +
         `Remote endpoints must use HTTPS. Use http:// only for localhost or 127.x.x.x.`,
+    );
+  }
+}
+
+// Validates the contract id parses as a Soroban contract address (a StrKey
+// contract id starting with "C"). A typo here previously surfaced only later as
+// confusing RPC failures; catching it while loading configuration fails fast
+// instead, before the server or indexer starts.
+function validateContractId(contractId: string): void {
+  if (!StrKey.isValidContract(contractId)) {
+    throw new Error(
+      `STREAM_CONTRACT_ID "${contractId}" is not a valid Soroban contract address. ` +
+        `Expected a 56-character StrKey contract id starting with "C".`,
     );
   }
 }
@@ -88,15 +122,18 @@ export function loadConfig(): Config {
   const rpcUrl = optional("SOROBAN_RPC_URL", DEFAULT_RPC_URLS[network]);
   validateRpcUrl(rpcUrl);
 
+  const contractId = required("STREAM_CONTRACT_ID");
+  validateContractId(contractId);
+
   return {
     port: integer("PORT", 3000),
     host: optional("HOST", "0.0.0.0"),
     databaseUrl: required("DATABASE_URL"),
     network,
     networkPassphrase,
-    rpcUrl: optional("SOROBAN_RPC_URL", DEFAULT_RPC_URLS[network]),
-    contractId: required("STREAM_CONTRACT_ID"),
-    pollIntervalMs: integer("INDEXER_POLL_INTERVAL_MS", 5000),
+    rpcUrl,
+    contractId,
+    pollIntervalMs: positiveInteger("INDEXER_POLL_INTERVAL_MS", 5000, MIN_POLL_INTERVAL_MS),
     startLedger: integer("INDEXER_START_LEDGER", 0),
     bodyLimit: integer("BODY_LIMIT", 1048576), // 1MB default
     queryStringLimit: integer("QUERY_STRING_LIMIT", 2048), // 2KB default

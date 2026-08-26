@@ -223,12 +223,19 @@ export const apiErrorSchema = {
   $id: ERROR_SCHEMA_ID,
   type: "object",
   description: "Error response.",
-  required: ["error"],
+  required: ["error", "requestId"],
   properties: {
     error: {
       type: "string",
       description: "Human-readable error message.",
       examples: ["stream not found"],
+    },
+    requestId: {
+      type: "string",
+      description:
+        "Request id echoed from the x-request-id response header, for matching " +
+        "this error to its server log entry.",
+      examples: ["req-1"],
     },
   },
 } as const;

@@ -122,10 +122,18 @@ derived from it. `npm run typecheck` covers the tests as well as `src`.
 
 ## Configuration
 
-All configuration is read from the environment; see `.env.example` for the full
-list. The required variables are `DATABASE_URL` and `STREAM_CONTRACT_ID`. The
-network defaults to testnet, and the RPC URL defaults to the public endpoint for
-the selected network.
+All configuration is read from the environment; `.env.example` is the complete,
+current template — copy it and fill in the required values. The only required
+variables are `DATABASE_URL` and `STREAM_CONTRACT_ID`.
+
+Everything else is optional, and the template lists each with its default:
+the network defaults to testnet, the RPC URL to the public endpoint for the
+selected network (`SOROBAN_RPC_URL` to override), the server listens on
+`PORT`/`HOST`, and `CORS_ORIGIN` pins which browser origin may call the API.
+`LOG_LEVEL` sets log verbosity, `BODY_LIMIT` and `QUERY_STRING_LIMIT` bound
+request sizes. The indexer polls every `INDEXER_POLL_INTERVAL_MS` (minimum
+1000) starting from `INDEXER_START_LEDGER` — zero means start at the chain's
+latest ledger rather than replaying history.
 
 ## Project structure
 

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { isLocalUrl, loadConfig } from "../src/config.js";
+import { MIN_POLL_INTERVAL_MS, isLocalUrl, loadConfig } from "../src/config.js";
 
 // `isLocalUrl` is tested in isolation first, then `loadConfig` is exercised
 // to confirm the validation fires at the right place with a readable message.
@@ -107,6 +107,146 @@ describe("loadConfig — RPC URL validation", () => {
   it("mentions HTTPS in the error message", () => {
     withEnv({ SOROBAN_RPC_URL: "http://example.com" }, () => {
       expect(() => loadConfig()).toThrow(/HTTPS/);
+    });
+  });
+});
+
+describe("loadConfig — STREAM_CONTRACT_ID validation", () => {
+  it("accepts a valid contract id unchanged", () => {
+    const valid = "CDMB62RVYAXJJNYYH7K442SHSAJIXTZ6K7JANGSMQF2T7MHCTVSK75SW";
+    withEnv({ STREAM_CONTRACT_ID: valid }, () => {
+      expect(loadConfig().contractId).toBe(valid);
+    });
+  });
+
+  it("rejects a missing contract id before the server starts", () => {
+    withEnv({ STREAM_CONTRACT_ID: undefined }, () => {
+      expect(() => loadConfig()).toThrow(
+        "Missing required environment variable: STREAM_CONTRACT_ID",
+      );
+    });
+  });
+
+  it("rejects an account address (G…) that is not a contract id", () => {
+    const accountId = "GAHNMOIKVQNJMKYU34HLJZLJYLEEMODDCMLLI5ZMTA7RCVWVIVOPZZZT";
+    withEnv({ STREAM_CONTRACT_ID: accountId }, () => {
+      expect(() => loadConfig()).toThrow(
+        `STREAM_CONTRACT_ID "${accountId}" is not a valid Soroban contract address`,
+      );
+    });
+  });
+
+  it("rejects a value that is not a StrKey at all", () => {
+    withEnv({ STREAM_CONTRACT_ID: "my-contract" }, () => {
+      expect(() => loadConfig()).toThrow(/not a valid Soroban contract address/);
+    });
+  });
+
+  it("rejects a truncated id whose base32 checksum cannot decode", () => {
+    withEnv({ STREAM_CONTRACT_ID: "CDMB62RVYAXJJNYYH7K442SH" }, () => {
+      expect(() => loadConfig()).toThrow(/not a valid Soroban contract address/);
+    });
+  });
+
+  it("names the setting in the rejection message", () => {
+    withEnv({ STREAM_CONTRACT_ID: "hello" }, () => {
+      expect(() => loadConfig()).toThrow(/^STREAM_CONTRACT_ID /);
+    });
+  });
+});
+
+describe("loadConfig — INDEXER_POLL_INTERVAL_MS bounds", () => {
+  it("keeps the 5000 default when omitted or blank", () => {
+    withEnv({ INDEXER_POLL_INTERVAL_MS: undefined }, () => {
+      expect(loadConfig().pollIntervalMs).toBe(5000);
+    });
+    withEnv({ INDEXER_POLL_INTERVAL_MS: "   " }, () => {
+      expect(loadConfig().pollIntervalMs).toBe(5000);
+    });
+  });
+
+  it("accepts an ordinary interval", () => {
+    withEnv({ INDEXER_POLL_INTERVAL_MS: "5000" }, () => {
+      expect(loadConfig().pollIntervalMs).toBe(5000);
+    });
+  });
+
+  it("accepts exactly the minimum interval", () => {
+    withEnv({ INDEXER_POLL_INTERVAL_MS: String(MIN_POLL_INTERVAL_MS) }, () => {
+      expect(loadConfig().pollIntervalMs).toBe(MIN_POLL_INTERVAL_MS);
+    });
+  });
+
+  it("rejects zero, which would busy-loop the indexer", () => {
+    withEnv({ INDEXER_POLL_INTERVAL_MS: "0" }, () => {
+      expect(() => loadConfig()).toThrow(/INDEXER_POLL_INTERVAL_MS.*at least/);
+    });
+  });
+
+  it("rejects intervals below the minimum", () => {
+    withEnv({ INDEXER_POLL_INTERVAL_MS: String(MIN_POLL_INTERVAL_MS - 1) }, () => {
+      expect(() => loadConfig()).toThrow(
+        `INDEXER_POLL_INTERVAL_MS must be at least ${MIN_POLL_INTERVAL_MS}`,
+      );
+    });
+  });
+
+  it("rejects negative intervals", () => {
+    withEnv({ INDEXER_POLL_INTERVAL_MS: "-1000" }, () => {
+      expect(() => loadConfig()).toThrow(/INDEXER_POLL_INTERVAL_MS must be at least/);
+    });
+  });
+
+  it("rejects non-integer values", () => {
+    withEnv({ INDEXER_POLL_INTERVAL_MS: "1.5" }, () => {
+      expect(() => loadConfig()).toThrow("INDEXER_POLL_INTERVAL_MS must be an integer");
+    });
+  });
+
+  it("rejects values that do not parse as numbers", () => {
+    withEnv({ INDEXER_POLL_INTERVAL_MS: "soon" }, () => {
+      expect(() => loadConfig()).toThrow("INDEXER_POLL_INTERVAL_MS must be an integer");
+    });
+  });
+});
+
+describe("loadConfig — INDEXER_START_LEDGER bounds", () => {
+  it("keeps zero semantics when omitted or zero", () => {
+    withEnv({ INDEXER_START_LEDGER: undefined }, () => {
+      expect(loadConfig().startLedger).toBe(0);
+    });
+    withEnv({ INDEXER_START_LEDGER: "0" }, () => {
+      expect(loadConfig().startLedger).toBe(0);
+    });
+  });
+
+  it("accepts a positive backfill ledger", () => {
+    withEnv({ INDEXER_START_LEDGER: "1234567" }, () => {
+      expect(loadConfig().startLedger).toBe(1234567);
+    });
+  });
+
+  it("rejects negative ledgers with an actionable message", () => {
+    withEnv({ INDEXER_START_LEDGER: "-1" }, () => {
+      expect(() => loadConfig()).toThrow(
+        "INDEXER_START_LEDGER must be a non-negative integer",
+      );
+    });
+  });
+
+  it("rejects fractional ledgers", () => {
+    withEnv({ INDEXER_START_LEDGER: "12.5" }, () => {
+      expect(() => loadConfig()).toThrow(
+        "INDEXER_START_LEDGER must be a non-negative integer",
+      );
+    });
+  });
+
+  it("rejects ledgers that do not parse as numbers", () => {
+    withEnv({ INDEXER_START_LEDGER: "latest" }, () => {
+      expect(() => loadConfig()).toThrow(
+        "INDEXER_START_LEDGER must be a non-negative integer",
+      );
     });
   });
 });
