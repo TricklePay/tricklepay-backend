@@ -223,4 +223,79 @@ describe("Poller", () => {
     // The third decoded event is at ledger 56290012; the fourth fails.
     expect(saved.lastLedger).toBeLessThan(LAST_APPLIED);
   });
+
+  it("detects a cursor regression and skips the page", async () => {
+    // A faulty RPC could return a cursor older than the one we already have.
+    // The poller must detect this and break out of the page loop instead of
+    // applying the same events again.
+    indexerState.getIndexerPosition.mockResolvedValue({
+      lastLedger: LAST_APPLIED,
+      chainLedger: CHAIN_HEAD,
+      cursor: "zzz-later-cursor",
+      updatedAt: new Date(0),
+    });
+    chain.getContractEvents.mockResolvedValue({
+      events: captured.events,
+      latestLedger: CHAIN_HEAD,
+      cursor: "aaa-earlier-cursor",
+    });
+
+    // The cursor regression path breaks out of tick without calling
+    // saveIndexerPosition, so pollOnce would run forever. Use a custom
+    // stop trigger: after the first getContractEvents call (which returns
+    // the regressed cursor), stop on the next call.
+    const poller = new Poller(server, config, log);
+    let callCount = 0;
+    chain.getContractEvents.mockImplementation(async () => {
+      callCount++;
+      if (callCount > 1) {
+        poller.stop();
+        return { events: [], latestLedger: CHAIN_HEAD, cursor: CURSOR };
+      }
+      return { events: captured.events, latestLedger: CHAIN_HEAD, cursor: "aaa-earlier-cursor" };
+    });
+
+    await poller.start();
+
+    // The poller should not have applied any events from the regressed page.
+    expect(indexer.applyEvent).not.toHaveBeenCalled();
+  });
+
+  it("continues normally when cursor advances", async () => {
+    // Normal progression: each page cursor is lexicographically greater than
+    // the previous one.
+    indexerState.getIndexerPosition.mockResolvedValue({
+      lastLedger: 56000000,
+      chainLedger: CHAIN_HEAD,
+      cursor: "aaa-earlier-cursor",
+      updatedAt: new Date(0),
+    });
+    chain.getContractEvents.mockResolvedValue({
+      events: captured.events,
+      latestLedger: CHAIN_HEAD,
+      cursor: "zzz-later-cursor",
+    });
+
+    await pollOnce();
+
+    // Events should be applied normally.
+    expect(indexer.applyEvent).toHaveBeenCalled();
+  });
+
+  it("treats unchanged cursor as drained (not a regression)", async () => {
+    // When the cursor does not change, isBacklogDrained returns true. This is
+    // different from a regression — it means the RPC has nothing further.
+    indexerState.getIndexerPosition.mockResolvedValue({
+      lastLedger: LAST_APPLIED,
+      chainLedger: CHAIN_HEAD,
+      cursor: CURSOR,
+      updatedAt: new Date(0),
+    });
+    chain.getContractEvents.mockResolvedValue(pageOf(captured.events));
+
+    await pollOnce();
+
+    // The page is applied once (isBacklogDrained breaks the loop), not skipped.
+    expect(indexer.applyEvent).toHaveBeenCalled();
+  });
 });
