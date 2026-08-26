@@ -279,8 +279,21 @@ export const apiErrorSchema = {
   $id: ERROR_SCHEMA_ID,
   type: "object",
   description: "Error response.",
-  required: ["error", "requestId"],
+  required: ["code", "error", "requestId"],
   properties: {
+    code: {
+      type: "string",
+      enum: [
+        "VALIDATION_ERROR",
+        "NOT_FOUND",
+        "REQUEST_ERROR",
+        "INTERNAL_SERVER_ERROR",
+      ],
+      description:
+        "Stable machine-readable error category so clients can retry or " +
+        "correct input without parsing the message.",
+      examples: ["NOT_FOUND"],
+    },
     error: {
       type: "string",
       description: "Human-readable error message.",

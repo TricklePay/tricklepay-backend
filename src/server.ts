@@ -9,6 +9,7 @@ import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import { logger } from "./logger.js";
 import { httpRequestDuration, httpRequestsTotal } from "./metrics.js";
+import { serviceVersion } from "./version.js";
 import {
   apiErrorSchema,
   indexerStatusSchema,
@@ -17,6 +18,7 @@ import {
   streamViewSchema,
 } from "./schema.js";
 import type { Config } from "./config.js";
+import { isTrustedProxyAddress, parseTrustedProxies } from "./proxy.js";
 
 // ---------------------------------------------------------------------------
 // Request ids.
@@ -39,6 +41,47 @@ function sanitizeRequestId(value: unknown): string | undefined {
   return REQUEST_ID_PATTERN.test(value) ? value : undefined;
 }
 
+// ---------------------------------------------------------------------------
+// Error redaction (#74).
+//
+// Raw RPC or database errors can carry connection strings, SQL fragments, or
+// stack traces that must never reach a client. Outgoing messages are stripped
+// of credential-bearing URLs and collapsed to their first line; the original
+// error is preserved in the structured request log together with the request
+// id for diagnosis.
+// ---------------------------------------------------------------------------
+
+/** Matches URLs with an authority that can embed credentials, e.g. postgres://user:pass@host/db */
+const CREDENTIAL_URL_PATTERN = /[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\s/@]*:[^\s/@]*@[^\s]*/g;
+
+export function redactErrorMessage(message: string): string {
+  // Keep only the first line so stack traces and multi-line driver errors are
+  // never echoed back to clients.
+  const firstLine = message.split("\n")[0].trim();
+  return firstLine.replace(CREDENTIAL_URL_PATTERN, "[redacted]");
+}
+
+// ---------------------------------------------------------------------------
+// Structured error codes (#73).
+//
+// Every API failure carries a stable, machine-readable `code` alongside the
+// existing message and status, so clients can branch on the category without
+// parsing human-readable text.
+// ---------------------------------------------------------------------------
+
+export type ApiErrorCode =
+  | "VALIDATION_ERROR"
+  | "NOT_FOUND"
+  | "REQUEST_ERROR"
+  | "INTERNAL_SERVER_ERROR";
+
+export function errorCodeForStatus(statusCode: number): ApiErrorCode {
+  if (statusCode === 400) return "VALIDATION_ERROR";
+  if (statusCode === 404) return "NOT_FOUND";
+  if (statusCode >= 500) return "INTERNAL_SERVER_ERROR";
+  return "REQUEST_ERROR";
+}
+
 // Builds the Fastify instance with the shared logger, CORS, the OpenAPI
 // plugin, and the routes that do not depend on external services. Route groups
 // that need the database are registered by the caller during bootstrap.
@@ -48,11 +91,21 @@ function sanitizeRequestId(value: unknown): string | undefined {
 // are added to the Fastify schema store here so that routes may reference them
 // with $ref and the plugin emits them as reusable OpenAPI components.
 export async function buildServer(config?: Config): Promise<FastifyInstance> {
+  const trustedProxies = config?.trustedProxies ?? [];
   const app = Fastify({
     // Fastify types its logger as FastifyBaseLogger; the pino instance
     // satisfies that interface at runtime.
     loggerInstance: logger as FastifyBaseLogger,
     bodyLimit: config?.bodyLimit,
+    // Forwarded headers (X-Forwarded-For, X-Forwarded-Proto) are honored only
+    // when the direct connection peer is an explicitly trusted proxy (#75).
+    // Without configuration the socket address is used as-is, so a direct
+    // client cannot spoof the recorded client address in logs or request
+    // metadata.
+    trustProxy:
+      trustedProxies.length > 0
+        ? (address: string) => isTrustedProxyAddress(address, trustedProxies)
+        : false,
     // Derive the request id from a client-supplied header when it is safe,
     // otherwise generate one. Fastify binds the id to the per-request child
     // logger, so it lands in every structured request log line as `reqId`.
@@ -92,15 +145,25 @@ export async function buildServer(config?: Config): Promise<FastifyInstance> {
   });
 
   // Attach the request id to error bodies so an error a client saw can be
-  // traced to its log lines. Status codes are preserved; unexpected failures
-  // (no statusCode, i.e. 500s) report a generic message rather than leaking
-  // internals.
+  // traced to its log lines. Status codes are preserved and each failure
+  // carries a stable machine-readable code (#73). Outgoing messages are
+  // redacted so connection strings, SQL fragments, or stack traces never
+  // reach the client (#74); the original error is logged server-side with
+  // the request id for diagnosis.
   app.setErrorHandler((err: FastifyError, request, reply) => {
     const statusCode = typeof err.statusCode === "number" && err.statusCode >= 400
       ? err.statusCode
       : 500;
+    if (statusCode >= 500) {
+      request.log.error({ err }, "request failed");
+    }
+    const message =
+      statusCode >= 500
+        ? "internal server error"
+        : redactErrorMessage(err.message);
     void reply.status(statusCode).send({
-      error: statusCode >= 500 ? "internal server error" : err.message,
+      code: errorCodeForStatus(statusCode),
+      error: message,
       requestId: request.id,
     });
   });
@@ -109,6 +172,7 @@ export async function buildServer(config?: Config): Promise<FastifyInstance> {
   // with the request id attached like every other error response.
   app.setNotFoundHandler((request, reply) => {
     void reply.status(404).send({
+      code: errorCodeForStatus(404),
       error: `Route ${request.method} ${request.url} not found`,
       requestId: request.id,
     });
@@ -188,20 +252,26 @@ export async function buildServer(config?: Config): Promise<FastifyInstance> {
   app.get("/health", {
     schema: {
       summary: "Liveness check",
-      description: "Returns 200 when the server is up. No database read is performed.",
+      description:
+        "Returns 200 when the server is up, along with the running service version. No database read is performed.",
       tags: ["indexer"],
       response: {
         200: {
           type: "object",
-          required: ["status"],
+          required: ["status", "version"],
           properties: {
             status: { type: "string", enum: ["ok"] },
+            version: {
+              type: "string",
+              description:
+                "Service version from the package manifest, for distinguishing binaries during rolling releases.",
+            },
           },
         },
       },
     },
   }, async () => {
-    return { status: "ok" };
+    return { status: "ok", version: serviceVersion };
   });
 
   return app;

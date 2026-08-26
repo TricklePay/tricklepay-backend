@@ -86,6 +86,7 @@ describe("request ids", () => {
     expect(response.statusCode).toBe(400);
     expect(response.headers["x-request-id"]).toBe("trace-error-1");
     expect(response.json()).toEqual({
+      code: "VALIDATION_ERROR",
       error: "invalid stream id",
       requestId: "trace-error-1",
     });
