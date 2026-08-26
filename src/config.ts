@@ -74,6 +74,8 @@ export interface Config {
   contractId: string;
   pollIntervalMs: number;
   startLedger: number;
+  bodyLimit: number;
+  queryStringLimit: number;
 }
 
 export function loadConfig(): Config {
@@ -96,5 +98,7 @@ export function loadConfig(): Config {
     contractId: required("STREAM_CONTRACT_ID"),
     pollIntervalMs: integer("INDEXER_POLL_INTERVAL_MS", 5000),
     startLedger: integer("INDEXER_START_LEDGER", 0),
+    bodyLimit: integer("BODY_LIMIT", 1048576), // 1MB default
+    queryStringLimit: integer("QUERY_STRING_LIMIT", 2048), // 2KB default
   };
 }

@@ -119,7 +119,7 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
         },
       },
     },
-    async (request) => {
+    async (request, reply) => {
       const query = request.query as {
         sender?: string;
         recipient?: string;
@@ -141,6 +141,7 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
         countStreams(filter),
       ]);
 
+      reply.header("Cache-Control", "public, max-age=30");
       return { streams: streams.map(toView), total, limit, offset };
     },
   );
@@ -165,6 +166,7 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
         },
         response: {
           200: { $ref: STREAM_VIEW_SCHEMA_ID },
+          304: { type: "null" },
           400: { $ref: ERROR_SCHEMA_ID },
           404: { $ref: ERROR_SCHEMA_ID },
         },
@@ -183,6 +185,15 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
       const stream = await getStream(streamId);
       if (!stream) {
         return reply.code(404).send({ error: "stream not found" });
+      }
+
+      const etag = `"${stream.updatedLedger}"`;
+      reply.header("Cache-Control", "public, max-age=30");
+      reply.header("ETag", etag);
+
+      const ifNoneMatch = request.headers["if-none-match"];
+      if (ifNoneMatch === etag) {
+        return reply.code(304).send();
       }
 
       return toView(stream);
