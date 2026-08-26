@@ -1,18 +1,29 @@
 import type { FastifyInstance } from "fastify";
-import type { Stream } from "@prisma/client";
-import { countStreams, getStream, listStreams } from "../repositories/streams.js";
+import { Prisma, type Stream } from "@prisma/client";
+import { StrKey } from "@stellar/stellar-sdk";
+import {
+  aggregateStreams,
+  countStreams,
+  getStream,
+  listStreams,
+} from "../repositories/streams.js";
 import { vestedAmount, withdrawableAmount } from "../lib/vesting.js";
 import {
   apiErrorSchema,
   ERROR_SCHEMA_ID,
   streamListResponseSchema,
   STREAM_LIST_RESPONSE_SCHEMA_ID,
+  streamSummaryResponseSchema,
+  STREAM_SUMMARY_RESPONSE_SCHEMA_ID,
   streamViewSchema,
   STREAM_VIEW_SCHEMA_ID,
 } from "../schema.js";
 
 const MAX_LIMIT = 100;
 const DEFAULT_LIMIT = 50;
+// Above this offset a scan gets expensive enough that callers should page
+// through results in order or narrow them with filters instead.
+const MAX_OFFSET = 10000;
 
 type StreamStatus = "pending" | "streaming" | "completed" | "cancelled";
 
@@ -71,6 +82,40 @@ function parseOffset(raw: string | undefined): number {
   return Math.floor(value);
 }
 
+function parseIncludeTotal(raw: string | undefined): boolean {
+  return raw === "true";
+}
+
+// Stellar addresses are canonical uppercase base32 strkeys, but callers
+// sometimes send lowercase or whitespace-padded spellings. Normalize those
+// before matching so every rendering of one address filters identically, and
+// reject values that are neither a valid account nor a valid contract address.
+// Returns null when the input cannot be normalized safely.
+function normalizeAddress(raw: string): string | null {
+  const candidate = raw.trim().toUpperCase();
+  if (StrKey.isValidEd25519PublicKey(candidate) || StrKey.isValidContract(candidate)) {
+    return candidate;
+  }
+  return null;
+}
+
+const SUMMARY_STATUSES = ["pending", "streaming", "completed", "cancelled"] as const;
+
+// The database-side predicate for each lifecycle status, mirroring `statusOf`:
+// cancelled wins first, then the start/end time windows against the clock.
+function statusWhere(status: StreamStatus, now: bigint): Prisma.StreamWhereInput {
+  switch (status) {
+    case "cancelled":
+      return { cancelled: true };
+    case "pending":
+      return { cancelled: false, startTime: { gt: now } };
+    case "completed":
+      return { cancelled: false, endTime: { lte: now } };
+    case "streaming":
+      return { cancelled: false, startTime: { lte: now }, endTime: { gt: now } };
+  }
+}
+
 export async function streamRoutes(app: FastifyInstance): Promise<void> {
   // Ensure the shared schemas are available whether this plugin is registered
   // on a full server (which calls addSchema centrally) or a bare Fastify
@@ -78,6 +123,9 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
   // the schema is already present throws; we guard against that here.
   if (!app.getSchema(STREAM_VIEW_SCHEMA_ID)) app.addSchema(streamViewSchema);
   if (!app.getSchema(STREAM_LIST_RESPONSE_SCHEMA_ID)) app.addSchema(streamListResponseSchema);
+  if (!app.getSchema(STREAM_SUMMARY_RESPONSE_SCHEMA_ID)) {
+    app.addSchema(streamSummaryResponseSchema);
+  }
   if (!app.getSchema(ERROR_SCHEMA_ID)) app.addSchema(apiErrorSchema);
 
   app.get(
@@ -86,22 +134,26 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
       schema: {
         summary: "List streams",
         description:
-          "Returns a paginated list of token streams. Optionally filter by sender, recipient, or token address.",
+          "Returns a paginated list of token streams. Optionally filter by sender, recipient, or token address; " +
+          "address filters accept lowercase and whitespace-padded spellings and are normalized before matching.",
         tags: ["streams"],
         querystring: {
           type: "object",
           properties: {
             sender: {
               type: "string",
-              description: "Filter by sender Stellar address.",
+              description:
+                "Filter by sender Stellar address. Trimmed and uppercased before matching.",
             },
             recipient: {
               type: "string",
-              description: "Filter by recipient Stellar address.",
+              description:
+                "Filter by recipient Stellar address. Trimmed and uppercased before matching.",
             },
             token: {
               type: "string",
-              description: "Filter by token contract Stellar address.",
+              description:
+                "Filter by token contract Stellar address. Trimmed and uppercased before matching.",
             },
             limit: {
               type: "string",
@@ -109,13 +161,21 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
             },
             offset: {
               type: "string",
-              description: "Zero-based offset for pagination. Defaults to 0.",
+              description: `Zero-based offset for pagination. Defaults to 0 and must not exceed ${MAX_OFFSET}.`,
+            },
+            includeTotal: {
+              type: "string",
+              enum: ["true", "false"],
+              description:
+                "When true, the response includes the total number of streams matching the filters. " +
+                "Defaults to false, which skips the count query and omits total from the response.",
             },
           },
           additionalProperties: false,
         },
         response: {
           200: { $ref: STREAM_LIST_RESPONSE_SCHEMA_ID },
+          400: { $ref: ERROR_SCHEMA_ID },
         },
       },
     },
@@ -126,23 +186,79 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
         token?: string;
         limit?: string;
         offset?: string;
+        includeTotal?: string;
       };
 
       const limit = parseLimit(query.limit);
       const offset = parseOffset(query.offset);
-      const filter = {
-        sender: query.sender,
-        recipient: query.recipient,
-        token: query.token,
-      };
+      if (offset > MAX_OFFSET) {
+        return reply.code(400).send({
+          error:
+            `offset must not exceed ${MAX_OFFSET}. Page through results in order with limit and offset, ` +
+            "or narrow them with the sender, recipient, and token filters.",
+        });
+      }
+
+      const filter: { sender?: string; recipient?: string; token?: string } = {};
+      for (const field of ["sender", "recipient", "token"] as const) {
+        const raw = query[field];
+        if (!raw) continue;
+        const normalized = normalizeAddress(raw);
+        if (!normalized) {
+          return reply.code(400).send({ error: `invalid ${field} address` });
+        }
+        filter[field] = normalized;
+      }
+
+      const includeTotal = parseIncludeTotal(query.includeTotal);
 
       const [streams, total] = await Promise.all([
         listStreams({ ...filter, limit, offset }),
-        countStreams(filter),
+        includeTotal ? countStreams(filter) : Promise.resolve(undefined),
       ]);
 
       reply.header("Cache-Control", "public, max-age=30");
-      return { streams: streams.map(toView), total, limit, offset };
+      return {
+        streams: streams.map(toView),
+        ...(total === undefined ? {} : { total }),
+        limit,
+        offset,
+      };
+    },
+  );
+
+  app.get(
+    "/streams/summary",
+    {
+      schema: {
+        summary: "Summarize streams by status",
+        description:
+          "Returns counts and exact amount totals for each lifecycle status across all indexed streams. " +
+          "Totals are aggregated in the database over decimal columns, so they never lose precision.",
+        tags: ["streams"],
+        response: {
+          200: { $ref: STREAM_SUMMARY_RESPONSE_SCHEMA_ID },
+        },
+      },
+    },
+    async (_request, reply) => {
+      const now = nowSeconds();
+      const entries = await Promise.all(
+        SUMMARY_STATUSES.map(async (status) => {
+          const aggregate = await aggregateStreams(statusWhere(status, now));
+          return [
+            status,
+            {
+              count: aggregate.count,
+              totalAmount: aggregate.totalAmount.toString(),
+              withdrawn: aggregate.withdrawn.toString(),
+            },
+          ] as const;
+        }),
+      );
+
+      reply.header("Cache-Control", "public, max-age=30");
+      return Object.fromEntries(entries);
     },
   );
 

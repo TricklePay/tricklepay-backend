@@ -58,6 +58,8 @@ const config: Config = {
   // Zero keeps the tests instant without changing which pages a tick fetches.
   pollIntervalMs: 0,
   startLedger: 0,
+  bodyLimit: 1048576,
+  queryStringLimit: 2048,
 };
 
 const log = pino({ level: "silent" });

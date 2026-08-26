@@ -23,6 +23,7 @@ const streams = vi.hoisted(() => ({
   getStream: vi.fn(),
   listStreams: vi.fn(),
   countStreams: vi.fn(),
+  aggregateStreams: vi.fn(),
   insertStream: vi.fn(),
   upsertStream: vi.fn(),
   applyWithdrawal: vi.fn(),
@@ -89,6 +90,13 @@ describe("GET /docs/json (OpenAPI spec)", () => {
     expect(paths).toHaveProperty("/streams/{id}");
   });
 
+  it("documents the GET /streams/summary path", async () => {
+    const spec = await getSpec();
+    const paths = spec.paths as Record<string, unknown>;
+    expect(paths).toHaveProperty("/streams/summary");
+    expect((paths["/streams/summary"] as Record<string, unknown>)).toHaveProperty("get");
+  });
+
   it("documents the GET /status path", async () => {
     const spec = await getSpec();
     const paths = spec.paths as Record<string, unknown>;
@@ -130,11 +138,45 @@ describe("GET /docs/json (OpenAPI spec)", () => {
     )?.schemas ?? {};
     const listSchema = schemas["StreamListResponse"] as {
       properties?: Record<string, unknown>;
+      required?: string[];
     };
     expect(listSchema?.properties).toHaveProperty("total");
     expect(listSchema?.properties).toHaveProperty("limit");
     expect(listSchema?.properties).toHaveProperty("offset");
     expect(listSchema?.properties).toHaveProperty("streams");
+  });
+
+  it("StreamListResponse.total is optional so both response variants are valid", async () => {
+    const spec = await getSpec();
+    const schemas = (
+      spec.components as { schemas?: Record<string, unknown> }
+    )?.schemas ?? {};
+    const listSchema = schemas["StreamListResponse"] as { required?: string[] };
+    expect(listSchema?.required).not.toContain("total");
+  });
+
+  it("documents the includeTotal query parameter on GET /streams", async () => {
+    const spec = await getSpec();
+    const paths = spec.paths as Record<string, Record<string, unknown>>;
+    const params = (paths["/streams"]?.get as { parameters?: Array<Record<string, unknown>> })
+      ?.parameters ?? [];
+    const names = params.map((p) => p.name);
+    expect(names).toContain("includeTotal");
+    expect(names).toContain("offset");
+  });
+
+  it("exports StreamSummaryResponse as a reusable component schema", async () => {
+    const spec = await getSpec();
+    const schemas = (
+      spec.components as { schemas?: Record<string, unknown> }
+    )?.schemas ?? {};
+    expect(schemas).toHaveProperty("StreamSummaryResponse");
+    const summary = schemas["StreamSummaryResponse"] as {
+      properties?: Record<string, unknown>;
+    };
+    for (const status of ["pending", "streaming", "completed", "cancelled"]) {
+      expect(summary?.properties).toHaveProperty(status);
+    }
   });
 
   it("exports IndexerStatus as a reusable component schema", async () => {

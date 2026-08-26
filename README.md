@@ -53,7 +53,8 @@ current clock, so the numbers are always current without a chain round-trip.
 | --- | --- | --- |
 | `GET` | `/health` | Liveness check. |
 | `GET` | `/status` | Indexer progress against the chain. |
-| `GET` | `/streams` | List streams. Query params: `sender`, `recipient`, `limit` (max 100), `offset`. |
+| `GET` | `/streams` | List streams. Query params: `sender`, `recipient`, `limit` (max 100), `offset` (max 10000), `includeTotal`. Address filters accept lowercase and padded spellings and are normalized before matching. `total` is only included when `includeTotal=true`. |
+| `GET` | `/streams/summary` | Counts and exact amount totals per status (`pending`, `streaming`, `completed`, `cancelled`). |
 | `GET` | `/streams/:id` | A single stream by id. |
 
 Each stream is returned with its stored fields plus derived `vested`,

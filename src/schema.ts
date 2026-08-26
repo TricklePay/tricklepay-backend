@@ -16,6 +16,7 @@
 // ---------------------------------------------------------------------------
 export const STREAM_VIEW_SCHEMA_ID = "StreamView";
 export const STREAM_LIST_RESPONSE_SCHEMA_ID = "StreamListResponse";
+export const STREAM_SUMMARY_RESPONSE_SCHEMA_ID = "StreamSummaryResponse";
 export const INDEXER_STATUS_SCHEMA_ID = "IndexerStatus";
 export const ERROR_SCHEMA_ID = "ApiError";
 
@@ -137,8 +138,10 @@ export const streamViewSchema = {
 export const streamListResponseSchema = {
   $id: STREAM_LIST_RESPONSE_SCHEMA_ID,
   type: "object",
-  description: "Paginated list of streams.",
-  required: ["streams", "total", "limit", "offset"],
+  description:
+    "Paginated list of streams. The total is only computed and included when " +
+    "the request opted in with includeTotal=true.",
+  required: ["streams", "limit", "offset"],
   properties: {
     streams: {
       type: "array",
@@ -147,7 +150,9 @@ export const streamListResponseSchema = {
     },
     total: {
       type: "integer",
-      description: "Total number of streams matching the query filters.",
+      description:
+        "Total number of streams matching the query filters. Present only when " +
+        "the request passed includeTotal=true; omitted otherwise to avoid the count query.",
       examples: [123],
     },
     limit: {
@@ -160,6 +165,57 @@ export const streamListResponseSchema = {
       description: "Zero-based index of the first stream on this page.",
       examples: [0],
     },
+  },
+} as const;
+
+// ---------------------------------------------------------------------------
+// StreamSummaryResponse — counts and amount totals per lifecycle status.
+// ---------------------------------------------------------------------------
+const streamStatusSummarySchema = (description: string) =>
+  ({
+    type: "object",
+    description,
+    required: ["count", "totalAmount", "withdrawn"],
+    properties: {
+      count: {
+        type: "integer",
+        description: "Number of streams currently in this status.",
+        minimum: 0,
+        examples: [12],
+      },
+      totalAmount: {
+        type: "string",
+        description:
+          "Sum of totalAmount across the streams in this status (uint128, decimal string).",
+        examples: ["1000000000000000"],
+      },
+      withdrawn: {
+        type: "string",
+        description:
+          "Sum of withdrawn across the streams in this status (uint128, decimal string).",
+        examples: ["25000000000000"],
+      },
+    },
+  }) as const;
+
+export const streamSummaryResponseSchema = {
+  $id: STREAM_SUMMARY_RESPONSE_SCHEMA_ID,
+  type: "object",
+  description:
+    "Counts and amount totals for all indexed streams grouped by lifecycle status. " +
+    "Totals are aggregated by the database over the decimal columns, so they stay exact.",
+  required: ["pending", "streaming", "completed", "cancelled"],
+  properties: {
+    pending: streamStatusSummarySchema(
+      "Streams whose vesting has not started yet: current time is before startTime.",
+    ),
+    streaming: streamStatusSummarySchema(
+      "Active streams: started, not cancelled, and not fully vested.",
+    ),
+    completed: streamStatusSummarySchema(
+      "Fully vested streams: current time has reached endTime.",
+    ),
+    cancelled: streamStatusSummarySchema("Streams that have been cancelled."),
   },
 } as const;
 
