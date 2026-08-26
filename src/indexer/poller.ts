@@ -2,7 +2,7 @@ import { rpc } from "@stellar/stellar-sdk";
 import type { Config } from "../config.js";
 import type { Logger } from "../logger.js";
 import { EVENT_PAGE_LIMIT, getContractEvents, type EventPage } from "../chain/rpc.js";
-import { decodeEvent } from "../chain/events.js";
+import { decodeEvent, InvalidEventError } from "../chain/events.js";
 import { applyEvent } from "./apply.js";
 import { getIndexerPosition, saveIndexerPosition } from "../repositories/indexer-state.js";
 import {
@@ -128,6 +128,20 @@ export class Poller {
         throw err;
       }
 
+      // Detect a cursor that moved backwards. The cursor is an opaque string
+      // but uses zero-padded TOID-index formatting, so lexicographic
+      // comparison matches chain order. A regression means the RPC returned
+      // an inconsistent page — applying it would re-process events and
+      // corrupt state, so the tick stops and the next poll retries from the
+      // last saved position.
+      if (current.cursor !== undefined && page.cursor < current.cursor) {
+        this.log.warn(
+          { previousCursor: current.cursor, regressedCursor: page.cursor },
+          "cursor regression detected — skipping page",
+        );
+        break;
+      }
+
       pagesFetched.inc();
       const nextPosition = await this.applyPage(page, current.lastLedger);
       current = nextPosition;
@@ -148,7 +162,31 @@ export class Poller {
     let lastLedger = previousLastLedger;
 
     for (const raw of page.events) {
-      const event = decodeEvent(raw);
+      let event;
+      try {
+        event = decodeEvent(raw);
+      } catch (err) {
+        if (err instanceof InvalidEventError) {
+          this.log.warn(
+            { err, eventId: raw.id, ledger: raw.ledger },
+            "malformed event — skipping",
+          );
+          eventsFailed.inc({ kind: "malformed" });
+          try {
+            await recordFailedEvent({
+              eventId: raw.id ?? "unknown",
+              kind: "malformed",
+              streamId: "0",
+              ledger: raw.ledger ?? 0,
+              error: err.message,
+            });
+          } catch (recordErr) {
+            this.log.warn({ err: recordErr }, "could not persist failed-event record");
+          }
+          continue;
+        }
+        throw err;
+      }
       if (!event) continue;
 
       let outcome: string;

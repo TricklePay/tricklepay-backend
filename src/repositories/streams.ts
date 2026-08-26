@@ -169,27 +169,31 @@ export async function applyWithdrawal(input: WithdrawalInput): Promise<ApplyResu
 // vested-but-unwithdrawn balance and refunding the rest to the sender. So the
 // frozen total is what has been withdrawn so far plus the recipient's payout,
 // and `withdrawn` reaches it, leaving nothing further withdrawable.
+//
+// The read and guarded update run in a single transaction so a concurrent
+// withdrawal cannot change `withdrawn` between the two operations, which would
+// freeze the stream at a stale total.
 export async function applyCancellation(input: CancellationInput): Promise<ApplyResult> {
-  const stored = await prisma.stream.findUnique({ where: { streamId: input.streamId } });
-  if (!stored) return "missing";
+  return prisma.$transaction(async (tx) => {
+    const stored = await tx.stream.findUnique({ where: { streamId: input.streamId } });
+    if (!stored) return "missing";
 
-  const frozenTotal = stored.withdrawn.plus(decimal(input.recipientAmount));
+    const frozenTotal = stored.withdrawn.plus(decimal(input.recipientAmount));
 
-  // The withdrawn balance read above is part of the guard, so a write that
-  // raced with this one loses instead of freezing the stream at a stale total.
-  const result = await prisma.stream.updateMany({
-    where: { ...notYetApplied(input.streamId, input.eventId), withdrawn: stored.withdrawn },
-    data: {
-      totalAmount: frozenTotal,
-      withdrawn: frozenTotal,
-      endTime: input.cancelledAt,
-      cancelled: true,
-      updatedLedger: input.ledger,
-      lastEventId: input.eventId,
-    },
+    const result = await tx.stream.updateMany({
+      where: { ...notYetApplied(input.streamId, input.eventId), withdrawn: stored.withdrawn },
+      data: {
+        totalAmount: frozenTotal,
+        withdrawn: frozenTotal,
+        endTime: input.cancelledAt,
+        cancelled: true,
+        updatedLedger: input.ledger,
+        lastEventId: input.eventId,
+      },
+    });
+
+    return result.count > 0 ? "applied" : "duplicate";
   });
-
-  return result.count > 0 ? "applied" : "duplicate";
 }
 
 // Tells the two reasons a guarded update matched nothing apart: the stream was

@@ -193,4 +193,15 @@ describe("applyEvent", () => {
     expect(await apply(WITHDRAWN)).toBe("missing");
     expect(streams.upsertStream).not.toHaveBeenCalled();
   });
+
+  it("returns duplicate when a cancellation event is replayed", async () => {
+    // The repository's transactional guard ensures the event id check and the
+    // withdrawn concurrency check happen atomically, so a replayed event is
+    // detected as a duplicate without partial writes.
+    streams.applyCancellation.mockResolvedValue("duplicate");
+
+    expect(await apply(CANCELLED)).toBe("duplicate");
+    expect(contract.fetchStream).not.toHaveBeenCalled();
+    expect(streams.upsertStream).not.toHaveBeenCalled();
+  });
 });
