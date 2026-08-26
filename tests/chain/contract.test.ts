@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { rpc } from "@stellar/stellar-sdk";
 
 // Issue #66 — Contract reconciliation tests.
 //
@@ -25,7 +26,6 @@ vi.mock("../../src/chain/contract.js", () => contract);
 
 const { applyEvent } = await import("../../src/indexer/apply.js");
 const { decodeEvent } = await import("../../src/chain/events.js");
-const { rpc } = await import("@stellar/stellar-sdk");
 
 const page = rpc.parseRawEvents(
   (await import("../fixtures/get-events.json", { with: { type: "json" } })).default.result as unknown as rpc.Api.RawGetEventsResponse,
