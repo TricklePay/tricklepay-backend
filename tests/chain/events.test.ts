@@ -1,6 +1,6 @@
 import { rpc } from "@stellar/stellar-sdk";
 import { beforeAll, describe, expect, it } from "vitest";
-import { decodeEvent, InvalidEventError } from "../../src/chain/events.js";
+import { decodeEvent, InvalidEventError, type StreamEvent } from "../../src/chain/events.js";
 import capture from "../fixtures/get-events.json" with { type: "json" };
 
 // `decodeEvent` is the one place the indexer interprets raw chain data, so it is
@@ -244,5 +244,105 @@ describe("decodeEvent", () => {
     const decoded = decodeEvent(page.events[WITHDRAWN]);
     expect(decoded).not.toBeNull();
     expect(decoded!.kind).toBe("withdrawn");
+  });
+
+  // --- Malformed known-event shapes ---------------------------------------------------
+
+  it("rejects a created event with a non-map value", () => {
+    // A created event whose value is a bare scalar instead of an ScMap.
+    // The decoder tries to destructure it as a record and must fail
+    // rather than produce a half-initialized object.
+    expect(() =>
+      decodeEvent({
+        ...page.events[CREATED],
+        value: { _switch: { name: "I128", value: 42n } } as never,
+      }),
+    ).toThrow();
+  });
+
+  it("rejects a withdrawn event with a non-map value", () => {
+    expect(() =>
+      decodeEvent({
+        ...page.events[WITHDRAWN],
+        value: { _switch: { name: "I128", value: 7n } } as never,
+      }),
+    ).toThrow();
+  });
+
+  it("rejects a cancelled event with a non-map value", () => {
+    expect(() =>
+      decodeEvent({
+        ...page.events[CANCELLED],
+        value: { _switch: { name: "I128", value: 99n } } as never,
+      }),
+    ).toThrow();
+  });
+
+  // --- Unknown vs malformed distinction ----------------------------------------------
+
+  it("returns null for unknown event names without throwing", () => {
+    // A fully well-formed event whose name the indexer does not recognise.
+    // The contract may add new event types at any time; the indexer must
+    // skip them silently.
+    expect(decodeEvent(page.events[PAUSED])).toBeNull();
+    expect(decodeEvent(page.events[SCHEDULE_EXTENDED])).toBeNull();
+  });
+
+  it("valid events still process after an unknown event on the same page", () => {
+    // Simulates a page where an unknown event sits between two known ones.
+    // The poller maps the whole page; the known events must decode while
+    // the unknown one is silently dropped.
+    const events = [
+      page.events[CREATED],
+      page.events[PAUSED], // unknown — should be skipped
+      page.events[WITHDRAWN],
+    ];
+    const decoded = events.map(decodeEvent).filter((e): e is StreamEvent => e !== null);
+    expect(decoded).toHaveLength(2);
+    expect(decoded[0].kind).toBe("created");
+    expect(decoded[1].kind).toBe("withdrawn");
+  });
+
+  it("valid events still process after a malformed event on the same page", () => {
+    // A malformed event must not prevent later valid events from being
+    // decoded. The poller catches the error, records it, and continues.
+    const malformed = {
+      ...page.events[CREATED],
+      value: { _switch: { name: "I128", value: 1n } } as never,
+    };
+    const events = [page.events[CREATED], malformed, page.events[WITHDRAWN]];
+    const results: (StreamEvent | null)[] = [];
+    for (const event of events) {
+      try {
+        results.push(decodeEvent(event));
+      } catch {
+        results.push(null);
+      }
+    }
+    const decoded = results.filter((e): e is StreamEvent => e !== null);
+    expect(decoded).toHaveLength(2);
+    expect(decoded[0].kind).toBe("created");
+    expect(decoded[1].kind).toBe("withdrawn");
+  });
+
+  it("returns null for a created event missing required topic fields", () => {
+    // A created event with only the event-name topic and no sender/recipient
+    // topics. The decoder accesses topics[1] and topics[2] and must not
+    // produce garbage or crash.
+    expect(() =>
+      decodeEvent({
+        ...page.events[CREATED],
+        topic: page.events[CREATED].topic.slice(0, 1),
+      }),
+    ).toThrow();
+  });
+
+  it("returns null for a cancelled event with missing sender topic", () => {
+    expect(() =>
+      decodeEvent({
+        ...page.events[CANCELLED],
+        topic: page.events[CANCELLED].topic.slice(0, 1),
+      }),
+    ).toThrow();
   });
 });
