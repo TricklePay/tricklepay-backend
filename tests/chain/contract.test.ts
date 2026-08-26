@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { rpc } from "@stellar/stellar-sdk";
 
 // Issue #66 — Contract reconciliation tests.
 //
@@ -25,7 +26,6 @@ vi.mock("../../src/chain/contract.js", () => contract);
 
 const { applyEvent } = await import("../../src/indexer/apply.js");
 const { decodeEvent } = await import("../../src/chain/events.js");
-const { rpc } = await import("@stellar/stellar-sdk");
 
 const page = rpc.parseRawEvents(
   (await import("../fixtures/get-events.json", { with: { type: "json" } })).default.result as unknown as rpc.Api.RawGetEventsResponse,
@@ -88,7 +88,7 @@ describe("contract reconciliation (#66)", () => {
       cancelled: false,
       ledger: 56201455,
       eventId: "0241383411213664256-0000000001",
-    });
+    }, undefined);
   });
 
   it("maps a cancelled stream with frozen endTime", async () => {
@@ -114,6 +114,7 @@ describe("contract reconciliation (#66)", () => {
         cancelled: true,
         endTime: 1763089117n,
       }),
+      undefined
     );
   });
 

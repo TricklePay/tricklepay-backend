@@ -197,6 +197,7 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
           error:
             `offset must not exceed ${MAX_OFFSET}. Page through results in order with limit and offset, ` +
             "or narrow them with the sender, recipient, and token filters.",
+          requestId: request.id,
         });
       }
 
@@ -209,6 +210,7 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
           return reply.code(400).send({
             code: "VALIDATION_ERROR",
             error: `invalid ${field} address`,
+            requestId: request.id,
           });
         }
         filter[field] = normalized;

@@ -4,6 +4,7 @@ import type { Logger } from "../logger.js";
 import { EVENT_PAGE_LIMIT, getContractEvents, type EventPage } from "../chain/rpc.js";
 import { decodeEvent, InvalidEventError } from "../chain/events.js";
 import { applyEvent } from "./apply.js";
+import { prisma } from "../db.js";
 import { getIndexerPosition, saveIndexerPosition } from "../repositories/indexer-state.js";
 import {
   clearFailedEvent,
@@ -191,12 +192,17 @@ export class Poller {
 
       let outcome: string;
       try {
-        outcome = await applyEvent(
-          this.server,
-          this.config.contractId,
-          this.config.networkPassphrase,
-          event,
-        );
+        outcome = await prisma.$transaction(async (tx) => {
+          const res = await applyEvent(
+            this.server,
+            this.config.contractId,
+            this.config.networkPassphrase,
+            event,
+            tx
+          );
+          await clearFailedEvent(event.id, tx);
+          return res;
+        });
       } catch (err) {
         // Log the failure and record it in the database so an operator can
         // find it without tailing logs. The event is then skipped so the rest
@@ -216,14 +222,8 @@ export class Poller {
         continue;
       }
 
-      // The apply succeeded. Remove any stale failed-event row so operators
-      // only see events that are currently stuck.
-      try {
-        await clearFailedEvent(event.id);
-      } catch (clearErr) {
-        this.log.warn({ err: clearErr, eventId: event.id }, "could not clear failed-event record");
-      }
-
+      // The apply succeeded and any stale failed-event row was cleared as part
+      // of the transaction.
       this.log.info(
         { kind: event.kind, streamId: event.streamId.toString(), ledger: event.ledger, outcome },
         "applied event",

@@ -75,7 +75,7 @@ describe("applyEvent", () => {
       cliffTime: 1740000000n,
       ledger: 56123890,
       eventId: "0241050272077447168-0000000001",
-    });
+    }, undefined);
     expect(contract.fetchStream).not.toHaveBeenCalled();
   });
 
@@ -88,7 +88,7 @@ describe("applyEvent", () => {
       amount: 2_500_000n * UNIT,
       ledger: 56201455,
       eventId: "0241383411213664256-0000000001",
-    });
+    }, undefined);
     expect(contract.fetchStream).not.toHaveBeenCalled();
   });
 
@@ -104,7 +104,7 @@ describe("applyEvent", () => {
       cancelledAt: 1763089117n, // 2025-11-14T02:58:37Z
       ledger: 56290012,
       eventId: "0241763760638787584-0000000001",
-    });
+    }, undefined);
     expect(contract.fetchStream).not.toHaveBeenCalled();
   });
 
@@ -161,7 +161,7 @@ describe("applyEvent", () => {
       cancelled: false,
       ledger: 56201455,
       eventId: "0241383411213664256-0000000001",
-    });
+    }, undefined);
   });
 
   it("reconciles a cancellation for an unstored stream too", async () => {
@@ -180,7 +180,12 @@ describe("applyEvent", () => {
 
     expect(await apply(CANCELLED)).toBe("reconciled");
     expect(streams.upsertStream).toHaveBeenCalledWith(
-      expect.objectContaining({ streamId: 42n, cancelled: true }),
+      expect.objectContaining({
+        streamId: 42n,
+        cancelled: true,
+        endTime: 1763089117n,
+      }),
+      undefined
     );
   });
 

@@ -1,4 +1,5 @@
 import { rpc } from "@stellar/stellar-sdk";
+import type { Prisma } from "@prisma/client";
 import type { StreamEvent } from "../chain/events.js";
 import { fetchStream } from "../chain/contract.js";
 import {
@@ -29,6 +30,7 @@ export async function applyEvent(
   contractId: string,
   networkPassphrase: string,
   event: StreamEvent,
+  tx?: Prisma.TransactionClient
 ): Promise<ApplyOutcome> {
   switch (event.kind) {
     case "created":
@@ -43,7 +45,7 @@ export async function applyEvent(
         cliffTime: event.cliffTime,
         ledger: event.ledger,
         eventId: event.id,
-      });
+      }, tx);
 
     case "withdrawn":
       return orReconcile(
@@ -52,11 +54,12 @@ export async function applyEvent(
           amount: event.amount,
           ledger: event.ledger,
           eventId: event.id,
-        }),
+        }, tx),
         server,
         contractId,
         networkPassphrase,
         event,
+        tx
       );
 
     case "cancelled":
@@ -69,11 +72,12 @@ export async function applyEvent(
           cancelledAt: event.closedAt,
           ledger: event.ledger,
           eventId: event.id,
-        }),
+        }, tx),
         server,
         contractId,
         networkPassphrase,
         event,
+        tx
       );
   }
 }
@@ -90,6 +94,7 @@ async function orReconcile(
   contractId: string,
   networkPassphrase: string,
   event: StreamEvent,
+  tx?: Prisma.TransactionClient
 ): Promise<ApplyOutcome> {
   if (result !== "missing") return result;
 
@@ -101,6 +106,6 @@ async function orReconcile(
     ...onChain,
     ledger: event.ledger,
     eventId: event.id,
-  });
+  }, tx);
   return "reconciled";
 }
