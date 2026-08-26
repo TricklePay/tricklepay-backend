@@ -88,7 +88,7 @@ describe("contract reconciliation (#66)", () => {
       cancelled: false,
       ledger: 56201455,
       eventId: "0241383411213664256-0000000001",
-    });
+    }, undefined);
   });
 
   it("maps a cancelled stream with frozen endTime", async () => {
@@ -114,6 +114,7 @@ describe("contract reconciliation (#66)", () => {
         cancelled: true,
         endTime: 1763089117n,
       }),
+      undefined
     );
   });
 

@@ -1,4 +1,5 @@
 import { prisma } from "../db.js";
+import type { Prisma } from "@prisma/client";
 import type { StreamEvent } from "../chain/events.js";
 
 export interface FailedEventInput {
@@ -36,8 +37,8 @@ export async function recordFailedEvent(input: FailedEventInput): Promise<void> 
 
 // Removes the failed-event row for an event that subsequently applied cleanly.
 // Called after a successful apply so operators can see only truly stuck events.
-export async function clearFailedEvent(eventId: string): Promise<void> {
-  await prisma.failedEvent.deleteMany({ where: { eventId } });
+export async function clearFailedEvent(eventId: string, tx: Prisma.TransactionClient = prisma): Promise<void> {
+  await tx.failedEvent.deleteMany({ where: { eventId } });
 }
 
 // Returns failed events ordered by ledger ascending, so the oldest stuck

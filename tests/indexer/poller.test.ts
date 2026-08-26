@@ -34,6 +34,11 @@ vi.mock("../../src/chain/rpc.js", () => chain);
 vi.mock("../../src/repositories/indexer-state.js", () => indexerState);
 vi.mock("../../src/indexer/apply.js", () => indexer);
 vi.mock("../../src/repositories/failed-events.js", () => failedEvents);
+vi.mock("../../src/db.js", () => ({
+  prisma: {
+    $transaction: vi.fn(async (cb: any) => cb({})),
+  },
+}));
 
 const { Poller } = await import("../../src/indexer/poller.js");
 

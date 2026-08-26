@@ -83,11 +83,11 @@ function notYetApplied(streamId: bigint, eventId: string): Prisma.StreamWhereInp
 // Creation sets the created ledger; later updates leave it untouched. This is
 // the reconciling write: it overwrites whatever the row held, so it needs no
 // replay guard, and it is authoritative regardless of which event prompted it.
-export async function upsertStream(input: UpsertStreamInput): Promise<void> {
+export async function upsertStream(input: UpsertStreamInput, tx: Prisma.TransactionClient = prisma): Promise<void> {
   const totalAmount = decimal(input.totalAmount);
   const withdrawn = decimal(input.withdrawn);
 
-  await prisma.stream.upsert({
+  await tx.stream.upsert({
     where: { streamId: input.streamId },
     create: {
       streamId: input.streamId,
@@ -121,8 +121,8 @@ export async function upsertStream(input: UpsertStreamInput): Promise<void> {
 // stream is already stored: a replayed `created` carries the state the stream
 // had at creation, which must not overwrite withdrawals or a cancellation that
 // have since been applied to the row.
-export async function insertStream(input: InsertStreamInput): Promise<ApplyResult> {
-  const result = await prisma.stream.createMany({
+export async function insertStream(input: InsertStreamInput, tx: Prisma.TransactionClient = prisma): Promise<ApplyResult> {
+  const result = await tx.stream.createMany({
     data: [
       {
         streamId: input.streamId,
@@ -149,8 +149,8 @@ export async function insertStream(input: InsertStreamInput): Promise<ApplyResul
 // Applies a `withdrawn` event as a delta on the stored row. The event carries
 // only the amount moved, so the balance is incremented in the database rather
 // than recomputed, which needs no read of contract state.
-export async function applyWithdrawal(input: WithdrawalInput): Promise<ApplyResult> {
-  const result = await prisma.stream.updateMany({
+export async function applyWithdrawal(input: WithdrawalInput, tx: Prisma.TransactionClient = prisma): Promise<ApplyResult> {
+  const result = await tx.stream.updateMany({
     where: notYetApplied(input.streamId, input.eventId),
     data: {
       withdrawn: { increment: decimal(input.amount) },
@@ -160,7 +160,7 @@ export async function applyWithdrawal(input: WithdrawalInput): Promise<ApplyResu
   });
 
   if (result.count > 0) return "applied";
-  return classifyMiss(input.streamId);
+  return classifyMiss(input.streamId, tx);
 }
 
 // Applies a `cancelled` event. The contract freezes a cancelled stream by
@@ -173,14 +173,14 @@ export async function applyWithdrawal(input: WithdrawalInput): Promise<ApplyResu
 // The read and guarded update run in a single transaction so a concurrent
 // withdrawal cannot change `withdrawn` between the two operations, which would
 // freeze the stream at a stale total.
-export async function applyCancellation(input: CancellationInput): Promise<ApplyResult> {
-  return prisma.$transaction(async (tx) => {
-    const stored = await tx.stream.findUnique({ where: { streamId: input.streamId } });
+export async function applyCancellation(input: CancellationInput, tx: Prisma.TransactionClient = prisma): Promise<ApplyResult> {
+  const applyFn = async (t: Prisma.TransactionClient) => {
+    const stored = await t.stream.findUnique({ where: { streamId: input.streamId } });
     if (!stored) return "missing";
 
     const frozenTotal = stored.withdrawn.plus(decimal(input.recipientAmount));
 
-    const result = await tx.stream.updateMany({
+    const result = await t.stream.updateMany({
       where: { ...notYetApplied(input.streamId, input.eventId), withdrawn: stored.withdrawn },
       data: {
         totalAmount: frozenTotal,
@@ -193,13 +193,19 @@ export async function applyCancellation(input: CancellationInput): Promise<Apply
     });
 
     return result.count > 0 ? "applied" : "duplicate";
-  });
+  };
+
+  // If already in a tx, just run it. Otherwise start one to guard the read-modify-write.
+  if (tx !== prisma) {
+    return applyFn(tx);
+  }
+  return prisma.$transaction(applyFn);
 }
 
 // Tells the two reasons a guarded update matched nothing apart: the stream was
 // never stored, or the event had already been applied to it.
-async function classifyMiss(streamId: bigint): Promise<ApplyResult> {
-  const exists = await prisma.stream.findUnique({
+async function classifyMiss(streamId: bigint, tx: Prisma.TransactionClient = prisma): Promise<ApplyResult> {
+  const exists = await tx.stream.findUnique({
     where: { streamId },
     select: { streamId: true },
   });
