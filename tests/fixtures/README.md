@@ -30,9 +30,18 @@ The last two stand in for events a future contract version might add: the
 decoder has to skip them rather than fail, so the indexer keeps working against
 a newer contract.
 
-To replace this with a genuine capture, point `curl` at an RPC node running
-against a network where the stream contract is deployed and keep the response
-whole:
+## Refreshing the fixture
+
+When the contract emits new event shapes or the RPC envelope changes, replace
+the fixture with a fresh capture. The assertions in `events.test.ts` index into
+the page by position, so a replacement needs those indices and expected values
+updated alongside the fixture.
+
+### Capture command
+
+Point `curl` at an RPC node running against a network where the stream contract
+is deployed. Replace `<ledger>` with a ledger known to contain stream events and
+`<STREAM_CONTRACT_ID>` with the contract's strkey address:
 
 ```bash
 curl -s https://soroban-testnet.stellar.org \
@@ -44,5 +53,39 @@ curl -s https://soroban-testnet.stellar.org \
   | jq . > tests/fixtures/get-events.json
 ```
 
-The assertions in `events.test.ts` index into the page by position, so a
-replacement fixture needs those indices and the expected values updated with it.
+Keep the response whole — do not strip or reorder fields — so the fixture
+matches what `rpc.Server.getEvents` actually returns.
+
+### Redaction expectations
+
+The fixture must not contain:
+
+- **Private keys or signing seeds.** Addresses are fine; seeds are not.
+- **Real RPC credentials or API keys.** The curl command hits a public node.
+- **Timestamps that pin to a specific wall clock.** Ledger close times are
+  acceptable because they are chain-anchored and immutable; avoid injecting
+  `Date.now()` or similar into expected values.
+
+If the capture includes events unrelated to the stream contract (e.g. from
+other contracts sharing the same network), trim the `result.events` array to
+only stream-contract events before committing.
+
+### Compatibility notes
+
+- The fixture is versioned alongside `@stellar/stellar-sdk` in `package.json`.
+  After a major SDK bump, re-run the capture to pick up any encoding changes.
+- The decoder tests assert exact field sets per event kind. If the contract adds
+  a field, the fixture and its assertions must be updated in lockstep.
+- The two unknown-event entries (`paused`, `schedule_extended`) are synthetic
+  stand-ins for future contract versions. They must remain in the fixture even
+  if the contract later defines real events with those names — replace them
+  with different unknown names to keep the "unknown = skip" test coverage.
+
+### Validation
+
+After replacing the fixture, run the decoder tests to confirm the page still
+decodes:
+
+```bash
+npx vitest run tests/chain/events.test.ts
+```
