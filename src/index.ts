@@ -27,6 +27,8 @@ async function main(): Promise<void> {
     logger.info({ signal }, "shutting down");
     poller.stop();
     await app.close();
+    
+    // Drain the Prisma connection pool cleanly before exiting.
     await disconnect();
     process.exit(0);
   };
