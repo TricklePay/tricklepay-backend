@@ -159,6 +159,55 @@ request sizes. The indexer polls every `INDEXER_POLL_INTERVAL_MS` (minimum
 1000) starting from `INDEXER_START_LEDGER` — zero means start at the chain's
 latest ledger rather than replaying history.
 
+## Deployment
+
+The same image runs on any container platform; only the environment differs.
+Everything in [Configuration](#configuration) applies unchanged — set
+`DATABASE_URL` and `STREAM_CONTRACT_ID` at minimum. Treat every value below as
+a placeholder to replace, never as a literal to ship with:
+
+```
+DATABASE_URL=postgresql://<user>:<password>@<host>:5432/<database>
+STREAM_CONTRACT_ID=<deployed-contract-id>
+NETWORK=mainnet
+CORS_ORIGIN=https://<frontend-host>
+```
+
+### Probes
+
+The service exposes two separate checks; wire them to separate probes, since
+they answer different questions:
+
+- **Liveness — `GET /health`.** Returns `200 {"status":"ok","version":...}` as
+  soon as the process is up and performs no database read. A liveness probe
+  should restart the container if this stops responding — it means the process
+  itself is wedged.
+- **Readiness — `GET /ready`.** Checks the database connection and returns
+  `200` with the current indexer lag when it succeeds, or
+  `503 {"status":"not_ready","database":"down"}` when Postgres is unreachable.
+  A readiness probe should take the instance out of load-balancer rotation on a
+  503 without restarting it — the process is fine, a dependency isn't.
+
+### Migrations
+
+Apply pending Prisma migrations before the process starts serving traffic —
+`npx prisma migrate deploy`, never `prisma migrate dev`, which is interactive.
+`docker-compose.yml` shows the pattern: the migration runs as a startup step
+ahead of `node dist/index.js`, in the same container command. On a platform
+with a dedicated pre-deploy hook or init-container step, use that instead of
+chaining commands; either way, migrations must complete before the app process
+accepts connections.
+
+### Graceful termination
+
+On `SIGTERM` or `SIGINT` the process shuts down in a fixed order
+([index.ts](src/index.ts)): it stops the indexer poller first (no new poll
+ticks start), then closes the HTTP server (Fastify stops accepting new
+connections and waits for in-flight requests to finish), then drains the
+Postgres connection pool, then exits `0`. Give the platform's termination
+grace period enough headroom for in-flight requests to finish — the process
+does not force-exit early on its own.
+
 ## Project structure
 
 ```
