@@ -51,15 +51,20 @@ current clock, so the numbers are always current without a chain round-trip.
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `GET` | `/health` | Liveness check. |
+| `GET` | `/` | Service index: name, version, and a list of endpoints. |
+| `GET` | `/health` | Liveness check. Returns 200 with the service version; performs no database read. |
+| `GET` | `/ready` | Readiness check. Verifies database connectivity and reports indexer lag; returns 503 when the database is unavailable. |
 | `GET` | `/status` | Indexer progress against the chain. |
-| `GET` | `/streams` | List streams. Query params: `sender`, `recipient`, `limit` (max 100), `offset` (max 10000), `includeTotal`. Address filters accept lowercase and padded spellings and are normalized before matching. `total` is only included when `includeTotal=true`. |
+| `GET` | `/streams` | List streams. Query params: `sender`, `recipient`, `token`, `limit` (max 100), `offset` (max 10000), `includeTotal`, `cancelled`. Address filters accept lowercase and padded spellings and are normalized before matching. `total` is only included when `includeTotal=true`; `cancelled` filters by cancellation status when given, and is omitted to return both. |
 | `GET` | `/streams/summary` | Counts and exact amount totals per status (`pending`, `streaming`, `completed`, `cancelled`). |
 | `GET` | `/streams/:id` | A single stream by id. |
+| `GET` | `/metrics` | Prometheus metrics. |
+| `GET` | `/docs` | Interactive Swagger UI; the raw OpenAPI spec is served at `/docs/json` and `/docs/yaml`. |
 
 Each stream is returned with its stored fields plus derived `vested`,
-`withdrawable`, and `status` (`pending`, `streaming`, `completed`, or
-`cancelled`). All amounts are strings to preserve 128-bit precision.
+`withdrawable`, `locked`, `progress`, and `status` (`pending`, `streaming`,
+`completed`, or `cancelled`). `progress` is vesting progress in basis points
+(0–10000). All amounts are strings to preserve 128-bit precision.
 
 `/status` reports the indexer's own position and the chain's head as two
 separate figures, because only the distance between them means anything:
