@@ -14,8 +14,8 @@ until docker compose exec -T postgres pg_isready -U tricklepay >/dev/null 2>&1; 
   sleep 1
 done
 
-echo "Syncing database schema..."
-npx prisma db push
+echo "Running database migrations..."
+npx prisma migrate deploy
 
 echo "Starting the API and indexer..."
 npm run dev
