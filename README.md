@@ -39,9 +39,19 @@ once and the row written whole. That is one read per stream, not per event: from
 then on the stream is back on the event path.
 
 Alongside the stream rows the indexer keeps one row of bookkeeping: the RPC
-cursor to resume from, the highest ledger it has actually applied events
-through, and the chain's head as of its last poll. The first two are what let it
-crash and resume; the last two are what `/status` subtracts to report lag.
+cursor to resume from (`cursor`), the highest ledger it has actually applied
+events through (`lastLedger`), and the chain's head as of its last poll
+(`chainLedger`). These are not the same thing, and the difference matters:
+`cursor` is an opaque RPC paging token that advances on every poll — including
+one whose page has no matching events — because it only marks how far the RPC
+has been asked to scan. `lastLedger` only moves forward when an event is
+actually applied to Postgres, so a page with no events leaves it exactly where
+it was. Lag is therefore computed as `chainLedger - lastLedger`, never from the
+cursor: a cursor sailing through a stretch of quiet ledgers would otherwise look
+identical to real progress, letting a genuinely backlogged indexer read as level
+with the chain. `cursor` and `lastLedger` are what let the indexer crash and
+resume without reprocessing; `lastLedger` and `chainLedger` are what `/status`
+subtracts to report lag.
 
 The API reads only from Postgres. On every request it recomputes vested and
 withdrawable amounts with the same linear formula the contract uses, against the
