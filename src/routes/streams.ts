@@ -86,6 +86,12 @@ function parseIncludeTotal(raw: string | undefined): boolean {
   return raw === "true";
 }
 
+function parseCancelled(raw: string | undefined): boolean | undefined {
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  return undefined;
+}
+
 // Stellar addresses are canonical uppercase base32 strkeys, but callers
 // sometimes send lowercase or whitespace-padded spellings. Normalize those
 // before matching so every rendering of one address filters identically, and
@@ -170,6 +176,12 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
                 "When true, the response includes the total number of streams matching the filters. " +
                 "Defaults to false, which skips the count query and omits total from the response.",
             },
+            cancelled: {
+              type: "string",
+              enum: ["true", "false"],
+              description:
+                "Filter by cancellation status. Omit to return both cancelled and active streams.",
+            },
           },
           additionalProperties: false,
         },
@@ -187,6 +199,7 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
         limit?: string;
         offset?: string;
         includeTotal?: string;
+        cancelled?: string;
       };
 
       const limit = parseLimit(query.limit);
@@ -201,7 +214,7 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
         });
       }
 
-      const filter: { sender?: string; recipient?: string; token?: string } = {};
+      const filter: { sender?: string; recipient?: string; token?: string; cancelled?: boolean } = {};
       for (const field of ["sender", "recipient", "token"] as const) {
         const raw = query[field];
         if (!raw) continue;
@@ -215,6 +228,8 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
         }
         filter[field] = normalized;
       }
+
+      filter.cancelled = parseCancelled(query.cancelled);
 
       const includeTotal = parseIncludeTotal(query.includeTotal);
 

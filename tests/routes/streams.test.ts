@@ -187,6 +187,55 @@ describe("GET /streams includeTotal", () => {
   });
 });
 
+describe("GET /streams cancelled filter", () => {
+  it("omits cancelled from filter when parameter is omitted", async () => {
+    streamsRepo.listStreams.mockResolvedValue([]);
+    const response = await listRequest("/streams");
+    expect(response.statusCode).toBe(200);
+    expect(streamsRepo.listStreams).toHaveBeenCalledWith(
+      expect.not.objectContaining({ cancelled: expect.anything() }),
+    );
+  });
+
+  it("filters cancelled streams when cancelled=true", async () => {
+    streamsRepo.listStreams.mockResolvedValue([]);
+    const response = await listRequest("/streams?cancelled=true");
+    expect(response.statusCode).toBe(200);
+    expect(streamsRepo.listStreams).toHaveBeenCalledWith(
+      expect.objectContaining({ cancelled: true }),
+    );
+  });
+
+  it("filters active streams when cancelled=false", async () => {
+    streamsRepo.listStreams.mockResolvedValue([]);
+    const response = await listRequest("/streams?cancelled=false");
+    expect(response.statusCode).toBe(200);
+    expect(streamsRepo.listStreams).toHaveBeenCalledWith(
+      expect.objectContaining({ cancelled: false }),
+    );
+  });
+
+  it("applies cancelled=true to the count query when includeTotal=true", async () => {
+    streamsRepo.listStreams.mockResolvedValue([]);
+    streamsRepo.countStreams.mockResolvedValue(3);
+    const response = await listRequest("/streams?cancelled=true&includeTotal=true");
+    expect(response.statusCode).toBe(200);
+    expect(streamsRepo.countStreams).toHaveBeenCalledWith(
+      expect.objectContaining({ cancelled: true }),
+    );
+  });
+
+  it("applies cancelled=false to the count query when includeTotal=true", async () => {
+    streamsRepo.listStreams.mockResolvedValue([]);
+    streamsRepo.countStreams.mockResolvedValue(5);
+    const response = await listRequest("/streams?cancelled=false&includeTotal=true");
+    expect(response.statusCode).toBe(200);
+    expect(streamsRepo.countStreams).toHaveBeenCalledWith(
+      expect.objectContaining({ cancelled: false }),
+    );
+  });
+});
+
 describe("GET /streams/summary", () => {
   it("reports zeroed aggregates when there is no data", async () => {
     streamsRepo.aggregateStreams.mockResolvedValue({
