@@ -269,6 +269,13 @@ export const indexerStatusSchema = {
         "Ledgers the indexer is behind the chain. Null before the first poll. Never negative.",
       examples: [709986],
     },
+    failedEventCount: {
+      type: "integer",
+      description:
+        "Number of unresolved failed events the indexer has not yet retried. " +
+        "Zero means nothing is stuck. A rising number signals degraded indexing.",
+      examples: [0, 12],
+    },
   },
 } as const;
 

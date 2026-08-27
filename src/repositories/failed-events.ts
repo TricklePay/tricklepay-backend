@@ -35,6 +35,11 @@ export async function recordFailedEvent(input: FailedEventInput): Promise<void> 
   });
 }
 
+// Returns the total count of unresolved failed events.
+export async function countFailedEvents(): Promise<number> {
+  return prisma.failedEvent.count();
+}
+
 // Removes the failed-event row for an event that subsequently applied cleanly.
 // Called after a successful apply so operators can see only truly stuck events.
 export async function clearFailedEvent(eventId: string, tx: Prisma.TransactionClient = prisma): Promise<void> {

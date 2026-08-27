@@ -54,6 +54,11 @@ export const MIN_POLL_INTERVAL_MS = 1000;
 // unavailable RPC while still recovering promptly.
 export const DEFAULT_MAX_BACKOFF_MS = 60000;
 
+// Default cap on event pages fetched per poll tick. A backlog is split across
+// ticks so a single poll cannot run indefinitely, but the default is high enough
+// that a normal catch-up drains in one tick.
+export const DEFAULT_MAX_PAGES_PER_TICK = 1000;
+
 function positiveInteger(name: string, fallback: number, min: number): number {
   const raw = process.env[name];
   if (!raw || raw.trim() === "") return fallback;
@@ -116,6 +121,7 @@ export interface Config {
   pollIntervalMs: number;
   startLedger: number;
   maxBackoffMs: number;
+  maxPagesPerTick: number;
   bodyLimit: number;
   queryStringLimit: number;
   trustedProxies: string[];
@@ -148,6 +154,11 @@ export function loadConfig(): Config {
       "INDEXER_BACKOFF_MAX_MS",
       DEFAULT_MAX_BACKOFF_MS,
       MIN_POLL_INTERVAL_MS,
+    ),
+    maxPagesPerTick: positiveInteger(
+      "INDEXER_MAX_PAGES_PER_TICK",
+      DEFAULT_MAX_PAGES_PER_TICK,
+      1,
     ),
     bodyLimit: integer("BODY_LIMIT", 1048576), // 1MB default
     queryStringLimit: integer("QUERY_STRING_LIMIT", 2048), // 2KB default

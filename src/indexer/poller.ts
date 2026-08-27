@@ -15,6 +15,8 @@ import {
   eventsApplied,
   eventsFailed,
   indexerLagLedgers,
+  indexerPollLastSuccess,
+  indexerPollSuccess,
   pagesFetched,
   pollErrors,
   rpcErrors,
@@ -173,11 +175,31 @@ export class Poller {
 
       const drained = isBacklogDrained(page, position.cursor);
       if (drained) break;
+
+      // A cap keeps one tick from running forever on a huge backlog. The cursor
+      // was already saved in applyPage above, so the next tick resumes exactly
+      // where this one stopped rather than replaying events.
+      if (pages >= this.config.maxPagesPerTick) {
+        this.log.info(
+          { pages, limit: this.config.maxPagesPerTick, cursor: current.cursor },
+          "reached max pages per tick — continuing next poll",
+        );
+        break;
+      }
     }
 
     if (pages > 1) {
       this.log.info({ pages, events }, "drained event backlog");
     }
+
+    // A tick that reaches here completed without throwing, so the poller is
+    // alive. Operators use the timestamp to tell a quiet chain (still polling
+    // successfully) from a stalled poller (no successful tick), and the counter
+    // to graph poll throughput. A failed tick throws before getting here, so it
+    // never emits a false heartbeat.
+    indexerPollSuccess.inc();
+    indexerPollLastSuccess.set(Math.floor(Date.now() / 1000));
+
     return current;
   }
 

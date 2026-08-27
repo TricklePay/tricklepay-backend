@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_MAX_BACKOFF_MS,
+  DEFAULT_MAX_PAGES_PER_TICK,
   MIN_POLL_INTERVAL_MS,
   isLocalUrl,
   loadConfig,
@@ -295,6 +296,55 @@ describe("loadConfig — INDEXER_BACKOFF_MAX_MS bounds", () => {
   it("rejects values that do not parse as numbers", () => {
     withEnv({ INDEXER_BACKOFF_MAX_MS: "long" }, () => {
       expect(() => loadConfig()).toThrow("INDEXER_BACKOFF_MAX_MS must be an integer");
+    });
+  });
+});
+
+describe("loadConfig — INDEXER_MAX_PAGES_PER_TICK bounds", () => {
+  it("keeps the default when omitted or blank", () => {
+    withEnv({ INDEXER_MAX_PAGES_PER_TICK: undefined }, () => {
+      expect(loadConfig().maxPagesPerTick).toBe(DEFAULT_MAX_PAGES_PER_TICK);
+    });
+    withEnv({ INDEXER_MAX_PAGES_PER_TICK: "   " }, () => {
+      expect(loadConfig().maxPagesPerTick).toBe(DEFAULT_MAX_PAGES_PER_TICK);
+    });
+  });
+
+  it("accepts an ordinary limit", () => {
+    withEnv({ INDEXER_MAX_PAGES_PER_TICK: "500" }, () => {
+      expect(loadConfig().maxPagesPerTick).toBe(500);
+    });
+  });
+
+  it("accepts the minimum of one page", () => {
+    withEnv({ INDEXER_MAX_PAGES_PER_TICK: "1" }, () => {
+      expect(loadConfig().maxPagesPerTick).toBe(1);
+    });
+  });
+
+  it("rejects zero, which would stop the indexer before any progress", () => {
+    withEnv({ INDEXER_MAX_PAGES_PER_TICK: "0" }, () => {
+      expect(() => loadConfig()).toThrow(/INDEXER_MAX_PAGES_PER_TICK.*at least/);
+    });
+  });
+
+  it("rejects negative limits", () => {
+    withEnv({ INDEXER_MAX_PAGES_PER_TICK: "-1" }, () => {
+      expect(() => loadConfig()).toThrow(
+        `INDEXER_MAX_PAGES_PER_TICK must be at least 1`,
+      );
+    });
+  });
+
+  it("rejects non-integer values", () => {
+    withEnv({ INDEXER_MAX_PAGES_PER_TICK: "1.5" }, () => {
+      expect(() => loadConfig()).toThrow("INDEXER_MAX_PAGES_PER_TICK must be an integer");
+    });
+  });
+
+  it("rejects values that do not parse as numbers", () => {
+    withEnv({ INDEXER_MAX_PAGES_PER_TICK: "many" }, () => {
+      expect(() => loadConfig()).toThrow("INDEXER_MAX_PAGES_PER_TICK must be an integer");
     });
   });
 });
