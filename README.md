@@ -53,9 +53,17 @@ with the chain. `cursor` and `lastLedger` are what let the indexer crash and
 resume without reprocessing; `lastLedger` and `chainLedger` are what `/status`
 subtracts to report lag.
 
-The API reads only from Postgres. On every request it recomputes vested and
-withdrawable amounts with the same linear formula the contract uses, against the
-current clock, so the numbers are always current without a chain round-trip.
+The API reads only from Postgres, and not every field it returns is a stored
+column. `id`, `sender`, `recipient`, `token`, `totalAmount`, `withdrawn`,
+`startTime`, `endTime`, `cliffTime`, and `cancelled` are stored — copied
+straight from the indexed row. `vested`, `withdrawable`, `locked`, `progress`,
+and `status` are derived: computed on every request, against the current clock,
+using the same linear vesting formula the contract itself evaluates on-chain.
+That means these figures track wall-clock time rather than the last indexed
+event — a stream's `vested` amount can be higher on a second request than the
+first even though the indexer applied nothing in between — and they agree with
+what the contract would report if queried directly, without ever making that
+chain round-trip.
 
 ## API
 
