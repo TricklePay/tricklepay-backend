@@ -180,6 +180,28 @@ latest ledger rather than replaying history. `INDEXER_MAX_PAGES_PER_TICK`
 (default 1000) caps how many event pages one poll fetches, so a deep backlog is
 spread across ticks; the cursor is saved after each page so progress is kept.
 
+### Metrics & alerting
+
+The indexer exposes Prometheus metrics at `/metrics`. To tell a quiet chain
+(still polling successfully) from a stalled poller (no successful poll), watch
+the poll heartbeat:
+
+- `tricklepay_indexer_poll_success_total` — number of successful poll iterations.
+- `tricklepay_indexer_poll_last_success_timestamp_seconds` — Unix timestamp (seconds) of the last successful poll; `0` before the first one.
+
+Example alert — fire when the poller has not completed a successful poll in five
+minutes (a stalled poller), while a quiet chain keeps ticking and never trips it:
+
+```promql
+tricklepay_indexer_poll_last_success_timestamp_seconds < time() - 300
+```
+
+Poll throughput can be graphed with:
+
+```promql
+rate(tricklepay_indexer_poll_success_total[5m])
+```
+
 ## Deployment
 
 The same image runs on any container platform; only the environment differs.

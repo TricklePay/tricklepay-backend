@@ -15,6 +15,8 @@ import {
   eventsApplied,
   eventsFailed,
   indexerLagLedgers,
+  indexerPollLastSuccess,
+  indexerPollSuccess,
   pagesFetched,
   pollErrors,
   rpcErrors,
@@ -167,6 +169,15 @@ export class Poller {
     if (pages > 1) {
       this.log.info({ pages, events }, "drained event backlog");
     }
+
+    // A tick that reaches here completed without throwing, so the poller is
+    // alive. Operators use the timestamp to tell a quiet chain (still polling
+    // successfully) from a stalled poller (no successful tick), and the counter
+    // to graph poll throughput. A failed tick throws before getting here, so it
+    // never emits a false heartbeat.
+    indexerPollSuccess.inc();
+    indexerPollLastSuccess.set(Math.floor(Date.now() / 1000));
+
     return current;
   }
 

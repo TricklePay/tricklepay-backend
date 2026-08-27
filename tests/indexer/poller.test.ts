@@ -2,6 +2,7 @@ import { rpc } from "@stellar/stellar-sdk";
 import pino from "pino";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Config } from "../../src/config.js";
+import { renderMetrics } from "../../src/metrics.js";
 import capture from "../fixtures/get-events.json" with { type: "json" };
 
 // What the poller records about itself. The RPC, the database and the apply
@@ -319,6 +320,43 @@ describe("Poller", () => {
     expect(indexer.applyEvent).toHaveBeenCalled();
   });
 
+  it("records a heartbeat and success counter on a successful tick", async () => {
+    // Operators distinguish a quiet chain (still polling) from a stalled poller
+    // (no successful tick) via these two series. A tick that returns must bump
+    // both: the count by one, and the timestamp to roughly now.
+    chain.getContractEvents.mockResolvedValue(pageOf(captured.events));
+
+    const beforeSuccess = metricValue("tricklepay_indexer_poll_success_total");
+    const beforeTs = metricValue("tricklepay_indexer_poll_last_success_timestamp_seconds");
+
+    const poller = new Poller(server, { ...config }, log);
+    (poller as any).running = true;
+    const start = await (poller as any).resolveStart();
+    await (poller as any).tick(start);
+
+    expect(metricValue("tricklepay_indexer_poll_success_total")).toBe(beforeSuccess + 1);
+    const afterTs = metricValue("tricklepay_indexer_poll_last_success_timestamp_seconds");
+    const nowSec = Math.floor(Date.now() / 1000);
+    expect(afterTs).toBeGreaterThanOrEqual(beforeTs);
+    expect(afterTs).toBeGreaterThanOrEqual(nowSec - 2);
+    expect(afterTs).toBeLessThanOrEqual(nowSec + 1);
+  });
+
+  it("does not emit a false heartbeat when a tick fails", async () => {
+    // A failed iteration must not advance either series — otherwise an alert
+    // would think the poller is healthy when it is stalled.
+    chain.getContractEvents.mockRejectedValue(new Error("rpc unavailable"));
+
+    const beforeSuccess = metricValue("tricklepay_indexer_poll_success_total");
+    const beforeTs = metricValue("tricklepay_indexer_poll_last_success_timestamp_seconds");
+
+    const poller = new Poller(server, { ...config }, log);
+    (poller as any).running = true;
+    const start = await (poller as any).resolveStart();
+    await expect((poller as any).tick(start)).rejects.toThrow();
+
+    expect(metricValue("tricklepay_indexer_poll_success_total")).toBe(beforeSuccess);
+    expect(metricValue("tricklepay_indexer_poll_last_success_timestamp_seconds")).toBe(beforeTs);
   // Distinct, monotonically increasing cursors so each full page is a clear
   // advance and never looks like a cursor regression or a drained backlog.
   const cursors = ["cx1", "cx2", "cx3", "cx4", "cx5", "cx6"];
@@ -398,3 +436,8 @@ describe("Poller", () => {
     expect(chain.getContractEvents).toHaveBeenCalledTimes(3);
   });
 });
+
+function metricValue(name: string): number {
+  const match = renderMetrics().match(new RegExp(`^${name} (\\S+)$`, "m"));
+  return match ? Number(match[1]) : 0;
+}
