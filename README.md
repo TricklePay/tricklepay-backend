@@ -12,6 +12,7 @@ This service has two halves that run in one process:
 
 It backs the TricklePay web client and pairs with the
 [contracts](#related-repositories) repository, which holds the on-chain logic.
+For a record of API and indexer behavior changes, see the [Changelog](CHANGELOG.md).
 
 ## How it works
 
