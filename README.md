@@ -95,7 +95,13 @@ chain round-trip.
 Each stream is returned with its stored fields plus derived `vested`,
 `withdrawable`, `locked`, `progress`, and `status` (`pending`, `streaming`,
 `completed`, or `cancelled`). `progress` is vesting progress in basis points
-(0–10000). All amounts are strings to preserve 128-bit precision.
+(0–10000).
+
+**Data Types and Precision**
+- **Amounts** (`totalAmount`, `withdrawn`, `vested`, `withdrawable`, `locked`) are returned as strings holding integer base units.
+- **Times** (`startTime`, `endTime`, `cliffTime`) are returned as Unix seconds encoded as strings.
+
+Strings are used rather than JSON numbers to safely preserve full 64-bit and 128-bit integer precision. If they were returned as numbers, clients could silently lose precision when parsing them as IEEE 754 floating-point values.
 
 `/status` reports the indexer's own position and the chain's head as two
 separate figures, because only the distance between them means anything:
