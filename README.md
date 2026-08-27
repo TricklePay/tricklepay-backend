@@ -157,7 +157,9 @@ selected network (`SOROBAN_RPC_URL` to override), the server listens on
 `LOG_LEVEL` sets log verbosity, `BODY_LIMIT` and `QUERY_STRING_LIMIT` bound
 request sizes. The indexer polls every `INDEXER_POLL_INTERVAL_MS` (minimum
 1000) starting from `INDEXER_START_LEDGER` — zero means start at the chain's
-latest ledger rather than replaying history.
+latest ledger rather than replaying history. `INDEXER_MAX_PAGES_PER_TICK`
+(default 1000) caps how many event pages one poll fetches, so a deep backlog is
+spread across ticks; the cursor is saved after each page so progress is kept.
 
 ## Deployment
 
