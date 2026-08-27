@@ -28,9 +28,7 @@ services:
       HOST: 0.0.0.0
     ports:
       - "3000:3000"
-    # Sync the schema, then start. db push is idempotent and needs no migration
-    # files, which keeps the MVP setup simple.
-    command: sh -c "npx prisma db push --skip-generate && node dist/index.js"
+    command: sh -c "npx prisma migrate deploy && node dist/index.js"
 
 volumes:
   pgdata:

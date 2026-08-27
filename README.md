@@ -86,7 +86,7 @@ poll has recorded something to measure.
 
 ## Running locally
 
-Requires Node 20+, Docker, and the deployed contract id.
+Requires Node 20.12+, Docker, and the deployed contract id.
 
 ```bash
 cp .env.example .env        # then set STREAM_CONTRACT_ID
