@@ -14,6 +14,18 @@ It backs the TricklePay web client and pairs with the
 [contracts](#related-repositories) repository, which holds the on-chain logic.
 For a record of API and indexer behavior changes, see the [Changelog](CHANGELOG.md).
 
+## Table of Contents
+
+- [How it works](#how-it-works)
+- [API](#api)
+- [Running locally](#running-locally)
+- [Testing](#testing)
+- [Configuration](#configuration)
+- [Deployment](#deployment)
+- [Project structure](#project-structure)
+- [Related repositories](#related-repositories)
+- [License](#license)
+
 ## How it works
 
 The contract emits `Created`, `Withdrawn`, and `Cancelled` events, and between
