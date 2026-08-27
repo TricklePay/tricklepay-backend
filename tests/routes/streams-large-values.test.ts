@@ -137,10 +137,12 @@ describe("large uint128 values (#65)", () => {
 
   describe("GET /streams with large values", () => {
     it("returns large amounts as strings in the list endpoint", async () => {
-      streamsRepo.listStreams.mockResolvedValue([
-        makeLargeStream({ streamId: BigInt(1) }),
-        makeLargeStream({ streamId: BigInt(2), withdrawn: 1n }),
-      ]);
+      streamsRepo.listStreams.mockResolvedValue({
+        streams: [
+          makeLargeStream({ streamId: BigInt(1) }),
+          makeLargeStream({ streamId: BigInt(2), withdrawn: 1n }),
+        ],
+      });
       streamsRepo.countStreams.mockResolvedValue(2);
 
       const res = await listStreams();

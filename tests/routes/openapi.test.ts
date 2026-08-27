@@ -146,6 +146,19 @@ describe("GET /docs/json (OpenAPI spec)", () => {
     expect(listSchema?.properties).toHaveProperty("streams");
   });
 
+  it("StreamListResponse exposes nextCursor for opaque cursor pagination", async () => {
+    const spec = await getSpec();
+    const schemas = (
+      spec.components as { schemas?: Record<string, unknown> }
+    )?.schemas ?? {};
+    const listSchema = schemas["StreamListResponse"] as {
+      properties?: Record<string, unknown>;
+      required?: string[];
+    };
+    expect(listSchema?.properties).toHaveProperty("nextCursor");
+    expect(listSchema?.required).not.toContain("nextCursor");
+  });
+
   it("StreamListResponse.total is optional so both response variants are valid", async () => {
     const spec = await getSpec();
     const schemas = (
@@ -175,6 +188,16 @@ describe("GET /docs/json (OpenAPI spec)", () => {
     expect((cancelledParam as { schema?: { enum?: string[] } })?.schema?.enum).toEqual(
       expect.arrayContaining(["true", "false"]),
     );
+  });
+
+  it("documents the cursor query parameter on GET /streams", async () => {
+    const spec = await getSpec();
+    const paths = spec.paths as Record<string, Record<string, unknown>>;
+    const params = (paths["/streams"]?.get as { parameters?: Array<Record<string, unknown>> })
+      ?.parameters ?? [];
+    const cursorParam = params.find((p) => p.name === "cursor");
+    expect(cursorParam).toBeDefined();
+    expect((cursorParam as { description?: string })?.description).toMatch(/cursor|opaque/i);
   });
 
   it("exports StreamSummaryResponse as a reusable component schema", async () => {
