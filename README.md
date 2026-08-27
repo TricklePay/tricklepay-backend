@@ -39,27 +39,50 @@ once and the row written whole. That is one read per stream, not per event: from
 then on the stream is back on the event path.
 
 Alongside the stream rows the indexer keeps one row of bookkeeping: the RPC
-cursor to resume from, the highest ledger it has actually applied events
-through, and the chain's head as of its last poll. The first two are what let it
-crash and resume; the last two are what `/status` subtracts to report lag.
+cursor to resume from (`cursor`), the highest ledger it has actually applied
+events through (`lastLedger`), and the chain's head as of its last poll
+(`chainLedger`). These are not the same thing, and the difference matters:
+`cursor` is an opaque RPC paging token that advances on every poll — including
+one whose page has no matching events — because it only marks how far the RPC
+has been asked to scan. `lastLedger` only moves forward when an event is
+actually applied to Postgres, so a page with no events leaves it exactly where
+it was. Lag is therefore computed as `chainLedger - lastLedger`, never from the
+cursor: a cursor sailing through a stretch of quiet ledgers would otherwise look
+identical to real progress, letting a genuinely backlogged indexer read as level
+with the chain. `cursor` and `lastLedger` are what let the indexer crash and
+resume without reprocessing; `lastLedger` and `chainLedger` are what `/status`
+subtracts to report lag.
 
-The API reads only from Postgres. On every request it recomputes vested and
-withdrawable amounts with the same linear formula the contract uses, against the
-current clock, so the numbers are always current without a chain round-trip.
+The API reads only from Postgres, and not every field it returns is a stored
+column. `id`, `sender`, `recipient`, `token`, `totalAmount`, `withdrawn`,
+`startTime`, `endTime`, `cliffTime`, and `cancelled` are stored — copied
+straight from the indexed row. `vested`, `withdrawable`, `locked`, `progress`,
+and `status` are derived: computed on every request, against the current clock,
+using the same linear vesting formula the contract itself evaluates on-chain.
+That means these figures track wall-clock time rather than the last indexed
+event — a stream's `vested` amount can be higher on a second request than the
+first even though the indexer applied nothing in between — and they agree with
+what the contract would report if queried directly, without ever making that
+chain round-trip.
 
 ## API
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `GET` | `/health` | Liveness check. |
+| `GET` | `/` | Service index: name, version, and a list of endpoints. |
+| `GET` | `/health` | Liveness check. Returns 200 with the service version; performs no database read. |
+| `GET` | `/ready` | Readiness check. Verifies database connectivity and reports indexer lag; returns 503 when the database is unavailable. |
 | `GET` | `/status` | Indexer progress against the chain. |
-| `GET` | `/streams` | List streams. Query params: `sender`, `recipient`, `limit` (max 100), `offset` (max 10000), `includeTotal`. Address filters accept lowercase and padded spellings and are normalized before matching. `total` is only included when `includeTotal=true`. |
+| `GET` | `/streams` | List streams. Query params: `sender`, `recipient`, `token`, `limit` (max 100), `offset` (max 10000), `includeTotal`, `cancelled`. Address filters accept lowercase and padded spellings and are normalized before matching. `total` is only included when `includeTotal=true`; `cancelled` filters by cancellation status when given, and is omitted to return both. |
 | `GET` | `/streams/summary` | Counts and exact amount totals per status (`pending`, `streaming`, `completed`, `cancelled`). |
 | `GET` | `/streams/:id` | A single stream by id. |
+| `GET` | `/metrics` | Prometheus metrics. |
+| `GET` | `/docs` | Interactive Swagger UI; the raw OpenAPI spec is served at `/docs/json` and `/docs/yaml`. |
 
 Each stream is returned with its stored fields plus derived `vested`,
-`withdrawable`, and `status` (`pending`, `streaming`, `completed`, or
-`cancelled`). All amounts are strings to preserve 128-bit precision.
+`withdrawable`, `locked`, `progress`, and `status` (`pending`, `streaming`,
+`completed`, or `cancelled`). `progress` is vesting progress in basis points
+(0–10000). All amounts are strings to preserve 128-bit precision.
 
 `/status` reports the indexer's own position and the chain's head as two
 separate figures, because only the distance between them means anything:
@@ -135,6 +158,55 @@ selected network (`SOROBAN_RPC_URL` to override), the server listens on
 request sizes. The indexer polls every `INDEXER_POLL_INTERVAL_MS` (minimum
 1000) starting from `INDEXER_START_LEDGER` — zero means start at the chain's
 latest ledger rather than replaying history.
+
+## Deployment
+
+The same image runs on any container platform; only the environment differs.
+Everything in [Configuration](#configuration) applies unchanged — set
+`DATABASE_URL` and `STREAM_CONTRACT_ID` at minimum. Treat every value below as
+a placeholder to replace, never as a literal to ship with:
+
+```
+DATABASE_URL=postgresql://<user>:<password>@<host>:5432/<database>
+STREAM_CONTRACT_ID=<deployed-contract-id>
+NETWORK=mainnet
+CORS_ORIGIN=https://<frontend-host>
+```
+
+### Probes
+
+The service exposes two separate checks; wire them to separate probes, since
+they answer different questions:
+
+- **Liveness — `GET /health`.** Returns `200 {"status":"ok","version":...}` as
+  soon as the process is up and performs no database read. A liveness probe
+  should restart the container if this stops responding — it means the process
+  itself is wedged.
+- **Readiness — `GET /ready`.** Checks the database connection and returns
+  `200` with the current indexer lag when it succeeds, or
+  `503 {"status":"not_ready","database":"down"}` when Postgres is unreachable.
+  A readiness probe should take the instance out of load-balancer rotation on a
+  503 without restarting it — the process is fine, a dependency isn't.
+
+### Migrations
+
+Apply pending Prisma migrations before the process starts serving traffic —
+`npx prisma migrate deploy`, never `prisma migrate dev`, which is interactive.
+`docker-compose.yml` shows the pattern: the migration runs as a startup step
+ahead of `node dist/index.js`, in the same container command. On a platform
+with a dedicated pre-deploy hook or init-container step, use that instead of
+chaining commands; either way, migrations must complete before the app process
+accepts connections.
+
+### Graceful termination
+
+On `SIGTERM` or `SIGINT` the process shuts down in a fixed order
+([index.ts](src/index.ts)): it stops the indexer poller first (no new poll
+ticks start), then closes the HTTP server (Fastify stops accepting new
+connections and waits for in-flight requests to finish), then drains the
+Postgres connection pool, then exits `0`. Give the platform's termination
+grace period enough headroom for in-flight requests to finish — the process
+does not force-exit early on its own.
 
 ## Project structure
 
