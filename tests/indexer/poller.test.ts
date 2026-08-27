@@ -15,6 +15,9 @@ import capture from "../fixtures/get-events.json" with { type: "json" };
 const chain = vi.hoisted(() => ({
   getContractEvents: vi.fn(),
   createRpcServer: vi.fn(),
+  // Exported by the (mocked) module and used by isBacklogDrained to decide
+  // whether a page is full. Kept in step with the real constant.
+  EVENT_PAGE_LIMIT: 100,
 }));
 
 const indexerState = vi.hoisted(() => ({
@@ -63,8 +66,10 @@ const config: Config = {
   // Zero keeps the tests instant without changing which pages a tick fetches.
   pollIntervalMs: 0,
   startLedger: 0,
+  maxPagesPerTick: 1000,
   bodyLimit: 1048576,
   queryStringLimit: 2048,
+  trustedProxies: [],
 };
 
 const log = pino({ level: "silent" });
@@ -74,6 +79,14 @@ const server = { getLatestLedger } as unknown as rpc.Server;
 
 function pageOf(events: rpc.Api.EventResponse[], latestLedger = CHAIN_HEAD) {
   return { events, latestLedger, cursor: CURSOR };
+}
+
+// A page that fills EVENT_PAGE_LIMIT so the poller keeps fetching rather than
+// treating it as the end of the backlog. Built from the captured events so the
+// ledgers stay real for the apply step. Used to exercise the per-tick page cap.
+function fullPage(cursor: string, latestLedger = CHAIN_HEAD) {
+  const events = Array.from({ length: 17 }, () => captured.events).flat();
+  return { events, latestLedger, cursor };
 }
 
 // Drives exactly one poll: the loop is stopped from inside the save, which is
@@ -304,5 +317,84 @@ describe("Poller", () => {
 
     // The page is applied once (isBacklogDrained breaks the loop), not skipped.
     expect(indexer.applyEvent).toHaveBeenCalled();
+  });
+
+  // Distinct, monotonically increasing cursors so each full page is a clear
+  // advance and never looks like a cursor regression or a drained backlog.
+  const cursors = ["cx1", "cx2", "cx3", "cx4", "cx5", "cx6"];
+  const MAX = 3;
+
+  it("stops after the configured page maximum and persists the latest cursor", async () => {
+    let seq = 0;
+    chain.getContractEvents.mockImplementation(async () => fullPage(cursors[seq++]));
+
+    const poller = new Poller(server, { ...config, maxPagesPerTick: MAX }, log);
+    indexerState.getIndexerPosition.mockResolvedValue(null);
+    getLatestLedger.mockResolvedValue({ sequence: CHAIN_HEAD });
+    // `tick` only loops while running; start() sets it, but calling tick
+    // directly needs it flipped on first.
+    (poller as any).running = true;
+    const start = await (poller as any).resolveStart();
+    const after = await (poller as any).tick(start);
+
+    expect(chain.getContractEvents).toHaveBeenCalledTimes(MAX);
+    expect(after.cursor).toBe(cursors[MAX - 1]);
+    // The cursor is saved after every page, so the persisted one is exactly the
+    // last page's cursor — not lost when the tick is cut short.
+    expect(indexerState.saveIndexerPosition).toHaveBeenCalledWith(
+      expect.objectContaining({ cursor: cursors[MAX - 1] }),
+    );
+  });
+
+  it("resumes from the persisted cursor on the next tick without replaying", async () => {
+    let seq = 0;
+    chain.getContractEvents.mockImplementation(async () => fullPage(cursors[seq++]));
+
+    const poller = new Poller(server, { ...config, maxPagesPerTick: MAX }, log);
+    indexerState.getIndexerPosition.mockResolvedValue(null);
+    getLatestLedger.mockResolvedValue({ sequence: CHAIN_HEAD });
+    (poller as any).running = true;
+
+    const start1 = await (poller as any).resolveStart();
+    const after1 = await (poller as any).tick(start1);
+    const persistedCursor = after1.cursor;
+    expect(persistedCursor).toBe(cursors[MAX - 1]);
+    expect(chain.getContractEvents).toHaveBeenCalledTimes(MAX);
+
+    // A second tick must begin from the persisted cursor and fetch the next
+    // pages, not re-fetch the ones already applied.
+    indexerState.getIndexerPosition.mockResolvedValue({
+      lastLedger: CHAIN_HEAD,
+      chainLedger: CHAIN_HEAD,
+      cursor: persistedCursor,
+    });
+    const start2 = await (poller as any).resolveStart();
+    const after2 = await (poller as any).tick(start2);
+
+    // Every page past the persisted cursor was fetched exactly once: twice the
+    // cap, with no replay of the first batch.
+    expect(chain.getContractEvents).toHaveBeenCalledTimes(MAX * 2);
+    expect(after2.cursor).toBe(cursors[MAX * 2 - 1]);
+  });
+
+  it("does not fragment a modest backlog when using the default limit", async () => {
+    // A backlog smaller than the default cap should drain in a single tick via
+    // the normal "backlog drained" path, not be chopped by the page limit.
+    let call = 0;
+    chain.getContractEvents.mockImplementation(async () => {
+      call += 1;
+      if (call < 3) return fullPage(`cx${call}`);
+      return { events: [], latestLedger: CHAIN_HEAD, cursor: undefined };
+    });
+
+    const poller = new Poller(server, { ...config }, log); // default limit (1000)
+    indexerState.getIndexerPosition.mockResolvedValue(null);
+    getLatestLedger.mockResolvedValue({ sequence: CHAIN_HEAD });
+    (poller as any).running = true;
+    const start = await (poller as any).resolveStart();
+    await (poller as any).tick(start);
+
+    // 2 full pages + 1 terminal drain — stopped by drain, not the limit.
+    expect(chain.getContractEvents).toHaveBeenCalledTimes(3);
   });
 });
