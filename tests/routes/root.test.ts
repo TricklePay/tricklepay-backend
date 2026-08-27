@@ -16,6 +16,7 @@ const mockConfig = {
   contractId: "CA123",
   pollIntervalMs: 5000,
   startLedger: 0,
+  maxPagesPerTick: 1000,
   bodyLimit: 1048576,
   queryStringLimit: 2048,
   trustedProxies: [],

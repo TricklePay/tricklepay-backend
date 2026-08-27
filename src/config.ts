@@ -48,6 +48,11 @@ function integer(name: string, fallback: number): number {
 // RPC between ledgers, so values below it are rejected rather than trusted.
 export const MIN_POLL_INTERVAL_MS = 1000;
 
+// Default cap on event pages fetched per poll tick. A backlog is split across
+// ticks so a single poll cannot run indefinitely, but the default is high enough
+// that a normal catch-up drains in one tick.
+export const DEFAULT_MAX_PAGES_PER_TICK = 1000;
+
 function positiveInteger(name: string, fallback: number, min: number): number {
   const raw = process.env[name];
   if (!raw || raw.trim() === "") return fallback;
@@ -109,6 +114,7 @@ export interface Config {
   contractId: string;
   pollIntervalMs: number;
   startLedger: number;
+  maxPagesPerTick: number;
   bodyLimit: number;
   queryStringLimit: number;
   trustedProxies: string[];
@@ -137,6 +143,11 @@ export function loadConfig(): Config {
     contractId,
     pollIntervalMs: positiveInteger("INDEXER_POLL_INTERVAL_MS", 5000, MIN_POLL_INTERVAL_MS),
     startLedger: integer("INDEXER_START_LEDGER", 0),
+    maxPagesPerTick: positiveInteger(
+      "INDEXER_MAX_PAGES_PER_TICK",
+      DEFAULT_MAX_PAGES_PER_TICK,
+      1,
+    ),
     bodyLimit: integer("BODY_LIMIT", 1048576), // 1MB default
     queryStringLimit: integer("QUERY_STRING_LIMIT", 2048), // 2KB default
     // Forwarded headers are honored only for these direct peers (#75).

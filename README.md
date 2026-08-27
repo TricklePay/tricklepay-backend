@@ -12,6 +12,19 @@ This service has two halves that run in one process:
 
 It backs the TricklePay web client and pairs with the
 [contracts](#related-repositories) repository, which holds the on-chain logic.
+For a record of API and indexer behavior changes, see the [Changelog](CHANGELOG.md).
+
+## Table of Contents
+
+- [How it works](#how-it-works)
+- [API](#api)
+- [Running locally](#running-locally)
+- [Testing](#testing)
+- [Configuration](#configuration)
+- [Deployment](#deployment)
+- [Project structure](#project-structure)
+- [Related repositories](#related-repositories)
+- [License](#license)
 
 ## How it works
 
@@ -82,7 +95,13 @@ chain round-trip.
 Each stream is returned with its stored fields plus derived `vested`,
 `withdrawable`, `locked`, `progress`, and `status` (`pending`, `streaming`,
 `completed`, or `cancelled`). `progress` is vesting progress in basis points
-(0–10000). All amounts are strings to preserve 128-bit precision.
+(0–10000).
+
+**Data Types and Precision**
+- **Amounts** (`totalAmount`, `withdrawn`, `vested`, `withdrawable`, `locked`) are returned as strings holding integer base units.
+- **Times** (`startTime`, `endTime`, `cliffTime`) are returned as Unix seconds encoded as strings.
+
+Strings are used rather than JSON numbers to safely preserve full 64-bit and 128-bit integer precision. If they were returned as numbers, clients could silently lose precision when parsing them as IEEE 754 floating-point values.
 
 `/status` reports the indexer's own position and the chain's head as two
 separate figures, because only the distance between them means anything:
@@ -157,7 +176,9 @@ selected network (`SOROBAN_RPC_URL` to override), the server listens on
 `LOG_LEVEL` sets log verbosity, `BODY_LIMIT` and `QUERY_STRING_LIMIT` bound
 request sizes. The indexer polls every `INDEXER_POLL_INTERVAL_MS` (minimum
 1000) starting from `INDEXER_START_LEDGER` — zero means start at the chain's
-latest ledger rather than replaying history.
+latest ledger rather than replaying history. `INDEXER_MAX_PAGES_PER_TICK`
+(default 1000) caps how many event pages one poll fetches, so a deep backlog is
+spread across ticks; the cursor is saved after each page so progress is kept.
 
 ### Metrics & alerting
 
@@ -231,6 +252,14 @@ grace period enough headroom for in-flight requests to finish — the process
 does not force-exit early on its own.
 
 ## Project structure
+
+The `src/` directory is split across several modules:
+
+- **`chain/`**: Soroban RPC integration, decoding contract events, and querying on-chain state.
+- **`indexer/`**: Polling the blockchain and applying streamed events to the database.
+- **`lib/`**: Shared utilities and domain logic like vesting math.
+- **`repositories/`**: Database access layer for reading and writing models.
+- **`routes/`**: HTTP API endpoints served by Fastify.
 
 ```
 src/
