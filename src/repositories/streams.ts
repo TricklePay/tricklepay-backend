@@ -60,6 +60,7 @@ export interface StreamFilter {
   sender?: string;
   recipient?: string;
   token?: string;
+  cancelled?: boolean;
   limit?: number;
   offset?: number;
 }
@@ -221,6 +222,7 @@ function whereFromFilter(filter: StreamFilter): Prisma.StreamWhereInput {
   if (filter.sender) where.sender = filter.sender;
   if (filter.recipient) where.recipient = filter.recipient;
   if (filter.token) where.token = filter.token;
+  if (filter.cancelled !== undefined) where.cancelled = filter.cancelled;
   return where;
 }
 

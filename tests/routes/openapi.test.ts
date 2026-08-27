@@ -165,6 +165,18 @@ describe("GET /docs/json (OpenAPI spec)", () => {
     expect(names).toContain("offset");
   });
 
+  it("documents the cancelled query parameter on GET /streams", async () => {
+    const spec = await getSpec();
+    const paths = spec.paths as Record<string, Record<string, unknown>>;
+    const params = (paths["/streams"]?.get as { parameters?: Array<Record<string, unknown>> })
+      ?.parameters ?? [];
+    const cancelledParam = params.find((p) => p.name === "cancelled");
+    expect(cancelledParam).toBeDefined();
+    expect((cancelledParam as { schema?: { enum?: string[] } })?.schema?.enum).toEqual(
+      expect.arrayContaining(["true", "false"]),
+    );
+  });
+
   it("exports StreamSummaryResponse as a reusable component schema", async () => {
     const spec = await getSpec();
     const schemas = (
