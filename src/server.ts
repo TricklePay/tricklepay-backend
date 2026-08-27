@@ -92,7 +92,7 @@ export function errorCodeForStatus(statusCode: number): ApiErrorCode {
 // every route schema. The shared JSON Schema definitions ($id-bearing objects)
 // are added to the Fastify schema store here so that routes may reference them
 // with $ref and the plugin emits them as reusable OpenAPI components.
-export async function buildServer(config?: Config): Promise<FastifyInstance> {
+export async function buildServer(config?: Partial<Config>): Promise<FastifyInstance> {
   const trustedProxies = config?.trustedProxies ?? [];
   const app = Fastify({
     // Fastify types its logger as FastifyBaseLogger; the pino instance
