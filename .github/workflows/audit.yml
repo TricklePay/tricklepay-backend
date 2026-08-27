@@ -1,0 +1,24 @@
+name: Dependency Audit
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # daily
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # Run audit and fail on high or critical vulnerabilities.
+      # Low and moderate vulnerabilities are reported but will not fail the build.
+      - name: Run npm audit
+        run: npm audit --audit-level=high

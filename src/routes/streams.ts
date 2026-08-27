@@ -144,24 +144,29 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
               type: "string",
               description:
                 "Filter by sender Stellar address. Trimmed and uppercased before matching.",
+              examples: ["GBLDDFU4L4AUB67M7NDS56VMMW7N6N5Q5T6XQIQG45Q6S6BZYF2K36L7"],
             },
             recipient: {
               type: "string",
               description:
                 "Filter by recipient Stellar address. Trimmed and uppercased before matching.",
+              examples: ["GBLDDFU4L4AUB67M7NDS56VMMW7N6N5Q5T6XQIQG45Q6S6BZYF2K36L7"],
             },
             token: {
               type: "string",
               description:
                 "Filter by token contract Stellar address. Trimmed and uppercased before matching.",
+              examples: ["CDLZFC3SYJYDZT7K67VZ75HPJVIEWCEUNGXQZOFQIX22EOCDOB5GQQM6"],
             },
             limit: {
               type: "string",
               description: `Maximum results to return. Capped at ${MAX_LIMIT}. Defaults to ${DEFAULT_LIMIT}.`,
+              examples: ["10"],
             },
             offset: {
               type: "string",
               description: `Zero-based offset for pagination. Defaults to 0 and must not exceed ${MAX_OFFSET}.`,
+              examples: ["50"],
             },
             includeTotal: {
               type: "string",
@@ -169,6 +174,7 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
               description:
                 "When true, the response includes the total number of streams matching the filters. " +
                 "Defaults to false, which skips the count query and omits total from the response.",
+              examples: ["true"],
             },
           },
           additionalProperties: false,
