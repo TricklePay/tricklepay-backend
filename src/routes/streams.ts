@@ -141,7 +141,11 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
         summary: "List streams",
         description:
           "Returns a paginated list of token streams. Optionally filter by sender, recipient, or token address; " +
-          "address filters accept lowercase and whitespace-padded spellings and are normalized before matching.",
+          "address filters accept lowercase and whitespace-padded spellings and are normalized before matching. " +
+          "Results are returned in a stable deterministic order: when filtering by sender, recipient, or token, " +
+          "results are ordered by that address ascending, then by stream id descending to break ties. " +
+          "Unfiltered queries (or queries filtered only by cancellation status) are ordered by stream id descending. " +
+          "Stream id is the final tie-breaker in all cases so pagination is cacheable and repeatable.",
         tags: ["streams"],
         querystring: {
           type: "object",
