@@ -41,6 +41,7 @@ function configWith(rpcUrl: string): Config {
     startLedger: 0,
     bodyLimit: 1048576,
     queryStringLimit: 2048,
+    trustedProxies: [],
   };
 }
 
