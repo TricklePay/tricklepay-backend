@@ -225,6 +225,14 @@ does not force-exit early on its own.
 
 ## Project structure
 
+The `src/` directory is split across several modules:
+
+- **`chain/`**: Soroban RPC integration, decoding contract events, and querying on-chain state.
+- **`indexer/`**: Polling the blockchain and applying streamed events to the database.
+- **`lib/`**: Shared utilities and domain logic like vesting math.
+- **`repositories/`**: Database access layer for reading and writing models.
+- **`routes/`**: HTTP API endpoints served by Fastify.
+
 ```
 src/
   config.ts           environment loading and validation
