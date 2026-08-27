@@ -48,6 +48,12 @@ function integer(name: string, fallback: number): number {
 // RPC between ledgers, so values below it are rejected rather than trusted.
 export const MIN_POLL_INTERVAL_MS = 1000;
 
+// Default ceiling on the exponential poll backoff. After repeated RPC failures
+// the retry delay doubles each time up to this value; a successful poll resets
+// it to the normal poll interval. 60s keeps a stalled indexer from hammering an
+// unavailable RPC while still recovering promptly.
+export const DEFAULT_MAX_BACKOFF_MS = 60000;
+
 function positiveInteger(name: string, fallback: number, min: number): number {
   const raw = process.env[name];
   if (!raw || raw.trim() === "") return fallback;
@@ -109,6 +115,7 @@ export interface Config {
   contractId: string;
   pollIntervalMs: number;
   startLedger: number;
+  maxBackoffMs: number;
   bodyLimit: number;
   queryStringLimit: number;
   trustedProxies: string[];
@@ -137,6 +144,11 @@ export function loadConfig(): Config {
     contractId,
     pollIntervalMs: positiveInteger("INDEXER_POLL_INTERVAL_MS", 5000, MIN_POLL_INTERVAL_MS),
     startLedger: integer("INDEXER_START_LEDGER", 0),
+    maxBackoffMs: positiveInteger(
+      "INDEXER_BACKOFF_MAX_MS",
+      DEFAULT_MAX_BACKOFF_MS,
+      MIN_POLL_INTERVAL_MS,
+    ),
     bodyLimit: integer("BODY_LIMIT", 1048576), // 1MB default
     queryStringLimit: integer("QUERY_STRING_LIMIT", 2048), // 2KB default
     // Forwarded headers are honored only for these direct peers (#75).

@@ -47,6 +47,11 @@ export function isBacklogDrained(page: EventPage, requestedCursor?: string): boo
 // self-healing.
 export class Poller {
   private running = false;
+  // Count of poll iterations that failed in a row. Drives the exponential
+  // backoff: it grows with each consecutive failure and is cleared on the
+  // first success, so a single transient blip does not leave the poller
+  // stuck at a long delay.
+  private consecutiveFailures = 0;
   private readonly log: Logger;
 
   constructor(
@@ -64,15 +69,32 @@ export class Poller {
     while (this.running) {
       try {
         position = await this.tick(position);
+        // A successful iteration breaks the streak — back off returns to the
+        // normal interval so a recovered RPC is not punished for past failures.
+        this.consecutiveFailures = 0;
       } catch (err) {
         this.log.error({ err }, "poll iteration failed");
         pollErrors.inc();
+        this.consecutiveFailures += 1;
       }
       // Checked before sleeping, so a stop does not have to wait out an
       // interval that exists only to pace an idle indexer.
       if (!this.running) break;
-      await sleep(this.config.pollIntervalMs);
+      // Delay grows with consecutive failures (2×, 4×, …) up to the ceiling,
+      // so a struggling RPC is not hammered on a tight fixed schedule.
+      await sleep(this.backoffDelay());
     }
+  }
+
+  // Milliseconds to wait before the next poll, given how many failures have
+  // happened in a row. Zero failures means the normal interval; each further
+  // failure doubles it, capped at maxBackoffMs.
+  private backoffDelay(): number {
+    if (this.consecutiveFailures <= 0) return this.config.pollIntervalMs;
+    return Math.min(
+      this.config.pollIntervalMs * 2 ** this.consecutiveFailures,
+      this.config.maxBackoffMs,
+    );
   }
 
   stop(): void {

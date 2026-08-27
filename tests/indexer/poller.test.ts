@@ -15,6 +15,9 @@ import capture from "../fixtures/get-events.json" with { type: "json" };
 const chain = vi.hoisted(() => ({
   getContractEvents: vi.fn(),
   createRpcServer: vi.fn(),
+  // Exported by the (mocked) module and used by isBacklogDrained to decide
+  // whether a page is full. Kept in step with the real constant.
+  EVENT_PAGE_LIMIT: 100,
 }));
 
 const indexerState = vi.hoisted(() => ({
@@ -63,8 +66,10 @@ const config: Config = {
   // Zero keeps the tests instant without changing which pages a tick fetches.
   pollIntervalMs: 0,
   startLedger: 0,
+  maxBackoffMs: 60000,
   bodyLimit: 1048576,
   queryStringLimit: 2048,
+  trustedProxies: [],
 };
 
 const log = pino({ level: "silent" });
@@ -304,5 +309,64 @@ describe("Poller", () => {
 
     // The page is applied once (isBacklogDrained breaks the loop), not skipped.
     expect(indexer.applyEvent).toHaveBeenCalled();
+  });
+
+  // Uses a realistic interval so the doubling is observable (the shared config
+  // uses pollIntervalMs 0, which would collapse every delay to 0).
+  const backoffConfig = { ...config, pollIntervalMs: 1000, maxBackoffMs: 7000 };
+
+  it("increases the retry delay with consecutive failures and respects the ceiling", async () => {
+    // Timing decisions are checked without sleeping by reading the computed
+    // delay directly. 1000ms base, doubling each failure, capped at 7000ms.
+    const poller = new Poller(server, backoffConfig, log);
+
+    (poller as any).consecutiveFailures = 0;
+    expect((poller as any).backoffDelay()).toBe(1000);
+    (poller as any).consecutiveFailures = 1;
+    expect((poller as any).backoffDelay()).toBe(2000);
+    (poller as any).consecutiveFailures = 2;
+    expect((poller as any).backoffDelay()).toBe(4000);
+    (poller as any).consecutiveFailures = 3;
+    expect((poller as any).backoffDelay()).toBe(7000); // capped
+    (poller as any).consecutiveFailures = 4;
+    expect((poller as any).backoffDelay()).toBe(7000); // still capped
+  });
+
+  it("resets the delay to the normal interval after a successful poll", async () => {
+    // A single successful tick must clear the failure streak so the next
+    // wait returns to the normal interval, not the backed-off one. Driving
+    // start() (which owns the reset) with a stop-on-save keeps it fast.
+    const poller = new Poller(server, backoffConfig, log);
+    (poller as any).consecutiveFailures = 4;
+
+    chain.getContractEvents.mockResolvedValue(pageOf(captured.events));
+    indexerState.saveIndexerPosition.mockImplementation(async () => {
+      poller.stop();
+    });
+
+    await poller.start();
+
+    expect((poller as any).consecutiveFailures).toBe(0);
+    expect((poller as any).backoffDelay()).toBe(1000);
+  });
+
+  it("counts a failed poll as a consecutive failure", async () => {
+    // One failed tick must advance the streak even though no page was applied.
+    // Drive start() (which owns the increment) and stop after the first tick.
+    chain.getContractEvents.mockRejectedValue(new Error("rpc unavailable"));
+
+    const poller = new Poller(server, backoffConfig, log);
+    const tick = (poller as any).tick.bind(poller);
+    (poller as any).tick = async (position: unknown) => {
+      try {
+        return await tick(position);
+      } finally {
+        poller.stop();
+      }
+    };
+
+    await poller.start();
+
+    expect((poller as any).consecutiveFailures).toBe(1);
   });
 });

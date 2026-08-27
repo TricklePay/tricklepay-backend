@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { MIN_POLL_INTERVAL_MS, isLocalUrl, loadConfig } from "../src/config.js";
+import {
+  DEFAULT_MAX_BACKOFF_MS,
+  MIN_POLL_INTERVAL_MS,
+  isLocalUrl,
+  loadConfig,
+} from "../src/config.js";
 
 // `isLocalUrl` is tested in isolation first, then `loadConfig` is exercised
 // to confirm the validation fires at the right place with a readable message.
@@ -247,6 +252,49 @@ describe("loadConfig — INDEXER_START_LEDGER bounds", () => {
       expect(() => loadConfig()).toThrow(
         "INDEXER_START_LEDGER must be a non-negative integer",
       );
+    });
+  });
+});
+
+describe("loadConfig — INDEXER_BACKOFF_MAX_MS bounds", () => {
+  it("keeps the default when omitted or blank", () => {
+    withEnv({ INDEXER_BACKOFF_MAX_MS: undefined }, () => {
+      expect(loadConfig().maxBackoffMs).toBe(DEFAULT_MAX_BACKOFF_MS);
+    });
+    withEnv({ INDEXER_BACKOFF_MAX_MS: "   " }, () => {
+      expect(loadConfig().maxBackoffMs).toBe(DEFAULT_MAX_BACKOFF_MS);
+    });
+  });
+
+  it("accepts an ordinary ceiling", () => {
+    withEnv({ INDEXER_BACKOFF_MAX_MS: "30000" }, () => {
+      expect(loadConfig().maxBackoffMs).toBe(30000);
+    });
+  });
+
+  it("rejects zero, which would remove the backoff ceiling", () => {
+    withEnv({ INDEXER_BACKOFF_MAX_MS: "0" }, () => {
+      expect(() => loadConfig()).toThrow(/INDEXER_BACKOFF_MAX_MS.*at least/);
+    });
+  });
+
+  it("rejects negative ceilings", () => {
+    withEnv({ INDEXER_BACKOFF_MAX_MS: "-1" }, () => {
+      expect(() => loadConfig()).toThrow(
+        `INDEXER_BACKOFF_MAX_MS must be at least ${MIN_POLL_INTERVAL_MS}`,
+      );
+    });
+  });
+
+  it("rejects non-integer values", () => {
+    withEnv({ INDEXER_BACKOFF_MAX_MS: "1.5" }, () => {
+      expect(() => loadConfig()).toThrow("INDEXER_BACKOFF_MAX_MS must be an integer");
+    });
+  });
+
+  it("rejects values that do not parse as numbers", () => {
+    withEnv({ INDEXER_BACKOFF_MAX_MS: "long" }, () => {
+      expect(() => loadConfig()).toThrow("INDEXER_BACKOFF_MAX_MS must be an integer");
     });
   });
 });

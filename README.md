@@ -157,7 +157,10 @@ selected network (`SOROBAN_RPC_URL` to override), the server listens on
 `LOG_LEVEL` sets log verbosity, `BODY_LIMIT` and `QUERY_STRING_LIMIT` bound
 request sizes. The indexer polls every `INDEXER_POLL_INTERVAL_MS` (minimum
 1000) starting from `INDEXER_START_LEDGER` — zero means start at the chain's
-latest ledger rather than replaying history.
+latest ledger rather than replaying history. On repeated RPC failures the retry
+delay doubles each time up to `INDEXER_BACKOFF_MAX_MS` (default 60000), then
+resets to the normal interval after a successful poll, so a struggling endpoint
+is not hammered on a fixed schedule.
 
 ## Deployment
 
