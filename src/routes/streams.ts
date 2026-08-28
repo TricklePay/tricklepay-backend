@@ -86,6 +86,23 @@ function parseIncludeTotal(raw: string | undefined): boolean {
   return raw === "true";
 }
 
+const MAX_UINT64 = 18446744073709551615n;
+
+function parseStreamId(raw: string | undefined): bigint | null {
+  if (raw === undefined) return null;
+
+  const value = raw.trim();
+  if (value.length === 0 || !/^\d+$/.test(value)) return null;
+
+  try {
+    const parsed = BigInt(value);
+    if (parsed < 0n || parsed > MAX_UINT64) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 function parseCancelled(raw: string | undefined): boolean | undefined {
   if (raw === "true") return true;
   if (raw === "false") return false;
@@ -321,11 +338,8 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
     },
     async (request, reply) => {
       const { id } = request.params as { id: string };
-
-      let streamId: bigint;
-      try {
-        streamId = BigInt(id);
-      } catch {
+      const streamId = parseStreamId(id);
+      if (streamId === null) {
         return reply.code(400).send({
           code: "VALIDATION_ERROR",
           error: "invalid stream id",
