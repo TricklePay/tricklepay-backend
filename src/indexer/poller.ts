@@ -11,6 +11,7 @@ import {
   failedEventFromDecoded,
   recordFailedEvent,
 } from "../repositories/failed-events.js";
+import { indexedEventFromDecoded, recordIndexedEvent } from "../repositories/indexed-events.js";
 import {
   eventsApplied,
   eventsFailed,
@@ -211,6 +212,12 @@ export class Poller {
         throw err;
       }
       if (!event) continue;
+
+      try {
+        await recordIndexedEvent(indexedEventFromDecoded(event));
+      } catch (err) {
+        this.log.warn({ err, eventId: event.id, ledger: event.ledger }, "could not persist indexed-event record");
+      }
 
       let outcome: string;
       try {
