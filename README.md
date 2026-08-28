@@ -176,9 +176,7 @@ selected network (`SOROBAN_RPC_URL` to override), the server listens on
 `LOG_LEVEL` sets log verbosity, `BODY_LIMIT` and `QUERY_STRING_LIMIT` bound
 request sizes. The indexer polls every `INDEXER_POLL_INTERVAL_MS` (minimum
 1000) starting from `INDEXER_START_LEDGER` — zero means start at the chain's
-latest ledger rather than replaying history. `INDEXER_MAX_PAGES_PER_TICK`
-(default 1000) caps how many event pages one poll fetches, so a deep backlog is
-spread across ticks; the cursor is saved after each page so progress is kept.
+latest ledger rather than replaying history. On repeated RPC failures the retry delay doubles each time up to `INDEXER_BACKOFF_MAX_MS` (default 60000), then resets to the normal interval after a successful poll, so a struggling endpoint is not hammered on a fixed schedule. `INDEXER_MAX_PAGES_PER_TICK` (default 1000) caps how many event pages one poll fetches, so a deep backlog is spread across ticks; the cursor is saved after each page so progress is kept.
 
 ### Metrics & alerting
 
@@ -201,6 +199,7 @@ Poll throughput can be graphed with:
 ```promql
 rate(tricklepay_indexer_poll_success_total[5m])
 ```
+
 
 ## Deployment
 
