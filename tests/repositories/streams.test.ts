@@ -1,92 +1,152 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Prisma, type Stream } from "@prisma/client";
 
+import { prisma } from "../../src/db.js";
 import {
-  orderByFromFilter,
+  countStreams,
+  listStreams,
   type StreamFilter,
 } from "../../src/repositories/streams.js";
 
-describe("orderByFromFilter", () => {
-  it("orders by streamId descending when no filters are set", () => {
+type StreamRow = Stream & {
+  totalAmount: Prisma.Decimal;
+  withdrawn: Prisma.Decimal;
+};
+
+function partialStream(overrides: Partial<StreamRow> = {}): StreamRow {
+  return {
+    streamId: 1n,
+    sender: "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+    recipient: "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H",
+    token: "CBFS2HT4TIHTMWA5ZND6FEC27BRRA4V6JWOD7JIIDZVSPVAM7EJ2LZS7",
+    totalAmount: new Prisma.Decimal(0),
+    withdrawn: new Prisma.Decimal(0),
+    startTime: 0n,
+    endTime: 0n,
+    cliffTime: 0n,
+    cancelled: false,
+    createdLedger: 0,
+    updatedLedger: 0,
+    lastEventId: null,
+    createdAt: new Date(0),
+    updatedAt: new Date(0),
+    ...overrides,
+  } as StreamRow;
+}
+
+describe("streams repository token filter", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("listStreams with no filter does not constrain token in where clause", async () => {
+    const rows = [partialStream()];
+    const spy = vi.spyOn(prisma.stream, "findMany").mockResolvedValueOnce(rows);
     const filter: StreamFilter = {};
-    expect(orderByFromFilter(filter)).toEqual([{ streamId: "desc" }]);
+    const result = await listStreams(filter);
+    expect(result).toBe(rows);
+    expect(spy).toHaveBeenCalledOnce();
+    const args = spy.mock.calls[0][0]!;
+    expect((args.where as Record<string, unknown> | undefined)?.token).toBeUndefined();
   });
 
-  it("orders by cancelled-only filter by streamId descending", () => {
-    const filter: StreamFilter = { cancelled: true };
-    expect(orderByFromFilter(filter)).toEqual([{ streamId: "desc" }]);
+  it("listStreams with token filter passes exact token to where clause", async () => {
+    const token = "CBFS2HT4TIHTMWA5ZND6FEC27BRRA4V6JWOD7JIIDZVSPVAM7EJ2LZS7";
+    const rows = [partialStream({ token })];
+    const spy = vi.spyOn(prisma.stream, "findMany").mockResolvedValueOnce(rows);
+    const result = await listStreams({ token });
+    expect(result).toBe(rows);
+    const where = spy.mock.calls[0][0]!.where as Record<string, unknown>;
+    expect(where.token).toBe(token);
   });
 
-  it("orders by sender ascending then streamId descending when sender is filtered", () => {
-    const filter: StreamFilter = { sender: "GADDR" };
-    expect(orderByFromFilter(filter)).toEqual([
-      { sender: "asc" },
-      { streamId: "desc" },
-    ]);
+  it("listStreams returns empty array when no streams match token", async () => {
+    const spy = vi.spyOn(prisma.stream, "findMany").mockResolvedValueOnce([]);
+    const result = await listStreams({
+      token: "CBFS2HT4TIHTMWA5ZND6FEC27BRRA4V6JWOD7JIIDZVSPVAM7EJ2LZS7",
+    });
+    expect(result).toEqual([]);
+    expect(spy).toHaveBeenCalledOnce();
   });
 
-  it("orders by recipient ascending then streamId descending when recipient is filtered", () => {
-    const filter: StreamFilter = { recipient: "GADDR" };
-    expect(orderByFromFilter(filter)).toEqual([
-      { recipient: "asc" },
-      { streamId: "desc" },
-    ]);
+  it("listStreams combines token with sender and cancelled filters", async () => {
+    const token = "CTOKENAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    const sender = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN";
+    const spy = vi.spyOn(prisma.stream, "findMany").mockResolvedValueOnce([]);
+    await listStreams({ token, sender, cancelled: false });
+    const where = spy.mock.calls[0][0]!.where as Record<string, unknown>;
+    expect(where.token).toBe(token);
+    expect(where.sender).toBe(sender);
+    expect(where.cancelled).toBe(false);
   });
 
-  it("orders by token ascending then streamId descending when token is filtered", () => {
-    const filter: StreamFilter = { token: "CADDR" };
-    expect(orderByFromFilter(filter)).toEqual([
-      { token: "asc" },
-      { streamId: "desc" },
-    ]);
+  it("listStreams combines token with recipient filter", async () => {
+    const token = "CTOKENAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    const recipient = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H";
+    const spy = vi.spyOn(prisma.stream, "findMany").mockResolvedValueOnce([]);
+    await listStreams({ token, recipient });
+    const where = spy.mock.calls[0][0]!.where as Record<string, unknown>;
+    expect(where.token).toBe(token);
+    expect(where.recipient).toBe(recipient);
   });
 
-  it("prioritizes sender over recipient when both are filtered", () => {
-    const filter: StreamFilter = { sender: "GA", recipient: "GB" };
-    expect(orderByFromFilter(filter)).toEqual([
-      { sender: "asc" },
-      { streamId: "desc" },
-    ]);
+  it("listStreams preserves limit and offset alongside token filter", async () => {
+    const spy = vi.spyOn(prisma.stream, "findMany").mockResolvedValueOnce([]);
+    const token = "CBFS2HT4TIHTMWA5ZND6FEC27BRRA4V6JWOD7JIIDZVSPVAM7EJ2LZS7";
+    await listStreams({ token, limit: 10, offset: 30 });
+    const args = spy.mock.calls[0][0]!;
+    expect((args.where as Record<string, unknown>).token).toBe(token);
+    expect(args.take).toBe(10);
+    expect(args.skip).toBe(30);
   });
 
-  it("prioritizes sender over token when both are filtered", () => {
-    const filter: StreamFilter = { sender: "GA", token: "CA" };
-    expect(orderByFromFilter(filter)).toEqual([
-      { sender: "asc" },
-      { streamId: "desc" },
-    ]);
+  it("countStreams with no filter does not constrain token", async () => {
+    const spy = vi.spyOn(prisma.stream, "count").mockResolvedValueOnce(7);
+    const filter: StreamFilter = {};
+    const result = await countStreams(filter);
+    expect(result).toBe(7);
+    const args = spy.mock.calls[0][0]!;
+    expect((args.where as Record<string, unknown> | undefined)?.token).toBeUndefined();
   });
 
-  it("prioritizes recipient over token when both are filtered", () => {
-    const filter: StreamFilter = { recipient: "GB", token: "CA" };
-    expect(orderByFromFilter(filter)).toEqual([
-      { recipient: "asc" },
-      { streamId: "desc" },
-    ]);
+  it("countStreams applies token filter to the count where clause", async () => {
+    const token = "CBFS2HT4TIHTMWA5ZND6FEC27BRRA4V6JWOD7JIIDZVSPVAM7EJ2LZS7";
+    const spy = vi.spyOn(prisma.stream, "count").mockResolvedValueOnce(3);
+    const result = await countStreams({ token });
+    expect(result).toBe(3);
+    const where = spy.mock.calls[0][0]!.where as Record<string, unknown>;
+    expect(where.token).toBe(token);
   });
 
-  it("combines cancelled filter with sender-based ordering", () => {
-    const filter: StreamFilter = { sender: "GA", cancelled: false };
-    expect(orderByFromFilter(filter)).toEqual([
-      { sender: "asc" },
-      { streamId: "desc" },
-    ]);
+  it("countStreams returns zero for a token with no streams", async () => {
+    const spy = vi.spyOn(prisma.stream, "count").mockResolvedValueOnce(0);
+    const result = await countStreams({
+      token: "CNOMATCHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    });
+    expect(result).toBe(0);
+    expect(spy).toHaveBeenCalledOnce();
   });
 
-  it("always terminates with streamId as the deterministic tie-breaker", () => {
-    const combinations: StreamFilter[] = [
-      {},
-      { cancelled: true },
-      { sender: "GA" },
-      { recipient: "GB" },
-      { token: "CA" },
-      { sender: "GA", recipient: "GB", token: "CA" },
-      { sender: "GA", cancelled: true, limit: 10, offset: 0 },
-    ];
-    for (const filter of combinations) {
-      const orderBy = orderByFromFilter(filter);
-      expect(orderBy.length).toBeGreaterThanOrEqual(1);
-      const last = orderBy[orderBy.length - 1];
-      expect(last).toEqual({ streamId: "desc" });
-    }
+  it("countStreams combines token with sender and cancelled filters", async () => {
+    const token = "CTOKENAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    const sender = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN";
+    const spy = vi.spyOn(prisma.stream, "count").mockResolvedValueOnce(0);
+    await countStreams({ token, sender, cancelled: true });
+    const where = spy.mock.calls[0][0]!.where as Record<string, unknown>;
+    expect(where.token).toBe(token);
+    expect(where.sender).toBe(sender);
+    expect(where.cancelled).toBe(true);
+  });
+
+  it("listStreams omits token from where when filter fields are provided but not token", async () => {
+    const spy = vi.spyOn(prisma.stream, "findMany").mockResolvedValueOnce([]);
+    await listStreams({
+      sender: "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+      cancelled: true,
+    });
+    const where = spy.mock.calls[0][0]!.where as Record<string, unknown>;
+    expect(where).not.toHaveProperty("token");
+    expect(where.sender).toBeDefined();
+    expect(where.cancelled).toBe(true);
   });
 });
