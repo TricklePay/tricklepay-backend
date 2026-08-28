@@ -50,7 +50,7 @@ export async function clearFailedEvent(eventId: string, tx: Prisma.TransactionCl
 // events surface first. Used by the status route to expose them to operators.
 export async function listFailedEvents(limit = 100) {
   return prisma.failedEvent.findMany({
-    orderBy: { ledger: "asc" },
+    orderBy: [{ ledger: "asc" }, { eventId: "asc" }],
     take: limit,
   });
 }
