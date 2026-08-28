@@ -11,6 +11,10 @@ import { vestedAmount, withdrawableAmount } from "../lib/vesting.js";
 import {
   apiErrorSchema,
   ERROR_SCHEMA_ID,
+  streamEventHistoryResponseSchema,
+  streamEventSchema,
+  STREAM_EVENT_HISTORY_RESPONSE_SCHEMA_ID,
+  STREAM_EVENT_SCHEMA_ID,
   streamListResponseSchema,
   STREAM_LIST_RESPONSE_SCHEMA_ID,
   streamSummaryResponseSchema,
@@ -18,6 +22,7 @@ import {
   streamViewSchema,
   STREAM_VIEW_SCHEMA_ID,
 } from "../schema.js";
+import { listIndexedEvents } from "../repositories/indexed-events.js";
 
 const MAX_LIMIT = 100;
 const DEFAULT_LIMIT = 50;
@@ -86,6 +91,23 @@ function parseIncludeTotal(raw: string | undefined): boolean {
   return raw === "true";
 }
 
+const MAX_UINT64 = 18446744073709551615n;
+
+function parseStreamId(raw: string | undefined): bigint | null {
+  if (raw === undefined) return null;
+
+  const value = raw.trim();
+  if (value.length === 0 || !/^\d+$/.test(value)) return null;
+
+  try {
+    const parsed = BigInt(value);
+    if (parsed < 0n || parsed > MAX_UINT64) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 function parseCancelled(raw: string | undefined): boolean | undefined {
   if (raw === "true") return true;
   if (raw === "false") return false;
@@ -131,6 +153,10 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
   if (!app.getSchema(STREAM_LIST_RESPONSE_SCHEMA_ID)) app.addSchema(streamListResponseSchema);
   if (!app.getSchema(STREAM_SUMMARY_RESPONSE_SCHEMA_ID)) {
     app.addSchema(streamSummaryResponseSchema);
+  }
+  if (!app.getSchema(STREAM_EVENT_SCHEMA_ID)) app.addSchema(streamEventSchema);
+  if (!app.getSchema(STREAM_EVENT_HISTORY_RESPONSE_SCHEMA_ID)) {
+    app.addSchema(streamEventHistoryResponseSchema);
   }
   if (!app.getSchema(ERROR_SCHEMA_ID)) app.addSchema(apiErrorSchema);
 
@@ -294,6 +320,76 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
   );
 
   app.get(
+    "/streams/:id/events",
+    {
+      schema: {
+        summary: "Get stream event history",
+        description:
+          "Returns the indexed event history for a single stream in ascending chain order. " +
+          "The event ids are TOID-index values, so the array is deterministic and replay-safe.",
+        tags: ["streams"],
+        params: {
+          type: "object",
+          required: ["id"],
+          properties: {
+            id: {
+              type: "string",
+              description: "Stream id (uint64, decimal string).",
+              examples: ["42"],
+            },
+          },
+        },
+        response: {
+          200: { $ref: STREAM_EVENT_HISTORY_RESPONSE_SCHEMA_ID },
+          400: { $ref: ERROR_SCHEMA_ID },
+          404: { $ref: ERROR_SCHEMA_ID },
+        },
+      },
+    },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const streamId = parseStreamId(id);
+      if (streamId === null) {
+        return reply.code(400).send({
+          code: "VALIDATION_ERROR",
+          error: "invalid stream id",
+          requestId: request.id,
+        });
+      }
+
+      const stream = await getStream(streamId);
+      if (!stream) {
+        return reply.code(404).send({
+          code: "NOT_FOUND",
+          error: "stream not found",
+          requestId: request.id,
+        });
+      }
+
+      const events = await listIndexedEvents(streamId);
+      reply.header("Cache-Control", "public, max-age=30");
+      return events.map((event) => ({
+        eventId: event.eventId,
+        kind: event.kind,
+        streamId: event.streamId,
+        ledger: event.ledger,
+        txHash: event.txHash,
+        sender: event.sender ?? null,
+        recipient: event.recipient ?? null,
+        token: event.token ?? null,
+        totalAmount: event.totalAmount ? event.totalAmount.toString() : null,
+        amount: event.amount ? event.amount.toString() : null,
+        recipientAmount: event.recipientAmount ? event.recipientAmount.toString() : null,
+        senderRefund: event.senderRefund ? event.senderRefund.toString() : null,
+        startTime: event.startTime !== null && event.startTime !== undefined ? event.startTime.toString() : null,
+        endTime: event.endTime !== null && event.endTime !== undefined ? event.endTime.toString() : null,
+        cliffTime: event.cliffTime !== null && event.cliffTime !== undefined ? event.cliffTime.toString() : null,
+        closedAt: event.closedAt !== null && event.closedAt !== undefined ? event.closedAt.toString() : null,
+      }));
+    },
+  );
+
+  app.get(
     "/streams/:id",
     {
       schema: {
@@ -321,11 +417,8 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
     },
     async (request, reply) => {
       const { id } = request.params as { id: string };
-
-      let streamId: bigint;
-      try {
-        streamId = BigInt(id);
-      } catch {
+      const streamId = parseStreamId(id);
+      if (streamId === null) {
         return reply.code(400).send({
           code: "VALIDATION_ERROR",
           error: "invalid stream id",
