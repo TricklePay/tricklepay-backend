@@ -144,6 +144,25 @@ STREAM_CONTRACT_ID=C... docker compose up
 
 The API listens on `http://localhost:3000`.
 
+## Failed-event replay
+
+Failed events are stored in the database with their event id, ledger, kind, and
+most recent error. Operators can retry a bounded batch without waiting for a
+full poller sweep:
+
+```bash
+# inspect the next 20 failed rows without changing state
+npm run replay-failed-events -- --dry-run --limit 20
+
+# retry the next 20 rows and clear any that apply cleanly
+npm run replay-failed-events -- --limit 20
+```
+
+The command replays failed rows in `ledger` order, resolves the matching RPC
+contract event for each row, retries it independently, clears the record when
+it succeeds, and keeps the retry set bounded so one permanently invalid event
+cannot stall the rest.
+
 ## Testing
 
 Unit tests run under [Vitest](https://vitest.dev) and need neither a database

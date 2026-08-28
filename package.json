@@ -15,6 +15,7 @@
     "test:integration": "vitest run --project integration",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
+    "replay-failed-events": "tsx src/indexer/replay.ts",
     "postinstall": "prisma generate",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev"
