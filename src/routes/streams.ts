@@ -86,6 +86,23 @@ function parseIncludeTotal(raw: string | undefined): boolean {
   return raw === "true";
 }
 
+const MAX_UINT64 = 18446744073709551615n;
+
+function parseStreamId(raw: string | undefined): bigint | null {
+  if (raw === undefined) return null;
+
+  const value = raw.trim();
+  if (value.length === 0 || !/^\d+$/.test(value)) return null;
+
+  try {
+    const parsed = BigInt(value);
+    if (parsed < 0n || parsed > MAX_UINT64) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 function parseCancelled(raw: string | undefined): boolean | undefined {
   if (raw === "true") return true;
   if (raw === "false") return false;
@@ -141,7 +158,11 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
         summary: "List streams",
         description:
           "Returns a paginated list of token streams. Optionally filter by sender, recipient, or token address; " +
-          "address filters accept lowercase and whitespace-padded spellings and are normalized before matching.",
+          "address filters accept lowercase and whitespace-padded spellings and are normalized before matching. " +
+          "Results are returned in a stable deterministic order: when filtering by sender, recipient, or token, " +
+          "results are ordered by that address ascending, then by stream id descending to break ties. " +
+          "Unfiltered queries (or queries filtered only by cancellation status) are ordered by stream id descending. " +
+          "Stream id is the final tie-breaker in all cases so pagination is cacheable and repeatable.",
         tags: ["streams"],
         querystring: {
           type: "object",
@@ -150,24 +171,29 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
               type: "string",
               description:
                 "Filter by sender Stellar address. Trimmed and uppercased before matching.",
+              examples: ["GBLDDFU4L4AUB67M7NDS56VMMW7N6N5Q5T6XQIQG45Q6S6BZYF2K36L7"],
             },
             recipient: {
               type: "string",
               description:
                 "Filter by recipient Stellar address. Trimmed and uppercased before matching.",
+              examples: ["GBLDDFU4L4AUB67M7NDS56VMMW7N6N5Q5T6XQIQG45Q6S6BZYF2K36L7"],
             },
             token: {
               type: "string",
               description:
                 "Filter by token contract Stellar address. Trimmed and uppercased before matching.",
+              examples: ["CDLZFC3SYJYDZT7K67VZ75HPJVIEWCEUNGXQZOFQIX22EOCDOB5GQQM6"],
             },
             limit: {
               type: "string",
               description: `Maximum results to return. Capped at ${MAX_LIMIT}. Defaults to ${DEFAULT_LIMIT}.`,
+              examples: ["10"],
             },
             offset: {
               type: "string",
               description: `Zero-based offset for pagination. Defaults to 0 and must not exceed ${MAX_OFFSET}.`,
+              examples: ["50"],
             },
             includeTotal: {
               type: "string",
@@ -175,6 +201,7 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
               description:
                 "When true, the response includes the total number of streams matching the filters. " +
                 "Defaults to false, which skips the count query and omits total from the response.",
+              examples: ["true"],
             },
             cancelled: {
               type: "string",
@@ -311,11 +338,8 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
     },
     async (request, reply) => {
       const { id } = request.params as { id: string };
-
-      let streamId: bigint;
-      try {
-        streamId = BigInt(id);
-      } catch {
+      const streamId = parseStreamId(id);
+      if (streamId === null) {
         return reply.code(400).send({
           code: "VALIDATION_ERROR",
           error: "invalid stream id",

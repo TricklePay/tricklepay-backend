@@ -60,6 +60,17 @@ describe("GET /metrics", () => {
     expect(body).toContain("# TYPE tricklepay_indexer_poll_errors counter");
   });
 
+  it("includes the poller heartbeat metrics", async () => {
+    // Operators rely on these to tell a quiet chain from a stalled poller.
+    const body = (await getMetrics()).body;
+    expect(body).toContain("# HELP tricklepay_indexer_poll_success_total");
+    expect(body).toContain("# TYPE tricklepay_indexer_poll_success_total counter");
+    expect(body).toContain("# HELP tricklepay_indexer_poll_last_success_timestamp_seconds");
+    expect(body).toContain(
+      "# TYPE tricklepay_indexer_poll_last_success_timestamp_seconds gauge",
+    );
+  });
+
   it("includes HTTP request duration histogram", async () => {
     const body = (await getMetrics()).body;
     expect(body).toContain("# HELP tricklepay_http_request_duration_ms");

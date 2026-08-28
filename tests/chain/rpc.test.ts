@@ -39,8 +39,11 @@ function configWith(rpcUrl: string): Config {
     contractId: "CDMB62RVYAXJJNYYH7K442SHSAJIXTZ6K7JANGSMQF2T7MHCTVSK75SW",
     pollIntervalMs: 5000,
     startLedger: 0,
+    maxBackoffMs: 60000,
+    maxPagesPerTick: 1000,
     bodyLimit: 1048576,
     queryStringLimit: 2048,
+    trustedProxies: [],
   };
 }
 

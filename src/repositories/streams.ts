@@ -226,10 +226,21 @@ function whereFromFilter(filter: StreamFilter): Prisma.StreamWhereInput {
   return where;
 }
 
+export function orderByFromFilter(
+  filter: StreamFilter,
+): Prisma.StreamOrderByWithRelationInput[] {
+  const orderBy: Prisma.StreamOrderByWithRelationInput[] = [];
+  if (filter.sender) orderBy.push({ sender: "asc" });
+  else if (filter.recipient) orderBy.push({ recipient: "asc" });
+  else if (filter.token) orderBy.push({ token: "asc" });
+  orderBy.push({ streamId: "desc" });
+  return orderBy;
+}
+
 export async function listStreams(filter: StreamFilter): Promise<Stream[]> {
   return prisma.stream.findMany({
     where: whereFromFilter(filter),
-    orderBy: { streamId: "desc" },
+    orderBy: orderByFromFilter(filter),
     take: filter.limit ?? 50,
     skip: filter.offset ?? 0,
   });

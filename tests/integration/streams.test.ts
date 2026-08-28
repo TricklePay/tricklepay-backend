@@ -1,5 +1,9 @@
 import { Prisma, PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+  listStreams,
+  orderByFromFilter,
+} from "../../src/repositories/streams.js";
 
 // Opt-in integration suite: exercises Prisma migrations, decimal fields, and
 // core repository queries against a real Postgres instance.  Skipped when
@@ -148,5 +152,131 @@ describe("prisma schema", () => {
       "SELECT 'connected' as result",
     );
     expect(result[0].result).toBe("connected");
+  });
+});
+
+describe("stream listing default ordering", () => {
+  const ORDERING_ID_BASE = 800_000_000n;
+  const SENDERA = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN";
+  const SENDERB = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H";
+  const RECIPIENTA = SENDERB;
+  const RECIPIENTB = SENDERA;
+  const TOKENX = "CBFS2HT4TIHTMWA5ZND6FEC27BRRA4V6JWOD7JIIDZVSPVAM7EJ2LZS7";
+  const TOKENY = "CCW7U4HJBMRSH4I2U4F6H3N4NG2RSXXM72LNO2GMHD2HIR6S4VJK6TNP";
+
+  const streams = [
+    { streamId: ORDERING_ID_BASE + 3n, sender: SENDERB, recipient: RECIPIENTB, token: TOKENY, cancelled: false },
+    { streamId: ORDERING_ID_BASE + 2n, sender: SENDERA, recipient: RECIPIENTA, token: TOKENX, cancelled: true },
+    { streamId: ORDERING_ID_BASE + 1n, sender: SENDERB, recipient: RECIPIENTA, token: TOKENX, cancelled: false },
+    { streamId: ORDERING_ID_BASE + 0n, sender: SENDERA, recipient: RECIPIENTB, token: TOKENY, cancelled: true },
+  ] as const;
+
+  beforeAll(async () => {
+    if (!enabled) return;
+    await prisma.stream.deleteMany({
+      where: { streamId: { gte: ORDERING_ID_BASE } },
+    });
+    for (const s of streams) {
+      await prisma.stream.create({
+        data: {
+          streamId: s.streamId,
+          sender: s.sender,
+          recipient: s.recipient,
+          token: s.token,
+          totalAmount: new Prisma.Decimal("1000"),
+          withdrawn: new Prisma.Decimal(0),
+          startTime: 1735689600n,
+          endTime: 1767225600n,
+          cliffTime: 1740000000n,
+          cancelled: s.cancelled,
+          createdLedger: 56_000_000,
+          updatedLedger: 56_000_000,
+          lastEventId: `ordering-${s.streamId.toString()}`,
+        },
+      });
+    }
+  });
+
+  afterAll(async () => {
+    if (!enabled) return;
+    await prisma.stream.deleteMany({
+      where: { streamId: { gte: ORDERING_ID_BASE } },
+    });
+  });
+
+  it("unfiltered queries order by streamId desc through repository", async () => {
+    if (!enabled) return;
+    const result = await listStreams({
+      limit: 10,
+      offset: 0,
+    });
+    const ids = result
+      .filter((s) => s.streamId >= ORDERING_ID_BASE)
+      .map((s) => s.streamId);
+    expect(ids).toEqual([
+      ORDERING_ID_BASE + 3n,
+      ORDERING_ID_BASE + 2n,
+      ORDERING_ID_BASE + 1n,
+      ORDERING_ID_BASE + 0n,
+    ]);
+  });
+
+  it("sender-filtered queries order by sender asc then streamId desc", async () => {
+    if (!enabled) return;
+    const result = await listStreams({
+      sender: SENDERA,
+      limit: 10,
+    });
+    const ids = result.map((s) => s.streamId);
+    expect(ids).toEqual([ORDERING_ID_BASE + 2n, ORDERING_ID_BASE + 0n]);
+    for (const s of result) expect(s.sender).toBe(SENDERA);
+  });
+
+  it("recipient-filtered queries order by recipient asc then streamId desc", async () => {
+    if (!enabled) return;
+    const result = await listStreams({
+      recipient: RECIPIENTA,
+      limit: 10,
+    });
+    const ids = result.map((s) => s.streamId);
+    expect(ids).toEqual([ORDERING_ID_BASE + 2n, ORDERING_ID_BASE + 1n]);
+    for (const s of result) expect(s.recipient).toBe(RECIPIENTA);
+  });
+
+  it("token-filtered queries order by token asc then streamId desc", async () => {
+    if (!enabled) return;
+    const result = await listStreams({
+      token: TOKENY,
+      limit: 10,
+    });
+    const ids = result.map((s) => s.streamId);
+    expect(ids).toEqual([ORDERING_ID_BASE + 3n, ORDERING_ID_BASE + 0n]);
+    for (const s of result) expect(s.token).toBe(TOKENY);
+  });
+
+  it("cancelled-only filter still orders by streamId desc", async () => {
+    if (!enabled) return;
+    const orderBy = orderByFromFilter({ cancelled: true });
+    const result = await prisma.stream.findMany({
+      where: { cancelled: true, streamId: { gte: ORDERING_ID_BASE } },
+      orderBy,
+    });
+    const ids = result.map((s) => s.streamId);
+    expect(ids).toEqual([ORDERING_ID_BASE + 2n, ORDERING_ID_BASE + 0n]);
+  });
+
+  it("orderByFromFilter produces same order as prisma raw for sender filter", async () => {
+    if (!enabled) return;
+    const filter = { sender: SENDERB, cancelled: false };
+    const viaRepo = await listStreams({ ...filter, limit: 10 });
+    const viaRaw = await prisma.stream.findMany({
+      where: { ...filter },
+      orderBy: orderByFromFilter(filter),
+      take: 10,
+    });
+    const repoIds = viaRepo.map((s) => s.streamId);
+    const rawIds = viaRaw.map((s) => s.streamId);
+    expect(repoIds).toEqual(rawIds);
+    expect(repoIds).toEqual([ORDERING_ID_BASE + 3n, ORDERING_ID_BASE + 1n]);
   });
 });

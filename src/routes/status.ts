@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { getIndexerPosition } from "../repositories/indexer-state.js";
+import { countFailedEvents } from "../repositories/failed-events.js";
 
 // Reports how far the indexer has progressed, so an operator or monitor can see
 // whether it is keeping up with the chain. The indexer's position and the
@@ -14,6 +15,7 @@ import { getIndexerPosition } from "../repositories/indexer-state.js";
 export async function statusRoutes(app: FastifyInstance): Promise<void> {
   app.get("/status", async (_request, reply) => {
     const position = await getIndexerPosition();
+    const failedEventCount = await countFailedEvents();
 
     reply.header("Cache-Control", "no-store");
     return {
@@ -30,6 +32,7 @@ export async function statusRoutes(app: FastifyInstance): Promise<void> {
       // anything to measure against. Never negative: the head is read in the
       // same poll that applies the events, so the position cannot outrun it.
       lagLedgers: position ? Math.max(0, position.chainLedger - position.lastLedger) : null,
+      failedEventCount,
     };
   });
 }

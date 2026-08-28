@@ -7,8 +7,10 @@ import Fastify, {
 } from "fastify";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
+import { checkHealth } from "./db.js";
 import { logger } from "./logger.js";
 import { httpRequestDuration, httpRequestsTotal } from "./metrics.js";
+import { getIndexerPosition } from "./repositories/indexer-state.js";
 import { serviceVersion } from "./version.js";
 import {
   apiErrorSchema,
@@ -90,7 +92,7 @@ export function errorCodeForStatus(statusCode: number): ApiErrorCode {
 // every route schema. The shared JSON Schema definitions ($id-bearing objects)
 // are added to the Fastify schema store here so that routes may reference them
 // with $ref and the plugin emits them as reusable OpenAPI components.
-export async function buildServer(config?: Config): Promise<FastifyInstance> {
+export async function buildServer(config?: Partial<Config>): Promise<FastifyInstance> {
   const trustedProxies = config?.trustedProxies ?? [];
   const app = Fastify({
     // Fastify types its logger as FastifyBaseLogger; the pino instance
@@ -272,6 +274,54 @@ export async function buildServer(config?: Config): Promise<FastifyInstance> {
     },
   }, async () => {
     return { status: "ok", version: serviceVersion };
+  });
+
+  app.get("/ready", {
+    schema: {
+      summary: "Readiness check",
+      description:
+        "Verifies database connectivity and reports indexer lag. Returns 503 when a dependency is unavailable.",
+      tags: ["indexer"],
+      response: {
+        200: {
+          type: "object",
+          required: ["status", "database", "indexer"],
+          properties: {
+            status: { type: "string", enum: ["ready"] },
+            database: { type: "string", enum: ["up"] },
+            indexer: {
+              type: "object",
+              required: ["lagLedgers"],
+              properties: {
+                lagLedgers: { type: ["integer", "null"] },
+              },
+            },
+          },
+        },
+        503: {
+          type: "object",
+          required: ["status", "database"],
+          properties: {
+            status: { type: "string", enum: ["not_ready"] },
+            database: { type: "string", enum: ["down"] },
+            error: { type: "string" },
+          },
+        },
+      },
+    },
+  }, async (_request, reply) => {
+    const db = await checkHealth();
+    if (db.status === "down") {
+      void reply.status(503);
+      return { status: "not_ready", database: "down", error: db.error };
+    }
+
+    const position = await getIndexerPosition();
+    const lagLedgers = position
+      ? Math.max(0, position.chainLedger - position.lastLedger)
+      : null;
+
+    return { status: "ready", database: "up", indexer: { lagLedgers } };
   });
 
   return app;

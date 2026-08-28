@@ -11,10 +11,13 @@ import {
   failedEventFromDecoded,
   recordFailedEvent,
 } from "../repositories/failed-events.js";
+import { indexedEventFromDecoded, recordIndexedEvent } from "../repositories/indexed-events.js";
 import {
   eventsApplied,
   eventsFailed,
   indexerLagLedgers,
+  indexerPollLastSuccess,
+  indexerPollSuccess,
   pagesFetched,
   pollErrors,
   rpcErrors,
@@ -47,6 +50,11 @@ export function isBacklogDrained(page: EventPage, requestedCursor?: string): boo
 // self-healing.
 export class Poller {
   private running = false;
+  // Count of poll iterations that failed in a row. Drives the exponential
+  // backoff: it grows with each consecutive failure and is cleared on the
+  // first success, so a single transient blip does not leave the poller
+  // stuck at a long delay.
+  private consecutiveFailures = 0;
   private readonly log: Logger;
 
   constructor(
@@ -64,15 +72,32 @@ export class Poller {
     while (this.running) {
       try {
         position = await this.tick(position);
+        // A successful iteration breaks the streak — back off returns to the
+        // normal interval so a recovered RPC is not punished for past failures.
+        this.consecutiveFailures = 0;
       } catch (err) {
         this.log.error({ err }, "poll iteration failed");
         pollErrors.inc();
+        this.consecutiveFailures += 1;
       }
       // Checked before sleeping, so a stop does not have to wait out an
       // interval that exists only to pace an idle indexer.
       if (!this.running) break;
-      await sleep(this.config.pollIntervalMs);
+      // Delay grows with consecutive failures (2×, 4×, …) up to the ceiling,
+      // so a struggling RPC is not hammered on a tight fixed schedule.
+      await sleep(this.backoffDelay());
     }
+  }
+
+  // Milliseconds to wait before the next poll, given how many failures have
+  // happened in a row. Zero failures means the normal interval; each further
+  // failure doubles it, capped at maxBackoffMs.
+  private backoffDelay(): number {
+    if (this.consecutiveFailures <= 0) return this.config.pollIntervalMs;
+    return Math.min(
+      this.config.pollIntervalMs * 2 ** this.consecutiveFailures,
+      this.config.maxBackoffMs,
+    );
   }
 
   stop(): void {
@@ -151,11 +176,31 @@ export class Poller {
 
       const drained = isBacklogDrained(page, position.cursor);
       if (drained) break;
+
+      // A cap keeps one tick from running forever on a huge backlog. The cursor
+      // was already saved in applyPage above, so the next tick resumes exactly
+      // where this one stopped rather than replaying events.
+      if (pages >= this.config.maxPagesPerTick) {
+        this.log.info(
+          { pages, limit: this.config.maxPagesPerTick, cursor: current.cursor },
+          "reached max pages per tick — continuing next poll",
+        );
+        break;
+      }
     }
 
     if (pages > 1) {
       this.log.info({ pages, events }, "drained event backlog");
     }
+
+    // A tick that reaches here completed without throwing, so the poller is
+    // alive. Operators use the timestamp to tell a quiet chain (still polling
+    // successfully) from a stalled poller (no successful tick), and the counter
+    // to graph poll throughput. A failed tick throws before getting here, so it
+    // never emits a false heartbeat.
+    indexerPollSuccess.inc();
+    indexerPollLastSuccess.set(Math.floor(Date.now() / 1000));
+
     return current;
   }
 
@@ -189,6 +234,12 @@ export class Poller {
         throw err;
       }
       if (!event) continue;
+
+      try {
+        await recordIndexedEvent(indexedEventFromDecoded(event));
+      } catch (err) {
+        this.log.warn({ err, eventId: event.id, ledger: event.ledger }, "could not persist indexed-event record");
+      }
 
       let outcome: string;
       try {

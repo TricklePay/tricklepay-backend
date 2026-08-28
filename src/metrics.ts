@@ -258,6 +258,18 @@ export const pollErrors = new Counter(
   "Total poll iterations that failed with an unhandled error.",
 );
 
+/** Total successful indexer poll iterations (ticks that completed without error). */
+export const indexerPollSuccess = new Counter(
+  "tricklepay_indexer_poll_success_total",
+  "Total successful indexer poll iterations.",
+);
+
+/** Unix timestamp (seconds) of the last successful poll. 0 before the first. */
+export const indexerPollLastSuccess = new Gauge(
+  "tricklepay_indexer_poll_last_success_timestamp_seconds",
+  "Unix timestamp in seconds of the last successful indexer poll iteration. 0 before the first success; use with time() to detect a stalled poller.",
+);
+
 /** Total individual events that failed to apply and were skipped. */
 export const eventsFailed = new Counter(
   "tricklepay_indexer_events_failed",
