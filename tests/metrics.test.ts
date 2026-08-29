@@ -27,3 +27,19 @@ describe("Gauge", () => {
   });
 });
 
+describe("Histogram", () => {
+  it("observations are cumulative across buckets", () => {
+    const hist = new Histogram("test_hist", "A test histogram", [], [10, 50, 100]);
+    // single observation of 25. Should appear in 50, 100, and +Inf bucket.
+    hist.observe({}, 25);
+
+    const output = renderMetrics();
+    expect(output).toContain('test_hist_bucket{le="10"} 0');
+    expect(output).toContain('test_hist_bucket{le="50"} 1');
+    expect(output).toContain('test_hist_bucket{le="100"} 1');
+    expect(output).toContain('test_hist_bucket{le="+Inf"} 1');
+    expect(output).toContain('test_hist_sum 25');
+    expect(output).toContain('test_hist_count 1');
+  });
+});
+
