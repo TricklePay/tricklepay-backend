@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // `/status` is the endpoint an operator watches to tell whether the indexer is

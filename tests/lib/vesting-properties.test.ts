@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+
 import { vestedAmount, withdrawableAmount } from "../../src/lib/vesting.js";
 
 // Issue #64 — Property-style tests for vesting arithmetic.

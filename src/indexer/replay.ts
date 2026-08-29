@@ -1,15 +1,22 @@
 import { rpc } from "@stellar/stellar-sdk";
-import { loadConfig } from "../config.js";
+
 import { decodeEvent, InvalidEventError } from "../chain/events.js";
+
 import { createRpcServer, EVENT_PAGE_LIMIT, getContractEvents } from "../chain/rpc.js";
+
+import { loadConfig } from "../config.js";
+
 import { prisma } from "../db.js";
+
 import { logger } from "../logger.js";
+
 import {
   clearFailedEvent,
   listFailedEvents,
   recordFailedEvent,
   type FailedEventInput,
 } from "../repositories/failed-events.js";
+
 import { applyEvent } from "./apply.js";
 
 export interface ReplayFailedEventsOptions {
@@ -72,7 +79,7 @@ export async function replayFailedEvents(
   const dryRun = options.dryRun ?? false;
   const maxPages = options.maxPages ?? 20;
 
-  const rows = await listFailedEvents(limit);
+  const rows = await listFailedEvents({ limit });
   let attempted = 0;
   let succeeded = 0;
   let failed = 0;
@@ -111,7 +118,7 @@ export async function replayFailedEvents(
             );
 
             if (result === "applied" || result === "duplicate" || result === "reconciled") {
-              await clearFailedEvent(event.id, tx);
+              await clearFailedEvent({ eventId: event.id }, tx);
               return "success";
             }
             return "missing";

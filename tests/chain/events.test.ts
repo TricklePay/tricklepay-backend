@@ -1,6 +1,9 @@
 import { rpc } from "@stellar/stellar-sdk";
+
 import { beforeAll, describe, expect, it } from "vitest";
+
 import { decodeEvent, InvalidEventError, type StreamEvent } from "../../src/chain/events.js";
+
 import capture from "../fixtures/get-events.json" with { type: "json" };
 
 // `decodeEvent` is the one place the indexer interprets raw chain data, so it is

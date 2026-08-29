@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
 import { rpc } from "@stellar/stellar-sdk";
+
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Issue #66 — Contract reconciliation tests.
 //

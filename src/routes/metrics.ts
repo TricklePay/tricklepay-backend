@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+
 import { renderMetrics } from "../metrics.js";
 
 // Serves all registered Prometheus metrics in the standard text exposition

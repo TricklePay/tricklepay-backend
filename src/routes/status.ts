@@ -1,6 +1,8 @@
 import type { FastifyInstance } from "fastify";
-import { getIndexerPosition } from "../repositories/indexer-state.js";
+
 import { countFailedEvents } from "../repositories/failed-events.js";
+
+import { getIndexerPosition } from "../repositories/indexer-state.js";
 
 // Reports how far the indexer has progressed, so an operator or monitor can see
 // whether it is keeping up with the chain. The indexer's position and the

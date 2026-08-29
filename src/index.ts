@@ -1,12 +1,21 @@
 import { createRpcServer } from "./chain/rpc.js";
+
 import { loadConfig } from "./config.js";
+
 import { disconnect } from "./db.js";
+
 import { Poller } from "./indexer/poller.js";
+
 import { logger } from "./logger.js";
-import { rootRoutes } from "./routes/root.js";
+
 import { metricsRoutes } from "./routes/metrics.js";
+
+import { rootRoutes } from "./routes/root.js";
+
 import { statusRoutes } from "./routes/status.js";
+
 import { streamRoutes } from "./routes/streams.js";
+
 import { buildServer } from "./server.js";
 
 async function main(): Promise<void> {

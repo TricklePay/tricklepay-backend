@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+
 import { vestedAmount, withdrawableAmount } from "../../src/lib/vesting.js";
 
 // These mirror the unit tests in the contract's `vesting.rs` case for case. The

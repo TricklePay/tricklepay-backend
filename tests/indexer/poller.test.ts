@@ -1,7 +1,11 @@
 import { rpc } from "@stellar/stellar-sdk";
+
 import pino from "pino";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
 import type { Config } from "../../src/config.js";
+
 import capture from "../fixtures/get-events.json" with { type: "json" };
 
 // What the poller records about itself. The RPC, the database and the apply

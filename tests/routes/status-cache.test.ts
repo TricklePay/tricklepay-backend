@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Tests for status route cache-control header.

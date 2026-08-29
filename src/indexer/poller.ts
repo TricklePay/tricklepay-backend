@@ -1,17 +1,15 @@
 import { rpc } from "@stellar/stellar-sdk";
-import type { Config } from "../config.js";
-import type { Logger } from "../logger.js";
-import { EVENT_PAGE_LIMIT, getContractEvents, type EventPage } from "../chain/rpc.js";
+
 import { decodeEvent, InvalidEventError } from "../chain/events.js";
-import { applyEvent } from "./apply.js";
+
+import { EVENT_PAGE_LIMIT, getContractEvents, type EventPage } from "../chain/rpc.js";
+
+import type { Config } from "../config.js";
+
 import { prisma } from "../db.js";
-import { getIndexerPosition, saveIndexerPosition } from "../repositories/indexer-state.js";
-import {
-  clearFailedEvent,
-  failedEventFromDecoded,
-  recordFailedEvent,
-} from "../repositories/failed-events.js";
-import { indexedEventFromDecoded, recordIndexedEvent } from "../repositories/indexed-events.js";
+
+import type { Logger } from "../logger.js";
+
 import {
   eventsApplied,
   eventsFailed,
@@ -22,6 +20,18 @@ import {
   pollErrors,
   rpcErrors,
 } from "../metrics.js";
+
+import {
+  clearFailedEvent,
+  failedEventFromDecoded,
+  recordFailedEvent,
+} from "../repositories/failed-events.js";
+
+import { indexedEventFromDecoded, recordIndexedEvent } from "../repositories/indexed-events.js";
+
+import { getIndexerPosition, saveIndexerPosition } from "../repositories/indexer-state.js";
+
+import { applyEvent } from "./apply.js";
 
 // The loop's state between ticks: where to read from next, and how far the
 // indexer has actually got. `lastLedger` is carried across ticks because a page
@@ -251,7 +261,7 @@ export class Poller {
             event,
             tx
           );
-          await clearFailedEvent(event.id, tx);
+          await clearFailedEvent({ eventId: event.id }, tx);
           return res;
         });
       } catch (err) {

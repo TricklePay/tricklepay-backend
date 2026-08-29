@@ -116,7 +116,7 @@ describe("request ids", () => {
       headers: { "x-request-id": "trace-valid-stream-id" },
     });
     expect(response.statusCode).toBe(404);
-    expect(streamsRepo.getStream).toHaveBeenCalledWith(18446744073709551615n);
+    expect(streamsRepo.getStream).toHaveBeenCalledWith({ streamId: 18446744073709551615n });
   });
 
   it("attaches a generated id to errors when the client sent none", async () => {

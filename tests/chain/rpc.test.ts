@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+
 import { createRpcServer } from "../../src/chain/rpc.js";
+
 import type { Config } from "../../src/config.js";
 
 // `createRpcServer` wraps `rpc.Server` construction. The only behaviour under
