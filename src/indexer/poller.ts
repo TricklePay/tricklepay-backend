@@ -1,16 +1,15 @@
 import { rpc } from "@stellar/stellar-sdk";
-import type { Config } from "../config.js";
-import type { Logger } from "../logger.js";
-import { EVENT_PAGE_LIMIT, getContractEvents, type EventPage } from "../chain/rpc.js";
+
 import { decodeEvent, InvalidEventError } from "../chain/events.js";
-import { applyEvent } from "./apply.js";
+
+import { EVENT_PAGE_LIMIT, getContractEvents, type EventPage } from "../chain/rpc.js";
+
+import type { Config } from "../config.js";
+
 import { prisma } from "../db.js";
-import { getIndexerPosition, saveIndexerPosition } from "../repositories/indexer-state.js";
-import {
-  clearFailedEvent,
-  failedEventFromDecoded,
-  recordFailedEvent,
-} from "../repositories/failed-events.js";
+
+import type { Logger } from "../logger.js";
+
 import {
   eventsApplied,
   eventsFailed,
@@ -21,6 +20,18 @@ import {
   pollErrors,
   rpcErrors,
 } from "../metrics.js";
+
+import {
+  clearFailedEvent,
+  failedEventFromDecoded,
+  recordFailedEvent,
+} from "../repositories/failed-events.js";
+
+import { indexedEventFromDecoded, recordIndexedEvent } from "../repositories/indexed-events.js";
+
+import { getIndexerPosition, saveIndexerPosition } from "../repositories/indexer-state.js";
+
+import { applyEvent } from "./apply.js";
 
 // The loop's state between ticks: where to read from next, and how far the
 // indexer has actually got. `lastLedger` is carried across ticks because a page
@@ -49,6 +60,11 @@ export function isBacklogDrained(page: EventPage, requestedCursor?: string): boo
 // self-healing.
 export class Poller {
   private running = false;
+  // Count of poll iterations that failed in a row. Drives the exponential
+  // backoff: it grows with each consecutive failure and is cleared on the
+  // first success, so a single transient blip does not leave the poller
+  // stuck at a long delay.
+  private consecutiveFailures = 0;
   private readonly log: Logger;
 
   constructor(
@@ -66,15 +82,32 @@ export class Poller {
     while (this.running) {
       try {
         position = await this.tick(position);
+        // A successful iteration breaks the streak — back off returns to the
+        // normal interval so a recovered RPC is not punished for past failures.
+        this.consecutiveFailures = 0;
       } catch (err) {
         this.log.error({ err }, "poll iteration failed");
         pollErrors.inc();
+        this.consecutiveFailures += 1;
       }
       // Checked before sleeping, so a stop does not have to wait out an
       // interval that exists only to pace an idle indexer.
       if (!this.running) break;
-      await sleep(this.config.pollIntervalMs);
+      // Delay grows with consecutive failures (2×, 4×, …) up to the ceiling,
+      // so a struggling RPC is not hammered on a tight fixed schedule.
+      await sleep(this.backoffDelay());
     }
+  }
+
+  // Milliseconds to wait before the next poll, given how many failures have
+  // happened in a row. Zero failures means the normal interval; each further
+  // failure doubles it, capped at maxBackoffMs.
+  private backoffDelay(): number {
+    if (this.consecutiveFailures <= 0) return this.config.pollIntervalMs;
+    return Math.min(
+      this.config.pollIntervalMs * 2 ** this.consecutiveFailures,
+      this.config.maxBackoffMs,
+    );
   }
 
   stop(): void {
@@ -212,6 +245,12 @@ export class Poller {
       }
       if (!event) continue;
 
+      try {
+        await recordIndexedEvent(indexedEventFromDecoded(event));
+      } catch (err) {
+        this.log.warn({ err, eventId: event.id, ledger: event.ledger }, "could not persist indexed-event record");
+      }
+
       let outcome: string;
       try {
         outcome = await prisma.$transaction(async (tx) => {
@@ -222,7 +261,7 @@ export class Poller {
             event,
             tx
           );
-          await clearFailedEvent(event.id, tx);
+          await clearFailedEvent({ eventId: event.id }, tx);
           return res;
         });
       } catch (err) {

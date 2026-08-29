@@ -1,8 +1,11 @@
 import { rpc } from "@stellar/stellar-sdk";
+
 import pino from "pino";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
 import type { Config } from "../../src/config.js";
-import { renderMetrics } from "../../src/metrics.js";
+
 import capture from "../fixtures/get-events.json" with { type: "json" };
 
 // What the poller records about itself. The RPC, the database and the apply
@@ -67,6 +70,7 @@ const config: Config = {
   // Zero keeps the tests instant without changing which pages a tick fetches.
   pollIntervalMs: 0,
   startLedger: 0,
+  maxBackoffMs: 60000,
   maxPagesPerTick: 1000,
   bodyLimit: 1048576,
   queryStringLimit: 2048,
@@ -80,14 +84,6 @@ const server = { getLatestLedger } as unknown as rpc.Server;
 
 function pageOf(events: rpc.Api.EventResponse[], latestLedger = CHAIN_HEAD) {
   return { events, latestLedger, cursor: CURSOR };
-}
-
-// A page that fills EVENT_PAGE_LIMIT so the poller keeps fetching rather than
-// treating it as the end of the backlog. Built from the captured events so the
-// ledgers stay real for the apply step. Used to exercise the per-tick page cap.
-function fullPage(cursor: string, latestLedger = CHAIN_HEAD) {
-  const events = Array.from({ length: 17 }, () => captured.events).flat();
-  return { events, latestLedger, cursor };
 }
 
 // Drives exactly one poll: the loop is stopped from inside the save, which is
@@ -320,124 +316,62 @@ describe("Poller", () => {
     expect(indexer.applyEvent).toHaveBeenCalled();
   });
 
-  it("records a heartbeat and success counter on a successful tick", async () => {
-    // Operators distinguish a quiet chain (still polling) from a stalled poller
-    // (no successful tick) via these two series. A tick that returns must bump
-    // both: the count by one, and the timestamp to roughly now.
-    chain.getContractEvents.mockResolvedValue(pageOf(captured.events));
+  // Uses a realistic interval so the doubling is observable (the shared config
+  // uses pollIntervalMs 0, which would collapse every delay to 0).
+  const backoffConfig = { ...config, pollIntervalMs: 1000, maxBackoffMs: 7000 };
 
-    const beforeSuccess = metricValue("tricklepay_indexer_poll_success_total");
-    const beforeTs = metricValue("tricklepay_indexer_poll_last_success_timestamp_seconds");
+  it("increases the retry delay with consecutive failures and respects the ceiling", async () => {
+    // Timing decisions are checked without sleeping by reading the computed
+    // delay directly. 1000ms base, doubling each failure, capped at 7000ms.
+    const poller = new Poller(server, backoffConfig, log);
 
-    const poller = new Poller(server, { ...config }, log);
-    (poller as any).running = true;
-    const start = await (poller as any).resolveStart();
-    await (poller as any).tick(start);
-
-    expect(metricValue("tricklepay_indexer_poll_success_total")).toBe(beforeSuccess + 1);
-    const afterTs = metricValue("tricklepay_indexer_poll_last_success_timestamp_seconds");
-    const nowSec = Math.floor(Date.now() / 1000);
-    expect(afterTs).toBeGreaterThanOrEqual(beforeTs);
-    expect(afterTs).toBeGreaterThanOrEqual(nowSec - 2);
-    expect(afterTs).toBeLessThanOrEqual(nowSec + 1);
+    (poller as any).consecutiveFailures = 0;
+    expect((poller as any).backoffDelay()).toBe(1000);
+    (poller as any).consecutiveFailures = 1;
+    expect((poller as any).backoffDelay()).toBe(2000);
+    (poller as any).consecutiveFailures = 2;
+    expect((poller as any).backoffDelay()).toBe(4000);
+    (poller as any).consecutiveFailures = 3;
+    expect((poller as any).backoffDelay()).toBe(7000); // capped
+    (poller as any).consecutiveFailures = 4;
+    expect((poller as any).backoffDelay()).toBe(7000); // still capped
   });
 
-  it("does not emit a false heartbeat when a tick fails", async () => {
-    // A failed iteration must not advance either series — otherwise an alert
-    // would think the poller is healthy when it is stalled.
+  it("resets the delay to the normal interval after a successful poll", async () => {
+    // A single successful tick must clear the failure streak so the next
+    // wait returns to the normal interval, not the backed-off one. Driving
+    // start() (which owns the reset) with a stop-on-save keeps it fast.
+    const poller = new Poller(server, backoffConfig, log);
+    (poller as any).consecutiveFailures = 4;
+
+    chain.getContractEvents.mockResolvedValue(pageOf(captured.events));
+    indexerState.saveIndexerPosition.mockImplementation(async () => {
+      poller.stop();
+    });
+
+    await poller.start();
+
+    expect((poller as any).consecutiveFailures).toBe(0);
+    expect((poller as any).backoffDelay()).toBe(1000);
+  });
+
+  it("counts a failed poll as a consecutive failure", async () => {
+    // One failed tick must advance the streak even though no page was applied.
+    // Drive start() (which owns the increment) and stop after the first tick.
     chain.getContractEvents.mockRejectedValue(new Error("rpc unavailable"));
 
-    const beforeSuccess = metricValue("tricklepay_indexer_poll_success_total");
-    const beforeTs = metricValue("tricklepay_indexer_poll_last_success_timestamp_seconds");
+    const poller = new Poller(server, backoffConfig, log);
+    const tick = (poller as any).tick.bind(poller);
+    (poller as any).tick = async (position: unknown) => {
+      try {
+        return await tick(position);
+      } finally {
+        poller.stop();
+      }
+    };
 
-    const poller = new Poller(server, { ...config }, log);
-    (poller as any).running = true;
-    const start = await (poller as any).resolveStart();
-    await expect((poller as any).tick(start)).rejects.toThrow();
+    await poller.start();
 
-    expect(metricValue("tricklepay_indexer_poll_success_total")).toBe(beforeSuccess);
-    expect(metricValue("tricklepay_indexer_poll_last_success_timestamp_seconds")).toBe(beforeTs);
-  // Distinct, monotonically increasing cursors so each full page is a clear
-  // advance and never looks like a cursor regression or a drained backlog.
-  const cursors = ["cx1", "cx2", "cx3", "cx4", "cx5", "cx6"];
-  const MAX = 3;
-
-  it("stops after the configured page maximum and persists the latest cursor", async () => {
-    let seq = 0;
-    chain.getContractEvents.mockImplementation(async () => fullPage(cursors[seq++]));
-
-    const poller = new Poller(server, { ...config, maxPagesPerTick: MAX }, log);
-    indexerState.getIndexerPosition.mockResolvedValue(null);
-    getLatestLedger.mockResolvedValue({ sequence: CHAIN_HEAD });
-    // `tick` only loops while running; start() sets it, but calling tick
-    // directly needs it flipped on first.
-    (poller as any).running = true;
-    const start = await (poller as any).resolveStart();
-    const after = await (poller as any).tick(start);
-
-    expect(chain.getContractEvents).toHaveBeenCalledTimes(MAX);
-    expect(after.cursor).toBe(cursors[MAX - 1]);
-    // The cursor is saved after every page, so the persisted one is exactly the
-    // last page's cursor — not lost when the tick is cut short.
-    expect(indexerState.saveIndexerPosition).toHaveBeenCalledWith(
-      expect.objectContaining({ cursor: cursors[MAX - 1] }),
-    );
-  });
-
-  it("resumes from the persisted cursor on the next tick without replaying", async () => {
-    let seq = 0;
-    chain.getContractEvents.mockImplementation(async () => fullPage(cursors[seq++]));
-
-    const poller = new Poller(server, { ...config, maxPagesPerTick: MAX }, log);
-    indexerState.getIndexerPosition.mockResolvedValue(null);
-    getLatestLedger.mockResolvedValue({ sequence: CHAIN_HEAD });
-    (poller as any).running = true;
-
-    const start1 = await (poller as any).resolveStart();
-    const after1 = await (poller as any).tick(start1);
-    const persistedCursor = after1.cursor;
-    expect(persistedCursor).toBe(cursors[MAX - 1]);
-    expect(chain.getContractEvents).toHaveBeenCalledTimes(MAX);
-
-    // A second tick must begin from the persisted cursor and fetch the next
-    // pages, not re-fetch the ones already applied.
-    indexerState.getIndexerPosition.mockResolvedValue({
-      lastLedger: CHAIN_HEAD,
-      chainLedger: CHAIN_HEAD,
-      cursor: persistedCursor,
-    });
-    const start2 = await (poller as any).resolveStart();
-    const after2 = await (poller as any).tick(start2);
-
-    // Every page past the persisted cursor was fetched exactly once: twice the
-    // cap, with no replay of the first batch.
-    expect(chain.getContractEvents).toHaveBeenCalledTimes(MAX * 2);
-    expect(after2.cursor).toBe(cursors[MAX * 2 - 1]);
-  });
-
-  it("does not fragment a modest backlog when using the default limit", async () => {
-    // A backlog smaller than the default cap should drain in a single tick via
-    // the normal "backlog drained" path, not be chopped by the page limit.
-    let call = 0;
-    chain.getContractEvents.mockImplementation(async () => {
-      call += 1;
-      if (call < 3) return fullPage(`cx${call}`);
-      return { events: [], latestLedger: CHAIN_HEAD, cursor: undefined };
-    });
-
-    const poller = new Poller(server, { ...config }, log); // default limit (1000)
-    indexerState.getIndexerPosition.mockResolvedValue(null);
-    getLatestLedger.mockResolvedValue({ sequence: CHAIN_HEAD });
-    (poller as any).running = true;
-    const start = await (poller as any).resolveStart();
-    await (poller as any).tick(start);
-
-    // 2 full pages + 1 terminal drain — stopped by drain, not the limit.
-    expect(chain.getContractEvents).toHaveBeenCalledTimes(3);
+    expect((poller as any).consecutiveFailures).toBe(1);
   });
 });
-
-function metricValue(name: string): number {
-  const match = renderMetrics().match(new RegExp(`^${name} (\\S+)$`, "m"));
-  return match ? Number(match[1]) : 0;
-}

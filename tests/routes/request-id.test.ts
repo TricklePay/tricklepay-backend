@@ -92,6 +92,33 @@ describe("request ids", () => {
     });
   });
 
+  it("rejects invalid stream ids with a 400 response", async () => {
+    for (const badId of ["", "-1", "1.5", "abc", "  ", "18446744073709551616"]) {
+      const response = await inject({
+        url: `/streams/${encodeURIComponent(badId)}`,
+        headers: { "x-request-id": "trace-invalid-stream-id" },
+      });
+      expect(response.statusCode).toBe(400);
+      expect(response.headers["x-request-id"]).toBe("trace-invalid-stream-id");
+      expect(response.json()).toEqual({
+        code: "VALIDATION_ERROR",
+        error: "invalid stream id",
+        requestId: "trace-invalid-stream-id",
+      });
+    }
+  });
+
+  it("accepts large uint64 stream ids without precision loss", async () => {
+    const maxUint64 = "18446744073709551615";
+    streamsRepo.getStream.mockResolvedValue(null);
+    const response = await inject({
+      url: `/streams/${maxUint64}`,
+      headers: { "x-request-id": "trace-valid-stream-id" },
+    });
+    expect(response.statusCode).toBe(404);
+    expect(streamsRepo.getStream).toHaveBeenCalledWith({ streamId: 18446744073709551615n });
+  });
+
   it("attaches a generated id to errors when the client sent none", async () => {
     streamsRepo.getStream.mockResolvedValue(null);
     const response = await inject({ url: "/streams/999" });

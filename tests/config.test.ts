@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
 import {
+  DEFAULT_MAX_BACKOFF_MS,
   DEFAULT_MAX_PAGES_PER_TICK,
   MIN_POLL_INTERVAL_MS,
   isLocalUrl,
@@ -71,6 +73,50 @@ describe("isLocalUrl", () => {
 
   it("is not confused by a hostname that merely contains '127'", () => {
     expect(isLocalUrl("http://host127.example.com")).toBe(false);
+  });
+});
+
+describe("loadConfig — default values for unset optional settings", () => {
+  it("uses the documented defaults for every optional value", () => {
+    withEnv(
+      {
+        NETWORK: undefined,
+        SOROBAN_RPC_URL: undefined,
+        PORT: undefined,
+        HOST: undefined,
+        BODY_LIMIT: undefined,
+        QUERY_STRING_LIMIT: undefined,
+        INDEXER_POLL_INTERVAL_MS: undefined,
+        INDEXER_START_LEDGER: undefined,
+        INDEXER_BACKOFF_MAX_MS: undefined,
+        INDEXER_MAX_PAGES_PER_TICK: undefined,
+        TRUSTED_PROXIES: undefined,
+      },
+      () => {
+        expect(loadConfig()).toMatchObject({
+          network: "testnet",
+          rpcUrl: "https://soroban-testnet.stellar.org",
+          port: 3000,
+          host: "0.0.0.0",
+          pollIntervalMs: 5000,
+          startLedger: 0,
+          maxBackoffMs: DEFAULT_MAX_BACKOFF_MS,
+          maxPagesPerTick: DEFAULT_MAX_PAGES_PER_TICK,
+          bodyLimit: 1048576,
+          queryStringLimit: 2048,
+          trustedProxies: [],
+        });
+      },
+    );
+  });
+
+  it("switches the default RPC URL to the selected network", () => {
+    withEnv({ NETWORK: "mainnet", SOROBAN_RPC_URL: undefined }, () => {
+      expect(loadConfig()).toMatchObject({
+        network: "mainnet",
+        rpcUrl: "https://mainnet.sorobanrpc.com",
+      });
+    });
   });
 });
 
@@ -252,6 +298,49 @@ describe("loadConfig — INDEXER_START_LEDGER bounds", () => {
       expect(() => loadConfig()).toThrow(
         "INDEXER_START_LEDGER must be a non-negative integer",
       );
+    });
+  });
+});
+
+describe("loadConfig — INDEXER_BACKOFF_MAX_MS bounds", () => {
+  it("keeps the default when omitted or blank", () => {
+    withEnv({ INDEXER_BACKOFF_MAX_MS: undefined }, () => {
+      expect(loadConfig().maxBackoffMs).toBe(DEFAULT_MAX_BACKOFF_MS);
+    });
+    withEnv({ INDEXER_BACKOFF_MAX_MS: "   " }, () => {
+      expect(loadConfig().maxBackoffMs).toBe(DEFAULT_MAX_BACKOFF_MS);
+    });
+  });
+
+  it("accepts an ordinary ceiling", () => {
+    withEnv({ INDEXER_BACKOFF_MAX_MS: "30000" }, () => {
+      expect(loadConfig().maxBackoffMs).toBe(30000);
+    });
+  });
+
+  it("rejects zero, which would remove the backoff ceiling", () => {
+    withEnv({ INDEXER_BACKOFF_MAX_MS: "0" }, () => {
+      expect(() => loadConfig()).toThrow(/INDEXER_BACKOFF_MAX_MS.*at least/);
+    });
+  });
+
+  it("rejects negative ceilings", () => {
+    withEnv({ INDEXER_BACKOFF_MAX_MS: "-1" }, () => {
+      expect(() => loadConfig()).toThrow(
+        `INDEXER_BACKOFF_MAX_MS must be at least ${MIN_POLL_INTERVAL_MS}`,
+      );
+    });
+  });
+
+  it("rejects non-integer values", () => {
+    withEnv({ INDEXER_BACKOFF_MAX_MS: "1.5" }, () => {
+      expect(() => loadConfig()).toThrow("INDEXER_BACKOFF_MAX_MS must be an integer");
+    });
+  });
+
+  it("rejects values that do not parse as numbers", () => {
+    withEnv({ INDEXER_BACKOFF_MAX_MS: "long" }, () => {
+      expect(() => loadConfig()).toThrow("INDEXER_BACKOFF_MAX_MS must be an integer");
     });
   });
 });

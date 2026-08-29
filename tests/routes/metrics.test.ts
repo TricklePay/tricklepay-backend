@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+
 import { describe, expect, it } from "vitest";
 
 // The metrics endpoint is the only observable output of the metrics module for

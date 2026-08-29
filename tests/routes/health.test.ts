@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
 import { readFile } from "node:fs/promises";
+
+import { describe, expect, it, vi } from "vitest";
 
 // /health must report the running service version so deployment tooling can
 // distinguish old and new binaries during rolling releases (#76). The value

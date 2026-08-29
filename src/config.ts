@@ -3,6 +3,7 @@
 // environment is used, so the same code works in local dev and in production.
 
 import { StrKey } from "@stellar/stellar-sdk";
+
 import { parseTrustedProxies } from "./proxy.js";
 
 try {
@@ -47,6 +48,12 @@ function integer(name: string, fallback: number): number {
 // Floor for the poll interval. Anything smaller makes the indexer spin on the
 // RPC between ledgers, so values below it are rejected rather than trusted.
 export const MIN_POLL_INTERVAL_MS = 1000;
+
+// Default ceiling on the exponential poll backoff. After repeated RPC failures
+// the retry delay doubles each time up to this value; a successful poll resets
+// it to the normal poll interval. 60s keeps a stalled indexer from hammering an
+// unavailable RPC while still recovering promptly.
+export const DEFAULT_MAX_BACKOFF_MS = 60000;
 
 // Default cap on event pages fetched per poll tick. A backlog is split across
 // ticks so a single poll cannot run indefinitely, but the default is high enough
@@ -114,6 +121,7 @@ export interface Config {
   contractId: string;
   pollIntervalMs: number;
   startLedger: number;
+  maxBackoffMs: number;
   maxPagesPerTick: number;
   bodyLimit: number;
   queryStringLimit: number;
@@ -143,6 +151,11 @@ export function loadConfig(): Config {
     contractId,
     pollIntervalMs: positiveInteger("INDEXER_POLL_INTERVAL_MS", 5000, MIN_POLL_INTERVAL_MS),
     startLedger: integer("INDEXER_START_LEDGER", 0),
+    maxBackoffMs: positiveInteger(
+      "INDEXER_BACKOFF_MAX_MS",
+      DEFAULT_MAX_BACKOFF_MS,
+      MIN_POLL_INTERVAL_MS,
+    ),
     maxPagesPerTick: positiveInteger(
       "INDEXER_MAX_PAGES_PER_TICK",
       DEFAULT_MAX_PAGES_PER_TICK,
