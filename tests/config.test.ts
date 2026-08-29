@@ -75,6 +75,50 @@ describe("isLocalUrl", () => {
   });
 });
 
+describe("loadConfig — default values for unset optional settings", () => {
+  it("uses the documented defaults for every optional value", () => {
+    withEnv(
+      {
+        NETWORK: undefined,
+        SOROBAN_RPC_URL: undefined,
+        PORT: undefined,
+        HOST: undefined,
+        BODY_LIMIT: undefined,
+        QUERY_STRING_LIMIT: undefined,
+        INDEXER_POLL_INTERVAL_MS: undefined,
+        INDEXER_START_LEDGER: undefined,
+        INDEXER_BACKOFF_MAX_MS: undefined,
+        INDEXER_MAX_PAGES_PER_TICK: undefined,
+        TRUSTED_PROXIES: undefined,
+      },
+      () => {
+        expect(loadConfig()).toMatchObject({
+          network: "testnet",
+          rpcUrl: "https://soroban-testnet.stellar.org",
+          port: 3000,
+          host: "0.0.0.0",
+          pollIntervalMs: 5000,
+          startLedger: 0,
+          maxBackoffMs: DEFAULT_MAX_BACKOFF_MS,
+          maxPagesPerTick: DEFAULT_MAX_PAGES_PER_TICK,
+          bodyLimit: 1048576,
+          queryStringLimit: 2048,
+          trustedProxies: [],
+        });
+      },
+    );
+  });
+
+  it("switches the default RPC URL to the selected network", () => {
+    withEnv({ NETWORK: "mainnet", SOROBAN_RPC_URL: undefined }, () => {
+      expect(loadConfig()).toMatchObject({
+        network: "mainnet",
+        rpcUrl: "https://mainnet.sorobanrpc.com",
+      });
+    });
+  });
+});
+
 describe("loadConfig — RPC URL validation", () => {
   it("accepts an https:// URL for a remote host", () => {
     withEnv({ SOROBAN_RPC_URL: "https://soroban-testnet.stellar.org" }, () => {
