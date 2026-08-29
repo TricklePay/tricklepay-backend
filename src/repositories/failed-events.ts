@@ -1,6 +1,8 @@
-import { prisma } from "../db.js";
 import type { Prisma } from "@prisma/client";
+
 import type { StreamEvent } from "../chain/events.js";
+
+import { prisma } from "../db.js";
 
 export interface FailedEventInput {
   // The RPC event id — unique per event on chain and used as the primary key.
@@ -42,13 +44,16 @@ export async function countFailedEvents(): Promise<number> {
 
 // Removes the failed-event row for an event that subsequently applied cleanly.
 // Called after a successful apply so operators can see only truly stuck events.
-export async function clearFailedEvent(eventId: string, tx: Prisma.TransactionClient = prisma): Promise<void> {
+export async function clearFailedEvent(
+  { eventId }: { eventId: string },
+  tx: Prisma.TransactionClient = prisma,
+): Promise<void> {
   await tx.failedEvent.deleteMany({ where: { eventId } });
 }
 
 // Returns failed events ordered by ledger ascending, so the oldest stuck
 // events surface first. Used by the status route to expose them to operators.
-export async function listFailedEvents(limit = 100) {
+export async function listFailedEvents({ limit = 100 }: { limit?: number } = {}) {
   return prisma.failedEvent.findMany({
     orderBy: [{ ledger: "asc" }, { eventId: "asc" }],
     take: limit,

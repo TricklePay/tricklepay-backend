@@ -1,17 +1,29 @@
-import cors from "@fastify/cors";
 import { randomUUID } from "node:crypto";
+
+import cors from "@fastify/cors";
+
+import swagger from "@fastify/swagger";
+
+import swaggerUi from "@fastify/swagger-ui";
+
 import Fastify, {
   type FastifyBaseLogger,
   type FastifyError,
   type FastifyInstance,
 } from "fastify";
-import swagger from "@fastify/swagger";
-import swaggerUi from "@fastify/swagger-ui";
+
+import type { Config } from "./config.js";
+
 import { checkHealth } from "./db.js";
+
 import { logger } from "./logger.js";
+
 import { httpRequestDuration, httpRequestsTotal } from "./metrics.js";
+
+import { isTrustedProxyAddress, parseTrustedProxies } from "./proxy.js";
+
 import { getIndexerPosition } from "./repositories/indexer-state.js";
-import { serviceVersion } from "./version.js";
+
 import {
   apiErrorSchema,
   indexerStatusSchema,
@@ -19,8 +31,8 @@ import {
   streamSummaryResponseSchema,
   streamViewSchema,
 } from "./schema.js";
-import type { Config } from "./config.js";
-import { isTrustedProxyAddress, parseTrustedProxies } from "./proxy.js";
+
+import { serviceVersion } from "./version.js";
 
 // ---------------------------------------------------------------------------
 // Request ids.

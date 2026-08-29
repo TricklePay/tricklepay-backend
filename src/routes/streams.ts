@@ -1,13 +1,18 @@
-import type { FastifyInstance } from "fastify";
 import { Prisma, type Stream } from "@prisma/client";
+
 import { StrKey } from "@stellar/stellar-sdk";
+
+import type { FastifyInstance } from "fastify";
+
+import { vestedAmount, withdrawableAmount } from "../lib/vesting.js";
+
 import {
   aggregateStreams,
   countStreams,
   getStream,
   listStreams,
 } from "../repositories/streams.js";
-import { vestedAmount, withdrawableAmount } from "../lib/vesting.js";
+
 import {
   apiErrorSchema,
   ERROR_SCHEMA_ID,
@@ -347,7 +352,7 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
         });
       }
 
-      const stream = await getStream(streamId);
+      const stream = await getStream({ streamId });
       if (!stream) {
         return reply.code(404).send({
           code: "NOT_FOUND",

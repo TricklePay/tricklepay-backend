@@ -128,9 +128,10 @@ poll has recorded something to measure.
 
 ## Running locally
 
-Requires Node 20.12+, Docker, and the deployed contract id.
+Requires Node 20.12+, Docker, and the deployed contract id. The repository also includes a `.nvmrc` pinned to `20.12.0`, which matches the `engines.node` requirement in [package.json](package.json).
 
 ```bash
+nvm use
 cp .env.example .env        # then set STREAM_CONTRACT_ID
 npm install
 ./scripts/dev.sh            # starts Postgres, syncs schema, runs with reload
@@ -162,6 +163,19 @@ The command replays failed rows in `ledger` order, resolves the matching RPC
 contract event for each row, retries it independently, clears the record when
 it succeeds, and keeps the retry set bounded so one permanently invalid event
 cannot stall the rest.
+
+## Contributing
+
+### Import ordering
+
+Keep import blocks in one canonical order across the source and tests so file edits do not create noisy diffs:
+
+- Node built-ins first, such as `node:*`.
+- Third-party packages next, alphabetized by package name.
+- Relative imports last, alphabetized by path (`./...` before `../...`).
+- Keep one blank line between groups and no extra empty lines inside a block.
+
+This convention applies to both application code and tests.
 
 ## Testing
 

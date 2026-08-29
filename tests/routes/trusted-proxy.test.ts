@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { buildServer } from "../../src/server.js";
+
 import { parseTrustedProxies, isTrustedProxyAddress } from "../../src/proxy.js";
+
+import { buildServer } from "../../src/server.js";
 
 describe("parseTrustedProxies (#75)", () => {
   it("accepts an empty list", () => {

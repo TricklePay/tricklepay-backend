@@ -1,4 +1,5 @@
 import { Prisma, type Stream } from "@prisma/client";
+
 import { prisma } from "../db.js";
 
 export interface UpsertStreamInput {
@@ -65,6 +66,10 @@ export interface StreamFilter {
   offset?: number;
 }
 
+// Repository helpers use a single input object for reads and writes. Single-row
+// lookups return `null` when nothing matches, collection queries return arrays
+// or counts, and a transaction client remains the optional final argument only
+// for DB writes that need to participate in a larger transaction.
 function decimal(value: bigint): Prisma.Decimal {
   return new Prisma.Decimal(value.toString());
 }
@@ -213,7 +218,7 @@ async function classifyMiss(streamId: bigint, tx: Prisma.TransactionClient = pri
   return exists ? "duplicate" : "missing";
 }
 
-export async function getStream(streamId: bigint): Promise<Stream | null> {
+export async function getStream({ streamId }: { streamId: bigint }): Promise<Stream | null> {
   return prisma.stream.findUnique({ where: { streamId } });
 }
 

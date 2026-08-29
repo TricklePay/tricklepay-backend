@@ -1,5 +1,7 @@
 import { rpc } from "@stellar/stellar-sdk";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
 import capture from "../fixtures/get-events.json" with { type: "json" };
 
 // `applyEvent` is where the indexer decides what a chain event costs. Both the

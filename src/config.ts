@@ -3,6 +3,7 @@
 // environment is used, so the same code works in local dev and in production.
 
 import { StrKey } from "@stellar/stellar-sdk";
+
 import { parseTrustedProxies } from "./proxy.js";
 
 try {

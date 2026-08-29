@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+
 import { describe, expect, it } from "vitest";
 
 // Root endpoint returns the configured Stellar network name so clients can

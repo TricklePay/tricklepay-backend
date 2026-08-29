@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { StreamEvent } from "../../src/chain/events.js";
+
 import {
   indexedEventFromDecoded,
   recordIndexedEvent,

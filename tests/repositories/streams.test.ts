@@ -1,7 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Prisma, type Stream } from "@prisma/client";
 
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
 import { prisma } from "../../src/db.js";
+
 import {
   clearFailedEvent,
   failedEventFromDecoded,
