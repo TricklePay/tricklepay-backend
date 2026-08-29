@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Counter, renderMetrics } from "../src/metrics.js";
+import { Counter, Gauge, Histogram, renderMetrics } from "../src/metrics.js";
 
 describe("Counter", () => {
   it("increments independently for different label sets", () => {
@@ -14,3 +14,16 @@ describe("Counter", () => {
     expect(output).toContain('test_counter_total{label="b"} 2');
   });
 });
+
+describe("Gauge", () => {
+  it("reports the most recently set value", () => {
+    const gauge = new Gauge("test_gauge", "A test gauge", ["label"]);
+    gauge.set({ label: "a" }, 10);
+    gauge.set({ label: "a" }, 20); // set more than once
+
+    const output = renderMetrics();
+    expect(output).toContain('test_gauge{label="a"} 20');
+    expect(output).not.toContain('test_gauge{label="a"} 10');
+  });
+});
+
