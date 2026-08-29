@@ -43,3 +43,19 @@ describe("Histogram", () => {
   });
 });
 
+describe("Exposition format", () => {
+  it("matches the exposition format for counters, gauges and histograms together", () => {
+    // The previous tests have already registered a Counter, Gauge, and Histogram.
+    // Generating the metrics output will include all of them.
+    const output = renderMetrics();
+    const lines = output.split("\n").filter((l) => l.length > 0 && !l.startsWith("#"));
+    
+    // A valid sample line is: metric_name[{labels}] value [timestamp]
+    // The value must be a number or NaN/+Inf/-Inf.
+    for (const line of lines) {
+      expect(line).toMatch(/^[a-zA-Z_][a-zA-Z0-9_]*(?:\{[^}]*\})? [-+]?(?:\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|\+Inf|-Inf|NaN)$/);
+    }
+  });
+});
+
+
