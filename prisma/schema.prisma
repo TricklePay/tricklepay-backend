@@ -38,29 +38,25 @@ model Stream {
   @@index([token, streamId(sort: Desc)])
 }
 
-// A compact audit record for every supported stream event. The event id is the
-// RPC's `TOID-index` key, so duplicate pages from a restarted poller create no
-// second row while the decoded payload remains available for incident review.
 model IndexedEvent {
-  eventId String @id
-  kind    String
-  streamId String
-  ledger  Int
-  txHash  String
-
-  sender        String?
-  recipient     String?
-  token         String?
-  totalAmount   Decimal? @db.Decimal(40, 0)
-  amount        Decimal? @db.Decimal(40, 0)
+  eventId         String   @id
+  kind            String
+  streamId        String
+  ledger          Int
+  txHash          String
+  sender          String?
+  recipient       String?
+  token           String?
+  totalAmount     Decimal? @db.Decimal(40, 0)
+  amount          Decimal? @db.Decimal(40, 0)
   recipientAmount Decimal? @db.Decimal(40, 0)
-  senderRefund  Decimal? @db.Decimal(40, 0)
-  startTime     BigInt?
-  endTime       BigInt?
-  cliffTime     BigInt?
-  closedAt      BigInt?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  senderRefund    Decimal? @db.Decimal(40, 0)
+  startTime       BigInt?
+  endTime         BigInt?
+  cliffTime       BigInt?
+  closedAt        BigInt?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   @@index([streamId, ledger])
   @@index([ledger])

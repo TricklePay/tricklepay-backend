@@ -22,7 +22,7 @@ CREATE TABLE "IndexedEvent" (
 );
 
 CREATE INDEX "IndexedEvent_streamId_ledger_idx"
-    ON "IndexedEvent"("streamId", "ledger");
+    ON "IndexedEvent" ("streamId", "ledger");
 
 CREATE INDEX "IndexedEvent_ledger_idx"
-    ON "IndexedEvent"("ledger");
+    ON "IndexedEvent" ("ledger");
