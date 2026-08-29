@@ -111,6 +111,17 @@ describe("GET /streams", () => {
     expect(response.headers["cache-control"]).toBe("public, max-age=30");
   });
 
+  it("uses the documented default pagination when no params are supplied", async () => {
+    streamsRepo.listStreams.mockResolvedValue([]);
+    const response = await listRequest("/streams");
+
+    expect(response.statusCode).toBe(200);
+    expect(streamsRepo.listStreams).toHaveBeenCalledWith(
+      expect.objectContaining({ limit: 50, offset: 0 }),
+    );
+    expect(response.json()).toMatchObject({ limit: 50, offset: 0 });
+  });
+
   it("trims and uppercases account address filters", async () => {
     streamsRepo.listStreams.mockResolvedValue([]);
     const padded = `  ${ACCOUNT.toLowerCase()} `;

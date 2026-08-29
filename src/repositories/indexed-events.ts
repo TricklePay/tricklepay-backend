@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import type { StreamEvent } from "../chain/events.js";
 import { prisma } from "../db.js";
 
