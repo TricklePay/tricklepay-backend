@@ -340,6 +340,34 @@ with a dedicated pre-deploy hook or init-container step, use that instead of
 chaining commands; either way, migrations must complete before the app process
 accepts connections.
 
+### Resetting the local database
+
+This is for local development only. Resetting the database permanently deletes
+all indexed stream data, application state, and any local PostgreSQL data in the
+project's development environment. There is no recovery step in the app itself.
+
+If the local stack is already running, use this to clear the database without
+removing the containers:
+
+```bash
+docker compose exec postgres psql -U tricklepay -d tricklepay -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+docker compose exec api npx prisma migrate deploy
+```
+
+This drops the existing schema and then applies the Prisma migrations again,
+leaving the database empty and ready for a fresh local run.
+
+If you want to recreate the entire local environment from scratch instead, run:
+
+```bash
+docker compose down -v
+docker compose up -d
+```
+
+The `-v` flag removes the named PostgreSQL volume, so all local data is wiped.
+After startup, the API's container command runs `npx prisma migrate deploy`
+automatically before starting the app.
+
 ### Graceful termination
 
 On `SIGTERM` or `SIGINT` the process shuts down in a fixed order
