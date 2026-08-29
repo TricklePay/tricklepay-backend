@@ -6,3 +6,7 @@ dist/
 
 # Prisma generated client
 src/generated/
+issue.md
+
+# MiMoCode
+.mimocode/

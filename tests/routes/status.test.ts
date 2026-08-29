@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // `/status` is the endpoint an operator watches to tell whether the indexer is
@@ -12,7 +13,16 @@ const indexerState = vi.hoisted(() => ({
   saveIndexerPosition: vi.fn(),
 }));
 
+const failedEvents = vi.hoisted(() => ({
+  recordFailedEvent: vi.fn(),
+  clearFailedEvent: vi.fn(),
+  listFailedEvents: vi.fn(),
+  countFailedEvents: vi.fn(),
+  failedEventFromDecoded: vi.fn(),
+}));
+
 vi.mock("../../src/repositories/indexer-state.js", () => indexerState);
+vi.mock("../../src/repositories/failed-events.js", () => failedEvents);
 
 const { statusRoutes } = await import("../../src/routes/status.js");
 
@@ -31,6 +41,9 @@ async function getStatus() {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  // Default mock for countFailedEvents so tests that don't explicitly set it
+  // still get a deterministic value rather than undefined.
+  failedEvents.countFailedEvents.mockResolvedValue(0);
 });
 
 describe("GET /status", () => {
@@ -41,6 +54,7 @@ describe("GET /status", () => {
       cursor: CURSOR,
       updatedAt: POLLED_AT,
     });
+    failedEvents.countFailedEvents.mockResolvedValue(0);
 
     expect(await getStatus()).toEqual({
       indexer: {
@@ -51,6 +65,7 @@ describe("GET /status", () => {
       },
       chain: { latestLedger: 56999999 },
       lagLedgers: 709986,
+      failedEventCount: 0,
     });
   });
 
@@ -64,6 +79,7 @@ describe("GET /status", () => {
       cursor: CURSOR,
       updatedAt: POLLED_AT,
     });
+    failedEvents.countFailedEvents.mockResolvedValue(0);
 
     const status = await getStatus();
 
@@ -78,6 +94,7 @@ describe("GET /status", () => {
       cursor: CURSOR,
       updatedAt: POLLED_AT,
     });
+    failedEvents.countFailedEvents.mockResolvedValue(0);
 
     expect(await getStatus()).toMatchObject({ lagLedgers: 0 });
   });
@@ -86,11 +103,41 @@ describe("GET /status", () => {
     // Nothing has been recorded, so there is no distance to report. Zero would
     // read as "caught up", which is the mistake this endpoint is fixing.
     indexerState.getIndexerPosition.mockResolvedValue(null);
+    failedEvents.countFailedEvents.mockResolvedValue(0);
 
     expect(await getStatus()).toEqual({
       indexer: { initialized: false, lastLedger: 0, cursor: null, updatedAt: null },
       chain: { latestLedger: 0 },
       lagLedgers: null,
+      failedEventCount: 0,
     });
+  });
+
+  it("reports zero failedEventCount when no events have failed", async () => {
+    indexerState.getIndexerPosition.mockResolvedValue({
+      lastLedger: 56290013,
+      chainLedger: 56999999,
+      cursor: CURSOR,
+      updatedAt: POLLED_AT,
+    });
+    failedEvents.countFailedEvents.mockResolvedValue(0);
+
+    const status = await getStatus();
+
+    expect(status.failedEventCount).toBe(0);
+  });
+
+  it("reports a non-zero failedEventCount when events have failed", async () => {
+    indexerState.getIndexerPosition.mockResolvedValue({
+      lastLedger: 56290013,
+      chainLedger: 56999999,
+      cursor: CURSOR,
+      updatedAt: POLLED_AT,
+    });
+    failedEvents.countFailedEvents.mockResolvedValue(12);
+
+    const status = await getStatus();
+
+    expect(status.failedEventCount).toBe(12);
   });
 });

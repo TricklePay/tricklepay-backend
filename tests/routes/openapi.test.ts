@@ -1,42 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-// The OpenAPI spec is the contract between this backend and its clients. These
-// tests assert that the spec is present at the documented path, is valid JSON,
-// and contains the schemas and paths the frontend depends on.
-//
-// The spec is generated from the route schemas registered in buildServer() and
-// the route plugins. Using the full server (rather than a bare Fastify instance)
-// means the same schema registration order that production uses is exercised
-// here, catching issues like missing addSchema calls.
-//
-// The database and the chain are never reached: route handlers are not called
-// when fetching the spec.
-
-// Stub out the database repositories so buildServer() can import without a
-// real Postgres connection.
-const indexerState = vi.hoisted(() => ({
-  getIndexerPosition: vi.fn(),
-  saveIndexerPosition: vi.fn(),
-}));
-
-const streams = vi.hoisted(() => ({
-  getStream: vi.fn(),
-  listStreams: vi.fn(),
-  countStreams: vi.fn(),
-  aggregateStreams: vi.fn(),
-  insertStream: vi.fn(),
-  upsertStream: vi.fn(),
-  applyWithdrawal: vi.fn(),
-  applyCancellation: vi.fn(),
-}));
-
-vi.mock("../../src/repositories/indexer-state.js", () => indexerState);
-vi.mock("../../src/repositories/streams.js", () => streams);
-
 import { vi } from "vitest";
-import { buildServer } from "../../src/server.js";
+
 import { statusRoutes } from "../../src/routes/status.js";
+
 import { streamRoutes } from "../../src/routes/streams.js";
+
+import { buildServer } from "../../src/server.js";
 
 async function getSpec() {
   const app = await buildServer();

@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Tests for status route cache-control header.
@@ -8,7 +9,16 @@ const indexerState = vi.hoisted(() => ({
   saveIndexerPosition: vi.fn(),
 }));
 
+const failedEvents = vi.hoisted(() => ({
+  recordFailedEvent: vi.fn(),
+  clearFailedEvent: vi.fn(),
+  listFailedEvents: vi.fn(),
+  countFailedEvents: vi.fn(),
+  failedEventFromDecoded: vi.fn(),
+}));
+
 vi.mock("../../src/repositories/indexer-state.js", () => indexerState);
+vi.mock("../../src/repositories/failed-events.js", () => failedEvents);
 
 const { statusRoutes } = await import("../../src/routes/status.js");
 
@@ -22,6 +32,7 @@ async function getStatus() {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  failedEvents.countFailedEvents.mockResolvedValue(0);
 });
 
 describe("GET /status", () => {

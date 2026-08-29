@@ -17,6 +17,8 @@
 export const STREAM_VIEW_SCHEMA_ID = "StreamView";
 export const STREAM_LIST_RESPONSE_SCHEMA_ID = "StreamListResponse";
 export const STREAM_SUMMARY_RESPONSE_SCHEMA_ID = "StreamSummaryResponse";
+export const STREAM_EVENT_SCHEMA_ID = "StreamEvent";
+export const STREAM_EVENT_HISTORY_RESPONSE_SCHEMA_ID = "StreamEventHistoryResponse";
 export const INDEXER_STATUS_SCHEMA_ID = "IndexerStatus";
 export const ERROR_SCHEMA_ID = "ApiError";
 
@@ -229,6 +231,92 @@ export const streamSummaryResponseSchema = {
   },
 } as const;
 
+export const streamEventSchema = {
+  $id: STREAM_EVENT_SCHEMA_ID,
+  type: "object",
+  description:
+    "A single stream event retained for auditability. Amount fields are decimal strings to avoid precision loss.",
+  required: ["eventId", "kind", "streamId", "ledger", "txHash"],
+  properties: {
+    eventId: {
+      type: "string",
+      description: "RPC event id in TOID-index form, used as the ordering key.",
+      examples: ["0000000000000000000000000000000000000001-0000000000000001"],
+    },
+    kind: {
+      type: "string",
+      enum: ["created", "withdrawn", "cancelled"],
+      description: "Event kind emitted by the stream contract.",
+    },
+    streamId: {
+      type: "string",
+      description: "Stream id associated with the event (uint64, decimal string).",
+      examples: ["42"],
+    },
+    ledger: {
+      type: "integer",
+      description: "Ledger sequence containing the event.",
+      examples: [123456],
+    },
+    txHash: {
+      type: "string",
+      description: "Transaction hash that emitted the event.",
+      examples: ["66f7505577a417f4c1187fb8a8eeb6f3737f848d5f0b3b20c5a6c57ab7d659d1"],
+    },
+    sender: {
+      type: ["string", "null"],
+      description: "Sender address for created/cancelled events, if present.",
+    },
+    recipient: {
+      type: ["string", "null"],
+      description: "Recipient address for created/withdrawn/cancelled events, if present.",
+    },
+    token: {
+      type: ["string", "null"],
+      description: "Token contract address for created events, if present.",
+    },
+    totalAmount: {
+      type: ["string", "null"],
+      description: "Total amount for created events, as a decimal string.",
+    },
+    amount: {
+      type: ["string", "null"],
+      description: "Withdrawn amount for withdrawal events, as a decimal string.",
+    },
+    recipientAmount: {
+      type: ["string", "null"],
+      description: "Recipient payout for cancellation events, as a decimal string.",
+    },
+    senderRefund: {
+      type: ["string", "null"],
+      description: "Sender refund for cancellation events, as a decimal string.",
+    },
+    startTime: {
+      type: ["string", "null"],
+      description: "Stream start time, in Unix seconds, for created events.",
+    },
+    endTime: {
+      type: ["string", "null"],
+      description: "Stream end time, in Unix seconds, for created events.",
+    },
+    cliffTime: {
+      type: ["string", "null"],
+      description: "Vesting cliff time, in Unix seconds, for created events.",
+    },
+    closedAt: {
+      type: ["string", "null"],
+      description: "Ledger close time, in Unix seconds, for the event.",
+    },
+  },
+} as const;
+
+export const streamEventHistoryResponseSchema = {
+  $id: STREAM_EVENT_HISTORY_RESPONSE_SCHEMA_ID,
+  type: "array",
+  description: "Indexed stream event history in ascending TOID order.",
+  items: { $ref: STREAM_EVENT_SCHEMA_ID },
+} as const;
+
 // ---------------------------------------------------------------------------
 // IndexerStatus — indexer progress report.
 // ---------------------------------------------------------------------------
@@ -278,6 +366,13 @@ export const indexerStatusSchema = {
       description:
         "Ledgers the indexer is behind the chain. Null before the first poll. Never negative.",
       examples: [709986],
+    },
+    failedEventCount: {
+      type: "integer",
+      description:
+        "Number of unresolved failed events the indexer has not yet retried. " +
+        "Zero means nothing is stuck. A rising number signals degraded indexing.",
+      examples: [0, 12],
     },
   },
 } as const;

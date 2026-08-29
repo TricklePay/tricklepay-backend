@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+
 import type { Config } from "../config.js";
 
 // A self-describing index of the API, so a caller hitting the root learns what

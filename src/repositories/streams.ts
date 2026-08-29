@@ -1,4 +1,5 @@
 import { Prisma, type Stream } from "@prisma/client";
+
 import { prisma } from "../db.js";
 
 export interface UpsertStreamInput {
@@ -90,6 +91,10 @@ export function decodeCursor(raw: string): bigint | null {
   return null;
 }
 
+// Repository helpers use a single input object for reads and writes. Single-row
+// lookups return `null` when nothing matches, collection queries return arrays
+// or counts, and a transaction client remains the optional final argument only
+// for DB writes that need to participate in a larger transaction.
 function decimal(value: bigint): Prisma.Decimal {
   return new Prisma.Decimal(value.toString());
 }
@@ -238,7 +243,7 @@ async function classifyMiss(streamId: bigint, tx: Prisma.TransactionClient = pri
   return exists ? "duplicate" : "missing";
 }
 
-export async function getStream(streamId: bigint): Promise<Stream | null> {
+export async function getStream({ streamId }: { streamId: bigint }): Promise<Stream | null> {
   return prisma.stream.findUnique({ where: { streamId } });
 }
 
@@ -263,6 +268,23 @@ export async function listStreams(filter: StreamFilter): Promise<StreamListResul
     orderBy: { streamId: "desc" },
     take,
     skip,
+export function orderByFromFilter(
+  filter: StreamFilter,
+): Prisma.StreamOrderByWithRelationInput[] {
+  const orderBy: Prisma.StreamOrderByWithRelationInput[] = [];
+  if (filter.sender) orderBy.push({ sender: "asc" });
+  else if (filter.recipient) orderBy.push({ recipient: "asc" });
+  else if (filter.token) orderBy.push({ token: "asc" });
+  orderBy.push({ streamId: "desc" });
+  return orderBy;
+}
+
+export async function listStreams(filter: StreamFilter): Promise<Stream[]> {
+  return prisma.stream.findMany({
+    where: whereFromFilter(filter),
+    orderBy: orderByFromFilter(filter),
+    take: filter.limit ?? 50,
+    skip: filter.offset ?? 0,
   });
 
   if (rows.length <= limit) {

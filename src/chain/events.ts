@@ -1,4 +1,5 @@
 import { scValToNative } from "@stellar/stellar-sdk";
+
 import type { rpc } from "@stellar/stellar-sdk";
 
 // Typed representations of the events the stream contract emits. Each mirrors a
