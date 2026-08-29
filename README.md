@@ -23,6 +23,7 @@ For a record of API and indexer behavior changes, see the [Changelog](CHANGELOG.
 - [Configuration](#configuration)
 - [Deployment](#deployment)
 - [Project structure](#project-structure)
+- [Frequently asked questions](#frequently-asked-questions)
 - [Related repositories](#related-repositories)
 - [License](#license)
 
@@ -128,7 +129,7 @@ poll has recorded something to measure.
 
 ## Running locally
 
-Requires Node 20.12+, Docker, and the deployed contract id. The repository also includes a `.nvmrc` pinned to `20.12.0`, which matches the `engines.node` requirement in [package.json](package.json).
+Requires **Node.js 20.12 or later**, Docker, and the deployed contract id. The minimum is Node 20.12 because the service uses the built-in `node:` protocol imports and native fetch, which are only fully stable from that release onward — older versions will fail at install or startup. The `engines.node` field in [package.json](package.json) encodes this requirement (`>=20.12`), and the repository also includes a `.nvmrc` pinned to `20.12.0` so `nvm use` drops you onto the right version automatically.
 
 ```bash
 nvm use
@@ -196,6 +197,26 @@ since a progress figure that is wrong is worse than none: `indexer/poller.ts`
 for which ledger a poll records as reached, and `routes/status.ts` for the lag
 derived from it. `npm run typecheck` covers the tests as well as `src`.
 
+**Running a single file or test**
+
+Pass a file path to run only that file, and `-t` to further filter by test name
+(substring or regex matched against the full test title):
+
+```bash
+# run one file
+npx vitest run --project unit tests/lib/vesting.test.ts
+
+# run tests whose name contains "cliff"
+npx vitest run --project unit tests/lib/vesting.test.ts -t "cliff"
+
+# watch a single file while iterating
+npx vitest --project unit tests/lib/vesting.test.ts
+```
+
+The `--project unit` flag is required when targeting a specific file because
+the config defines named projects; omitting it makes Vitest search across all
+projects and may produce unexpected results.
+
 ## Configuration
 
 All configuration is read from the environment; `.env.example` is the complete,
@@ -210,6 +231,52 @@ selected network (`SOROBAN_RPC_URL` to override), the server listens on
 request sizes. The indexer polls every `INDEXER_POLL_INTERVAL_MS` (minimum
 1000) starting from `INDEXER_START_LEDGER` — zero means start at the chain's
 latest ledger rather than replaying history. On repeated RPC failures the retry delay doubles each time up to `INDEXER_BACKOFF_MAX_MS` (default 60000), then resets to the normal interval after a successful poll, so a struggling endpoint is not hammered on a fixed schedule. `INDEXER_MAX_PAGES_PER_TICK` (default 1000) caps how many event pages one poll fetches, so a deep backlog is spread across ticks; the cursor is saved after each page so progress is kept.
+
+### Logging
+
+All log output is **structured JSON** using [pino](https://getpino.io). Every
+line is a single JSON object — one log event per line — making it easy to
+forward to any log aggregator (Datadog, Loki, CloudWatch Logs, etc.) without a
+parsing step.
+
+**Fields present on every line**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `level` | number | Pino numeric level: `10` trace · `20` debug · `30` info · `40` warn · `50` error · `60` fatal |
+| `time` | number | Unix timestamp in milliseconds |
+| `pid` | number | Process id |
+| `hostname` | string | Machine hostname |
+| `msg` | string | Human-readable log message |
+
+**Additional context fields**
+
+- `module` — present on every line emitted by the indexer (`"indexer"`), added
+  via a pino child logger so indexer output can be filtered or routed separately.
+- `reqId` — present on every Fastify request log line; derived from the
+  incoming `X-Request-Id` header when present, otherwise a generated UUID.
+- Other fields (e.g. `err`, `signal`, `ledger`, `eventId`) are attached
+  ad-hoc to individual lines and document the event's context.
+
+**Log levels**
+
+The valid values for `LOG_LEVEL` are `trace`, `debug`, `info`, `warn`,
+`error`, and `fatal`. The default is `info`, which logs normal operational
+events — server start, poll ticks, and stream writes — without the
+high-frequency trace output. Use `debug` or `trace` in development when
+tracing a specific behaviour:
+
+```bash
+LOG_LEVEL=debug ./scripts/dev.sh
+# or, for a one-off run:
+LOG_LEVEL=trace npm start
+```
+
+**Example line**
+
+```json
+{"level":30,"time":1731550800123,"pid":42,"hostname":"worker-1","module":"indexer","msg":"poll complete","lastLedger":56290013,"newEvents":3}
+```
 
 ### Metrics & alerting
 
@@ -330,6 +397,75 @@ tests/
 prisma/
   schema.prisma       Stream and IndexerState models
 ```
+
+## Frequently asked questions
+
+**Why does this service exist — can't a client just query the contract directly?**
+
+Querying the contract directly requires an RPC simulation for every field read,
+which is slow and puts load on public RPC endpoints. This service mirrors all
+stream state to Postgres so the [API](#api) can serve reads in a single
+database query. Derived fields like `vested`, `withdrawable`, and `progress`
+are computed on every request against the current clock, so they are always
+up to date without any chain round-trip. See [How it works](#how-it-works) for
+the full picture.
+
+**What happens when the indexer falls behind the chain?**
+
+It catches up automatically. The poller resumes from its saved cursor on every
+tick, fetching up to `INDEXER_MAX_PAGES_PER_TICK` pages before yielding so
+a deep backlog is spread across ticks rather than blocking indefinitely. While
+the indexer is behind, stored fields like `withdrawn` and `cancelled` reflect
+the last applied event, but the derived fields `vested` and `progress` still
+track wall-clock time accurately. You can monitor the gap with `/status`, which
+reports `lagLedgers` as `chainLedger - lastLedger`. See
+[Configuration](#configuration) and [API](#api) for the relevant knobs and
+endpoints.
+
+**How do I know if the indexer is stalled versus just on a quiet part of the chain?**
+
+Check the Prometheus metrics. `tricklepay_indexer_poll_last_success_timestamp_seconds`
+records when the last successful poll completed; if that timestamp stops
+advancing, the poller itself is stuck. A quiet chain still produces successful
+polls and keeps that timestamp current, so it never trips a stale-poller alert.
+The ready example alert and metric queries are in
+[Metrics & alerting](#metrics--alerting).
+
+**Why are amounts and timestamps returned as strings instead of numbers?**
+
+Stellar amounts are 64-bit integers and some internal values are 128-bit.
+JSON numbers are IEEE 754 doubles, which can only represent integers exactly up
+to 2^53. Returning large values as numbers would silently corrupt them in any
+client that parses standard JSON. Strings preserve the full value without
+requiring a special parser. See [API](#api) under **Data Types and Precision**.
+
+**What does it mean when an event ends up in the `FailedEvent` table, and how do I recover?**
+
+The indexer writes a row to `FailedEvent` whenever it cannot apply a contract
+event — for example, due to a transient database error or an unexpected event
+shape. Those rows are kept so nothing is silently dropped, and they can be
+retried without a full re-index using the `replay-failed-events` command
+described in [Failed-event replay](#failed-event-replay). For how long to keep
+those rows and how to prune them on a long-running instance, see
+[docs/failed-events-retention.md](docs/failed-events-retention.md).
+
+**Is it safe to restart the service mid-backfill?**
+
+Yes. The poller saves its cursor after every page of events, so a restart picks
+up from the last saved cursor rather than the beginning. Event application is
+idempotent — replaying a page that was already applied changes nothing, because
+`Created` only inserts a stream that is absent and each delta only applies when
+the row's last-event id predates it. See [How it works](#how-it-works) for the
+full idempotency guarantee.
+
+**How do I apply database migrations in production?**
+
+Run `npx prisma migrate deploy` before the application process starts. This
+command is non-interactive and safe to run on every deploy; it applies only
+pending migrations. Never use `prisma migrate dev` in production — it is
+interactive and intended for local development only. The
+[Deployment — Migrations](#migrations) section shows the recommended patterns
+for init-containers and pre-deploy hooks.
 
 ## Related repositories
 
