@@ -5,6 +5,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { prisma } from "../../src/db.js";
 
 import {
+  clearFailedEvent,
+  failedEventFromDecoded,
+  recordFailedEvent,
+} from "../../src/repositories/failed-events.js";
+import {
   countStreams,
   listStreams,
   type StreamFilter,
@@ -35,6 +40,65 @@ function partialStream(overrides: Partial<StreamRow> = {}): StreamRow {
     ...overrides,
   } as StreamRow;
 }
+
+describe("failed events repository", () => {
+  it("records the diagnostic details needed for an operator to find a failed event", async () => {
+    const upsert = vi.spyOn(prisma.failedEvent, "upsert").mockResolvedValueOnce({} as never);
+
+    await recordFailedEvent({
+      eventId: "0000000000000000001",
+      kind: "created",
+      streamId: "7",
+      ledger: 123,
+      error: "stream missing",
+    });
+
+    expect(upsert).toHaveBeenCalledWith({
+      where: { eventId: "0000000000000000001" },
+      create: {
+        eventId: "0000000000000000001",
+        kind: "created",
+        streamId: "7",
+        ledger: 123,
+        error: "stream missing",
+        failureCount: 1,
+      },
+      update: {
+        error: "stream missing",
+        failureCount: { increment: 1 },
+      },
+    });
+  });
+
+  it("clears the failed-event record after a successful apply", async () => {
+    const deleteMany = vi.spyOn(prisma.failedEvent, "deleteMany").mockResolvedValueOnce({ count: 1 });
+
+    await clearFailedEvent("0000000000000000001");
+
+    expect(deleteMany).toHaveBeenCalledWith({ where: { eventId: "0000000000000000001" } });
+  });
+
+  it("builds a failed-event summary from a decoded event and error", () => {
+    const event = {
+      id: "0000000000000000002",
+      kind: "withdrawn",
+      streamId: 99n,
+      ledger: 321,
+      closedAt: 123n,
+      txHash: "0xabc",
+      recipient: "Grecipient",
+      amount: 50n,
+    } as any;
+
+    expect(failedEventFromDecoded(event, new Error("insufficient balance"))).toEqual({
+      eventId: "0000000000000000002",
+      kind: "withdrawn",
+      streamId: "99",
+      ledger: 321,
+      error: "insufficient balance",
+    });
+  });
+});
 
 describe("streams repository token filter", () => {
   beforeEach(() => {
