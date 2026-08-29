@@ -62,8 +62,33 @@ export interface StreamFilter {
   recipient?: string;
   token?: string;
   cancelled?: boolean;
+  cursor?: bigint;
   limit?: number;
   offset?: number;
+}
+
+export interface StreamListResult {
+  streams: Stream[];
+  nextCursor?: string;
+}
+
+export function encodeCursor(streamId: bigint): string {
+  const payload = JSON.stringify({ streamId: streamId.toString() });
+  return Buffer.from(payload, "utf8").toString("base64url");
+}
+
+export function decodeCursor(raw: string): bigint | null {
+  try {
+    const decoded = Buffer.from(raw, "base64url").toString("utf8");
+    const parsed = JSON.parse(decoded);
+    if (parsed && typeof parsed.streamId === "string") {
+      const value = BigInt(parsed.streamId);
+      if (value >= 0n) return value;
+    }
+  } catch {
+    // fall through to null
+  }
+  return null;
 }
 
 // Repository helpers use a single input object for reads and writes. Single-row
@@ -228,9 +253,21 @@ function whereFromFilter(filter: StreamFilter): Prisma.StreamWhereInput {
   if (filter.recipient) where.recipient = filter.recipient;
   if (filter.token) where.token = filter.token;
   if (filter.cancelled !== undefined) where.cancelled = filter.cancelled;
+  if (filter.cursor !== undefined) where.streamId = { lt: filter.cursor };
   return where;
 }
 
+export async function listStreams(filter: StreamFilter): Promise<StreamListResult> {
+  const limit = filter.limit ?? 50;
+  const useCursor = filter.cursor !== undefined;
+  const take = limit + 1;
+  const skip = useCursor ? 0 : filter.offset ?? 0;
+
+  const rows = await prisma.stream.findMany({
+    where: whereFromFilter(filter),
+    orderBy: { streamId: "desc" },
+    take,
+    skip,
 export function orderByFromFilter(
   filter: StreamFilter,
 ): Prisma.StreamOrderByWithRelationInput[] {
@@ -249,6 +286,14 @@ export async function listStreams(filter: StreamFilter): Promise<Stream[]> {
     take: filter.limit ?? 50,
     skip: filter.offset ?? 0,
   });
+
+  if (rows.length <= limit) {
+    return { streams: rows };
+  }
+
+  const streams = rows.slice(0, limit);
+  const last = streams[streams.length - 1];
+  return { streams, nextCursor: encodeCursor(last.streamId) };
 }
 
 // Total number of streams matching the filter, ignoring limit and offset, so a

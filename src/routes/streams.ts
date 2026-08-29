@@ -9,6 +9,7 @@ import { vestedAmount, withdrawableAmount } from "../lib/vesting.js";
 import {
   aggregateStreams,
   countStreams,
+  decodeCursor,
   getStream,
   listStreams,
 } from "../repositories/streams.js";
@@ -173,6 +174,8 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
         description:
           "Returns a paginated list of token streams. Optionally filter by sender, recipient, or token address; " +
           "address filters accept lowercase and whitespace-padded spellings and are normalized before matching. " +
+          "Use the opaque cursor returned by previous responses for stable pagination under concurrent inserts; " +
+          "when cursor is provided, offset is ignored and offset ceiling checks are skipped.",
           "Results are returned in a stable deterministic order: when filtering by sender, recipient, or token, " +
           "results are ordered by that address ascending, then by stream id descending to break ties. " +
           "Unfiltered queries (or queries filtered only by cancellation status) are ordered by stream id descending. " +
@@ -223,6 +226,12 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
               description:
                 "Filter by cancellation status. Omit to return both cancelled and active streams.",
             },
+            cursor: {
+              type: "string",
+              description:
+                "Opaque cursor returned by a previous list response. Use this to fetch the next page " +
+                "with stable ordering under concurrent inserts. Takes precedence over offset when both are provided.",
+            },
           },
           additionalProperties: false,
         },
@@ -241,21 +250,43 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
         offset?: string;
         includeTotal?: string;
         cancelled?: string;
+        cursor?: string;
       };
 
       const limit = parseLimit(query.limit);
       const offset = parseOffset(query.offset);
-      if (offset > MAX_OFFSET) {
+
+      let cursor: bigint | undefined;
+      if (query.cursor !== undefined) {
+        const decoded = decodeCursor(query.cursor);
+        if (decoded === null) {
+          return reply.code(400).send({
+            code: "VALIDATION_ERROR",
+            error: "invalid cursor",
+            requestId: request.id,
+          });
+        }
+        cursor = decoded;
+      }
+
+      const usingCursor = cursor !== undefined;
+      if (!usingCursor && offset > MAX_OFFSET) {
         return reply.code(400).send({
           code: "VALIDATION_ERROR",
           error:
             `offset must not exceed ${MAX_OFFSET}. Page through results in order with limit and offset, ` +
-            "or narrow them with the sender, recipient, and token filters.",
+            "or narrow them with the sender, recipient, and token filters, or use the returned cursor for stable pagination.",
           requestId: request.id,
         });
       }
 
-      const filter: { sender?: string; recipient?: string; token?: string; cancelled?: boolean } = {};
+      const filter: {
+        sender?: string;
+        recipient?: string;
+        token?: string;
+        cancelled?: boolean;
+        cursor?: bigint;
+      } = {};
       for (const field of ["sender", "recipient", "token"] as const) {
         const raw = query[field];
         if (!raw) continue;
@@ -271,20 +302,22 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
       }
 
       filter.cancelled = parseCancelled(query.cancelled);
+      filter.cursor = cursor;
 
       const includeTotal = parseIncludeTotal(query.includeTotal);
 
-      const [streams, total] = await Promise.all([
+      const [listResult, total] = await Promise.all([
         listStreams({ ...filter, limit, offset }),
         includeTotal ? countStreams(filter) : Promise.resolve(undefined),
       ]);
 
       reply.header("Cache-Control", "public, max-age=30");
       return {
-        streams: streams.map(toView),
+        streams: listResult.streams.map(toView),
         ...(total === undefined ? {} : { total }),
+        ...(listResult.nextCursor === undefined ? {} : { nextCursor: listResult.nextCursor }),
         limit,
-        offset,
+        offset: usingCursor ? 0 : offset,
       };
     },
   );

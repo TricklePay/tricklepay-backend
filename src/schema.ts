@@ -142,7 +142,8 @@ export const streamListResponseSchema = {
   type: "object",
   description:
     "Paginated list of streams. The total is only computed and included when " +
-    "the request opted in with includeTotal=true.",
+    "the request opted in with includeTotal=true. Opaque cursor pagination is " +
+    "stable under concurrent inserts and takes precedence over offset when both are provided.",
   required: ["streams", "limit", "offset"],
   properties: {
     streams: {
@@ -164,8 +165,17 @@ export const streamListResponseSchema = {
     },
     offset: {
       type: "integer",
-      description: "Zero-based index of the first stream on this page.",
+      description:
+        "Zero-based index of the first stream on this page. Reflects the offset " +
+        "from the request and is 0 on cursor-driven pages.",
       examples: [0],
+    },
+    nextCursor: {
+      type: "string",
+      description:
+        "Opaque cursor for the next page. Omitted when there are no further pages. " +
+        "Pass this as the cursor query parameter to fetch the next page with stable ordering.",
+      examples: ["eyJzdHJlYW1JZCI6IjQyIn0"],
     },
   },
 } as const;

@@ -106,7 +106,7 @@ describe("GET /streams/:id", () => {
 
 describe("GET /streams", () => {
   it("returns cache-control header", async () => {
-    streamsRepo.listStreams.mockResolvedValue([]);
+    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
     streamsRepo.countStreams.mockResolvedValue(0);
     const response = await listRequest("/streams");
     expect(response.headers["cache-control"]).toBe("public, max-age=30");
@@ -124,7 +124,7 @@ describe("GET /streams", () => {
   });
 
   it("trims and uppercases account address filters", async () => {
-    streamsRepo.listStreams.mockResolvedValue([]);
+    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
     const padded = `  ${ACCOUNT.toLowerCase()} `;
     const response = await listRequest(`/streams?sender=${encodeURIComponent(padded)}`);
     expect(response.statusCode).toBe(200);
@@ -134,7 +134,7 @@ describe("GET /streams", () => {
   });
 
   it("normalizes contract token address filters", async () => {
-    streamsRepo.listStreams.mockResolvedValue([]);
+    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
     const response = await listRequest(
       `/streams?token=${encodeURIComponent(CONTRACT.toLowerCase())}`,
     );
@@ -279,7 +279,7 @@ describe("GET /streams offset ceiling", () => {
   });
 
   it("accepts an offset equal to the ceiling", async () => {
-    streamsRepo.listStreams.mockResolvedValue([]);
+    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
     const response = await listRequest("/streams?offset=10000");
     expect(response.statusCode).toBe(200);
     expect(streamsRepo.listStreams).toHaveBeenCalledWith(
@@ -288,7 +288,7 @@ describe("GET /streams offset ceiling", () => {
   });
 
   it("leaves small offsets unchanged", async () => {
-    streamsRepo.listStreams.mockResolvedValue([]);
+    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
     const response = await listRequest("/streams?limit=10&offset=20");
     expect(response.statusCode).toBe(200);
     expect(streamsRepo.listStreams).toHaveBeenCalledWith(
@@ -299,7 +299,7 @@ describe("GET /streams offset ceiling", () => {
 
 describe("GET /streams includeTotal", () => {
   it("omits total and skips the count query by default", async () => {
-    streamsRepo.listStreams.mockResolvedValue([]);
+    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
     const response = await listRequest("/streams");
     expect(response.statusCode).toBe(200);
     expect(response.json()).not.toHaveProperty("total");
@@ -307,27 +307,28 @@ describe("GET /streams includeTotal", () => {
   });
 
   it("returns an accurate total when includeTotal=true", async () => {
-    streamsRepo.listStreams.mockResolvedValue([]);
+    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
     streamsRepo.countStreams.mockResolvedValue(7);
     const response = await listRequest("/streams?includeTotal=true");
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual(expect.objectContaining({ total: 7 }));
-    expect(streamsRepo.countStreams).toHaveBeenCalledWith({});
+    expect(streamsRepo.countStreams).toHaveBeenCalledWith(
+      expect.objectContaining({ cancelled: undefined, cursor: undefined }),
+    );
   });
 });
 
 describe("GET /streams cancelled filter", () => {
   it("omits cancelled from filter when parameter is omitted", async () => {
-    streamsRepo.listStreams.mockResolvedValue([]);
+    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
     const response = await listRequest("/streams");
     expect(response.statusCode).toBe(200);
-    expect(streamsRepo.listStreams).toHaveBeenCalledWith(
-      expect.not.objectContaining({ cancelled: expect.anything() }),
-    );
+    const call = streamsRepo.listStreams.mock.calls[0][0];
+    expect(call.cancelled).toBeUndefined();
   });
 
   it("filters cancelled streams when cancelled=true", async () => {
-    streamsRepo.listStreams.mockResolvedValue([]);
+    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
     const response = await listRequest("/streams?cancelled=true");
     expect(response.statusCode).toBe(200);
     expect(streamsRepo.listStreams).toHaveBeenCalledWith(
@@ -336,7 +337,7 @@ describe("GET /streams cancelled filter", () => {
   });
 
   it("filters active streams when cancelled=false", async () => {
-    streamsRepo.listStreams.mockResolvedValue([]);
+    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
     const response = await listRequest("/streams?cancelled=false");
     expect(response.statusCode).toBe(200);
     expect(streamsRepo.listStreams).toHaveBeenCalledWith(
@@ -345,7 +346,7 @@ describe("GET /streams cancelled filter", () => {
   });
 
   it("applies cancelled=true to the count query when includeTotal=true", async () => {
-    streamsRepo.listStreams.mockResolvedValue([]);
+    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
     streamsRepo.countStreams.mockResolvedValue(3);
     const response = await listRequest("/streams?cancelled=true&includeTotal=true");
     expect(response.statusCode).toBe(200);
@@ -355,13 +356,101 @@ describe("GET /streams cancelled filter", () => {
   });
 
   it("applies cancelled=false to the count query when includeTotal=true", async () => {
-    streamsRepo.listStreams.mockResolvedValue([]);
+    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
     streamsRepo.countStreams.mockResolvedValue(5);
     const response = await listRequest("/streams?cancelled=false&includeTotal=true");
     expect(response.statusCode).toBe(200);
     expect(streamsRepo.countStreams).toHaveBeenCalledWith(
       expect.objectContaining({ cancelled: false }),
     );
+  });
+});
+
+describe("GET /streams cursor pagination", () => {
+  const { encodeCursor, decodeCursor } = await import("../../src/repositories/streams.js");
+
+  it("decodes a valid cursor and passes it to the repository filter", async () => {
+    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
+    const cursor = encodeCursor(BigInt(50));
+    const response = await listRequest(`/streams?cursor=${encodeURIComponent(cursor)}`);
+    expect(response.statusCode).toBe(200);
+    expect(streamsRepo.listStreams).toHaveBeenCalledWith(
+      expect.objectContaining({ cursor: 50n }),
+    );
+  });
+
+  it("round-trips encodeCursor then decodeCursor unchanged", async () => {
+    const encoded = encodeCursor(BigInt(42));
+    expect(typeof encoded).toBe("string");
+    expect(encoded).not.toContain("streamId");
+    expect(decodeCursor(encoded)).toBe(42n);
+  });
+
+  it("returns 400 for an invalid cursor string", async () => {
+    const response = await listRequest("/streams?cursor=not-a-valid-base64-cursor---");
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toHaveProperty("error", "invalid cursor");
+    expect(streamsRepo.listStreams).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 for a cursor with a missing streamId payload", async () => {
+    const bad = Buffer.from(JSON.stringify({ foo: "bar" }), "utf8").toString("base64url");
+    const response = await listRequest(`/streams?cursor=${encodeURIComponent(bad)}`);
+    expect(response.statusCode).toBe(400);
+    expect(streamsRepo.listStreams).not.toHaveBeenCalled();
+  });
+
+  it("omits nextCursor when the page is smaller than the limit", async () => {
+    streamsRepo.listStreams.mockResolvedValue({
+      streams: [makeStream({ streamId: BigInt(3) }), makeStream({ streamId: BigInt(2) })],
+    });
+    const response = await listRequest("/streams?limit=5");
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).not.toHaveProperty("nextCursor");
+  });
+
+  it("echoes nextCursor when the repository returns one", async () => {
+    const cursor = encodeCursor(BigInt(10));
+    streamsRepo.listStreams.mockResolvedValue({
+      streams: [makeStream({ streamId: BigInt(15) }), makeStream({ streamId: BigInt(12) })],
+      nextCursor: cursor,
+    });
+    const response = await listRequest("/streams?limit=2");
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toHaveProperty("nextCursor", cursor);
+  });
+
+  it("reports offset=0 on cursor pages regardless of the offset query parameter", async () => {
+    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
+    const cursor = encodeCursor(BigInt(100));
+    const response = await listRequest(
+      `/streams?cursor=${encodeURIComponent(cursor)}&offset=500`,
+    );
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual(expect.objectContaining({ offset: 0 }));
+  });
+
+  it("cursor mode skips the offset ceiling check (backwards compatible)", async () => {
+    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
+    const cursor = encodeCursor(BigInt(999999));
+    const response = await listRequest(
+      `/streams?cursor=${encodeURIComponent(cursor)}&offset=50000`,
+    );
+    expect(response.statusCode).toBe(200);
+    expect(streamsRepo.listStreams).toHaveBeenCalled();
+  });
+
+  it("passes cursor alongside other filters and to the count query", async () => {
+    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
+    streamsRepo.countStreams.mockResolvedValue(2);
+    const cursor = encodeCursor(BigInt(77));
+    const response = await listRequest(
+      `/streams?cancelled=false&includeTotal=true&cursor=${encodeURIComponent(cursor)}`,
+    );
+    expect(response.statusCode).toBe(200);
+    const expectedFilter = expect.objectContaining({ cancelled: false, cursor: 77n });
+    expect(streamsRepo.listStreams).toHaveBeenCalledWith(expectedFilter);
+    expect(streamsRepo.countStreams).toHaveBeenCalledWith(expectedFilter);
   });
 });
 
