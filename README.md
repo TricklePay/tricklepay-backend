@@ -17,6 +17,7 @@ For a record of API and indexer behavior changes, see the [Changelog](CHANGELOG.
 ## Table of Contents
 
 - [How it works](#how-it-works)
+- [Database schema](#database-schema)
 - [API](#api)
 - [Running locally](#running-locally)
 - [Testing](#testing)
@@ -76,8 +77,22 @@ using the same linear vesting formula the contract itself evaluates on-chain.
 That means these figures track wall-clock time rather than the last indexed
 event — a stream's `vested` amount can be higher on a second request than the
 first even though the indexer applied nothing in between — and they agree with
-what the contract would report if queried directly, without ever making that
-chain round-trip.
+## Database schema
+
+The service uses PostgreSQL via Prisma. Database state is divided into four tables:
+
+- **`Stream`**: Stores the current state of each indexed token stream (amounts as wide fixed-point decimals, schedule timestamps as Unix seconds). Updated idempotently using `lastEventId` to guard against duplicate or out-of-order event application.
+- **`IndexedEvent`**: An immutable log of raw decoded contract events (`Created`, `Withdrawn`, `Cancelled`) processed by the indexer.
+- **`FailedEvent`**: Records contract events that failed during processing or database application, allowing operators to inspect and retry failed events via `npm run replay-failed-events`.
+- **`IndexerState`**: Single-row bookkeeping table storing indexer progress (`lastLedger`), latest Stellar network height (`chainLedger`), and RPC paging position (`cursor`).
+
+### Entity Relationships
+
+- **`Stream` ↔ `IndexedEvent`**: `IndexedEvent` records raw event logs; applied events update `Stream` rows. `Stream.lastEventId` ensures delta updates apply idempotently.
+- **`Stream` ↔ `FailedEvent`**: `FailedEvent` logs unapplied events by `streamId` when available for debugging and retry.
+- **`IndexerState` ↔ `Stream` & `IndexedEvent`**: `IndexerState.lastLedger` records the block height through which all events and streams have been synced. `IndexerState.cursor` tracks the Soroban RPC event pagination marker.
+
+For full field descriptions, data types, indexes, and relationship details, see [docs/database-schema.md](docs/database-schema.md).
 
 ## API
 
