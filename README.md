@@ -23,6 +23,7 @@ For a record of API and indexer behavior changes, see the [Changelog](CHANGELOG.
 - [Testing](#testing)
 - [Configuration](#configuration)
 - [Deployment](#deployment)
+- [Contributing](#contributing)
 - [Project structure](#project-structure)
 - [Frequently asked questions](#frequently-asked-questions)
 - [Related repositories](#related-repositories)
@@ -250,6 +251,10 @@ it succeeds, and keeps the retry set bounded so one permanently invalid event
 cannot stall the rest.
 
 ## Contributing
+
+For instructions on setting up your local environment, running required checks (`npm run typecheck`, `npm test`, `npm run build`), and submitting pull requests, see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+For global contributor guidelines across the organization, refer to the shared [TricklePay Documentation Guide](https://github.com/TricklePay/tricklepay-docs).
 
 ### Import ordering
 
