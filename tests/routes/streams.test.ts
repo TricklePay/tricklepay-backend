@@ -277,6 +277,74 @@ describe("GET /streams token filter", () => {
   });
 });
 
+describe("GET /streams sender filter", () => {
+  it("omits sender from filter when parameter is omitted", async () => {
+    streamsRepo.listStreams.mockResolvedValue([]);
+    const response = await listRequest("/streams");
+    expect(response.statusCode).toBe(200);
+    expect(streamsRepo.listStreams).toHaveBeenCalledWith(
+      expect.not.objectContaining({ sender: expect.anything() }),
+    );
+  });
+
+  it("returns only matching streams for a sender", async () => {
+    const OTHER_SENDER = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN";
+    const matches = [
+      makeStream({ streamId: 1n, sender: ACCOUNT }),
+      makeStream({ streamId: 2n, sender: ACCOUNT }),
+    ];
+    streamsRepo.listStreams.mockResolvedValue(matches);
+    const response = await listRequest(`/streams?sender=${ACCOUNT}`);
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.streams).toHaveLength(2);
+    expect(body.streams.map((s: { id: string }) => s.id)).toEqual(["1", "2"]);
+    expect(body).toHaveProperty("limit", 50);
+    expect(body).toHaveProperty("offset", 0);
+  });
+
+  it("returns empty list for sender with no streams", async () => {
+    streamsRepo.listStreams.mockResolvedValue([]);
+    const response = await listRequest(`/streams?sender=${ACCOUNT}`);
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.streams).toEqual([]);
+  });
+
+  it("applies sender to the count query when includeTotal=true", async () => {
+    streamsRepo.listStreams.mockResolvedValue([]);
+    streamsRepo.countStreams.mockResolvedValue(3);
+    const response = await listRequest(`/streams?sender=${ACCOUNT}&includeTotal=true`);
+    expect(response.statusCode).toBe(200);
+    expect(streamsRepo.countStreams).toHaveBeenCalledWith(
+      expect.objectContaining({ sender: ACCOUNT }),
+    );
+    expect(response.json()).toHaveProperty("total", 3);
+  });
+
+  it("excludes streams from other senders when filtering by sender", async () => {
+    const OTHER_SENDER = "GB64UQ4EZGQX4GZX3H2Z2H5Z3Z5Z5Z5Z5Z5Z5Z5Z5Z5Z5Z5Z5Z5Z";
+    const matches = [
+      makeStream({ streamId: 1n, sender: ACCOUNT }),
+    ];
+    streamsRepo.listStreams.mockResolvedValue(matches);
+    const response = await listRequest(`/streams?sender=${ACCOUNT}`);
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.streams).toHaveLength(1);
+    expect(body.streams[0].sender).toBe(ACCOUNT);
+  });
+
+  it("normalizes lowercase sender address before filtering", async () => {
+    streamsRepo.listStreams.mockResolvedValue([]);
+    const response = await listRequest(`/streams?sender=${ACCOUNT.toLowerCase()}`);
+    expect(response.statusCode).toBe(200);
+    expect(streamsRepo.listStreams).toHaveBeenCalledWith(
+      expect.objectContaining({ sender: ACCOUNT }),
+    );
+  });
+});
+
 describe("GET /streams offset ceiling", () => {
   it("returns 400 when the offset exceeds the ceiling", async () => {
     const response = await listRequest("/streams?offset=10001");
