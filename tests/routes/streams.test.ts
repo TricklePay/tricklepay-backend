@@ -11,7 +11,15 @@ const streamsRepo = vi.hoisted(() => ({
   aggregateStreams: vi.fn(),
 }));
 
-vi.mock("../../src/repositories/streams.js", () => streamsRepo);
+vi.mock("../../src/repositories/streams.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/repositories/streams.js")>();
+  return {
+    ...actual,
+    ...streamsRepo,
+  };
+});
+
+const { encodeCursor, decodeCursor } = await import("../../src/repositories/streams.js");
 
 // Valid strkeys used to exercise address normalization.
 const ACCOUNT = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN";
@@ -113,7 +121,7 @@ describe("GET /streams", () => {
   });
 
   it("uses the documented default pagination when no params are supplied", async () => {
-    streamsRepo.listStreams.mockResolvedValue([]);
+    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
     const response = await listRequest("/streams");
 
     expect(response.statusCode).toBe(200);
@@ -145,7 +153,7 @@ describe("GET /streams", () => {
   });
 
   it("trims and uppercases token contract address filters", async () => {
-    streamsRepo.listStreams.mockResolvedValue([]);
+    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
     const padded = `  ${CONTRACT.toLowerCase()} `;
     const response = await listRequest(`/streams?token=${encodeURIComponent(padded)}`);
     expect(response.statusCode).toBe(200);
@@ -174,7 +182,7 @@ describe("GET /streams", () => {
 
 describe("GET /streams token filter", () => {
   it("omits token from filter when parameter is omitted", async () => {
-    streamsRepo.listStreams.mockResolvedValue([]);
+    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
     const response = await listRequest("/streams");
     expect(response.statusCode).toBe(200);
     expect(streamsRepo.listStreams).toHaveBeenCalledWith(
@@ -187,7 +195,7 @@ describe("GET /streams token filter", () => {
       makeStream({ streamId: 1n, token: CONTRACT }),
       makeStream({ streamId: 2n, token: CONTRACT }),
     ];
-    streamsRepo.listStreams.mockResolvedValue(matches);
+    streamsRepo.listStreams.mockResolvedValue({ streams: matches });
     const response = await listRequest(`/streams?token=${CONTRACT}`);
     expect(response.statusCode).toBe(200);
     const body = response.json();
@@ -198,7 +206,7 @@ describe("GET /streams token filter", () => {
   });
 
   it("returns empty list for token with no streams", async () => {
-    streamsRepo.listStreams.mockResolvedValue([]);
+    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
     const response = await listRequest(`/streams?token=${CONTRACT}`);
     expect(response.statusCode).toBe(200);
     const body = response.json();
@@ -206,7 +214,7 @@ describe("GET /streams token filter", () => {
   });
 
   it("applies token to the count query when includeTotal=true", async () => {
-    streamsRepo.listStreams.mockResolvedValue([]);
+    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
     streamsRepo.countStreams.mockResolvedValue(3);
     const response = await listRequest(`/streams?token=${CONTRACT}&includeTotal=true`);
     expect(response.statusCode).toBe(200);
@@ -217,7 +225,7 @@ describe("GET /streams token filter", () => {
   });
 
   it("combines token with sender filter", async () => {
-    streamsRepo.listStreams.mockResolvedValue([]);
+    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
     const response = await listRequest(`/streams?sender=${ACCOUNT}&token=${CONTRACT}`);
     expect(response.statusCode).toBe(200);
     expect(streamsRepo.listStreams).toHaveBeenCalledWith(
@@ -226,7 +234,7 @@ describe("GET /streams token filter", () => {
   });
 
   it("combines token with recipient filter", async () => {
-    streamsRepo.listStreams.mockResolvedValue([]);
+    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
     const response = await listRequest(`/streams?recipient=${ACCOUNT}&token=${CONTRACT}`);
     expect(response.statusCode).toBe(200);
     expect(streamsRepo.listStreams).toHaveBeenCalledWith(
@@ -235,7 +243,7 @@ describe("GET /streams token filter", () => {
   });
 
   it("combines token with cancelled filter", async () => {
-    streamsRepo.listStreams.mockResolvedValue([]);
+    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
     streamsRepo.countStreams.mockResolvedValue(1);
     const response = await listRequest(
       `/streams?token=${CONTRACT}&cancelled=true&includeTotal=true`,
@@ -250,7 +258,7 @@ describe("GET /streams token filter", () => {
   });
 
   it("works with pagination: limit and offset are applied alongside token", async () => {
-    streamsRepo.listStreams.mockResolvedValue([]);
+    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
     const response = await listRequest(`/streams?token=${CONTRACT}&limit=25&offset=50`);
     expect(response.statusCode).toBe(200);
     expect(streamsRepo.listStreams).toHaveBeenCalledWith(
@@ -367,8 +375,6 @@ describe("GET /streams cancelled filter", () => {
 });
 
 describe("GET /streams cursor pagination", () => {
-  const { encodeCursor, decodeCursor } = await import("../../src/repositories/streams.js");
-
   it("decodes a valid cursor and passes it to the repository filter", async () => {
     streamsRepo.listStreams.mockResolvedValue({ streams: [] });
     const cursor = encodeCursor(BigInt(50));
@@ -487,5 +493,103 @@ describe("GET /streams/summary", () => {
       completed: { count: 3, totalAmount: "99999999999999999999999999", withdrawn: "42" },
       cancelled: { count: 4, totalAmount: "12345", withdrawn: "12345" },
     });
+  });
+});
+
+describe("GET /streams stable ordering (#137)", () => {
+  const streamsOrderedByDescId = [
+    makeStream({ streamId: 3n }),
+    makeStream({ streamId: 2n }),
+    makeStream({ streamId: 1n }),
+  ];
+
+  it("returns streams in the same order on repeated calls", async () => {
+    streamsRepo.listStreams
+      .mockResolvedValueOnce({ streams: streamsOrderedByDescId })
+      .mockResolvedValueOnce({ streams: streamsOrderedByDescId })
+      .mockResolvedValueOnce({ streams: streamsOrderedByDescId });
+
+    const response1 = await listRequest("/streams");
+    const response2 = await listRequest("/streams");
+    const response3 = await listRequest("/streams");
+
+    expect(response1.json().streams.map((s: { id: string }) => s.id)).toEqual(["3", "2", "1"]);
+    expect(response2.json().streams.map((s: { id: string }) => s.id)).toEqual(["3", "2", "1"]);
+    expect(response3.json().streams.map((s: { id: string }) => s.id)).toEqual(["3", "2", "1"]);
+  });
+
+  it("matches the documented default order (streamId descending)", async () => {
+    streamsRepo.listStreams.mockResolvedValue({ streams: streamsOrderedByDescId });
+
+    const response = await listRequest("/streams");
+    const ids = response.json().streams.map((s: { id: string }) => s.id);
+
+    expect(ids).toEqual(["3", "2", "1"]);
+  });
+
+  it("preserves deterministic order with a single stream", async () => {
+    streamsRepo.listStreams.mockResolvedValue({ streams: [makeStream({ streamId: 42n })] });
+
+    const response = await listRequest("/streams");
+    expect(response.json().streams.map((s: { id: string }) => s.id)).toEqual(["42"]);
+  });
+});
+
+describe("GET /streams recipient filter (#136)", () => {
+  const RECIPIENT = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H";
+  const OTHER = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN";
+
+  it("returns only streams addressed to the specified recipient", async () => {
+    const recipientStreams = [
+      makeStream({ streamId: 1n, recipient: RECIPIENT }),
+      makeStream({ streamId: 2n, recipient: RECIPIENT }),
+    ];
+    streamsRepo.listStreams.mockResolvedValue({ streams: recipientStreams });
+
+    const response = await listRequest(`/streams?recipient=${RECIPIENT}`);
+    expect(response.statusCode).toBe(200);
+    expect(response.json().streams).toHaveLength(2);
+    expect(response.json().streams.every((s: { recipient: string }) => s.recipient === RECIPIENT)).toBe(true);
+  });
+
+  it("excludes streams addressed to a different recipient", async () => {
+    const allStreams = [
+      makeStream({ streamId: 1n, recipient: RECIPIENT }),
+      makeStream({ streamId: 2n, recipient: OTHER }),
+    ];
+    streamsRepo.listStreams.mockResolvedValue({ streams: [allStreams[0]] });
+
+    const response = await listRequest(`/streams?recipient=${RECIPIENT}`);
+    expect(response.statusCode).toBe(200);
+    expect(response.json().streams).toHaveLength(1);
+    expect(response.json().streams[0].recipient).toBe(RECIPIENT);
+  });
+
+  it("passes the recipient filter to the repository", async () => {
+    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
+
+    await listRequest(`/streams?recipient=${RECIPIENT}`);
+    expect(streamsRepo.listStreams).toHaveBeenCalledWith(
+      expect.objectContaining({ recipient: RECIPIENT }),
+    );
+  });
+
+  it("returns an empty list when no streams match the recipient", async () => {
+    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
+
+    const response = await listRequest(`/streams?recipient=${OTHER}`);
+    expect(response.statusCode).toBe(200);
+    expect(response.json().streams).toEqual([]);
+  });
+
+  it("normalizes recipient address (lowercase, trimmed)", async () => {
+    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
+
+    const padded = `  ${RECIPIENT.toLowerCase()} `;
+    const response = await listRequest(`/streams?recipient=${encodeURIComponent(padded)}`);
+    expect(response.statusCode).toBe(200);
+    expect(streamsRepo.listStreams).toHaveBeenCalledWith(
+      expect.objectContaining({ recipient: RECIPIENT }),
+    );
   });
 });
