@@ -175,7 +175,7 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
           "Returns a paginated list of token streams. Optionally filter by sender, recipient, or token address; " +
           "address filters accept lowercase and whitespace-padded spellings and are normalized before matching. " +
           "Use the opaque cursor returned by previous responses for stable pagination under concurrent inserts; " +
-          "when cursor is provided, offset is ignored and offset ceiling checks are skipped.",
+          "when cursor is provided, offset is ignored and offset ceiling checks are skipped. " +
           "Results are returned in a stable deterministic order: when filtering by sender, recipient, or token, " +
           "results are ordered by that address ascending, then by stream id descending to break ties. " +
           "Unfiltered queries (or queries filtered only by cancellation status) are ordered by stream id descending. " +

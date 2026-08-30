@@ -257,17 +257,6 @@ function whereFromFilter(filter: StreamFilter): Prisma.StreamWhereInput {
   return where;
 }
 
-export async function listStreams(filter: StreamFilter): Promise<StreamListResult> {
-  const limit = filter.limit ?? 50;
-  const useCursor = filter.cursor !== undefined;
-  const take = limit + 1;
-  const skip = useCursor ? 0 : filter.offset ?? 0;
-
-  const rows = await prisma.stream.findMany({
-    where: whereFromFilter(filter),
-    orderBy: { streamId: "desc" },
-    take,
-    skip,
 export function orderByFromFilter(
   filter: StreamFilter,
 ): Prisma.StreamOrderByWithRelationInput[] {
@@ -279,12 +268,17 @@ export function orderByFromFilter(
   return orderBy;
 }
 
-export async function listStreams(filter: StreamFilter): Promise<Stream[]> {
-  return prisma.stream.findMany({
+export async function listStreams(filter: StreamFilter): Promise<StreamListResult> {
+  const limit = filter.limit ?? 50;
+  const useCursor = filter.cursor !== undefined;
+  const take = limit + 1;
+  const skip = useCursor ? 0 : filter.offset ?? 0;
+
+  const rows = await prisma.stream.findMany({
     where: whereFromFilter(filter),
     orderBy: orderByFromFilter(filter),
-    take: filter.limit ?? 50,
-    skip: filter.offset ?? 0,
+    take,
+    skip,
   });
 
   if (rows.length <= limit) {

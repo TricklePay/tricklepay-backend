@@ -73,7 +73,7 @@ describe("failed events repository", () => {
   it("clears the failed-event record after a successful apply", async () => {
     const deleteMany = vi.spyOn(prisma.failedEvent, "deleteMany").mockResolvedValueOnce({ count: 1 });
 
-    await clearFailedEvent("0000000000000000001");
+    await clearFailedEvent({ eventId: "0000000000000000001" });
 
     expect(deleteMany).toHaveBeenCalledWith({ where: { eventId: "0000000000000000001" } });
   });
@@ -110,7 +110,7 @@ describe("streams repository token filter", () => {
     const spy = vi.spyOn(prisma.stream, "findMany").mockResolvedValueOnce(rows);
     const filter: StreamFilter = {};
     const result = await listStreams(filter);
-    expect(result).toBe(rows);
+    expect(result.streams).toBe(rows);
     expect(spy).toHaveBeenCalledOnce();
     const args = spy.mock.calls[0][0]!;
     expect((args.where as Record<string, unknown> | undefined)?.token).toBeUndefined();
@@ -121,17 +121,17 @@ describe("streams repository token filter", () => {
     const rows = [partialStream({ token })];
     const spy = vi.spyOn(prisma.stream, "findMany").mockResolvedValueOnce(rows);
     const result = await listStreams({ token });
-    expect(result).toBe(rows);
+    expect(result.streams).toBe(rows);
     const where = spy.mock.calls[0][0]!.where as Record<string, unknown>;
     expect(where.token).toBe(token);
   });
 
-  it("listStreams returns empty array when no streams match token", async () => {
+  it("listStreams returns empty streams array when no streams match token", async () => {
     const spy = vi.spyOn(prisma.stream, "findMany").mockResolvedValueOnce([]);
     const result = await listStreams({
       token: "CBFS2HT4TIHTMWA5ZND6FEC27BRRA4V6JWOD7JIIDZVSPVAM7EJ2LZS7",
     });
-    expect(result).toEqual([]);
+    expect(result).toEqual({ streams: [] });
     expect(spy).toHaveBeenCalledOnce();
   });
 
@@ -162,7 +162,7 @@ describe("streams repository token filter", () => {
     await listStreams({ token, limit: 10, offset: 30 });
     const args = spy.mock.calls[0][0]!;
     expect((args.where as Record<string, unknown>).token).toBe(token);
-    expect(args.take).toBe(10);
+    expect(args.take).toBe(11);
     expect(args.skip).toBe(30);
   });
 
