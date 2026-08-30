@@ -18,6 +18,7 @@ For a record of API and indexer behavior changes, see the [Changelog](CHANGELOG.
 
 - [How it works](#how-it-works)
 - [Database schema](#database-schema)
+- [Glossary](#glossary)
 - [API](#api)
 - [Running locally](#running-locally)
 - [Testing](#testing)
@@ -94,6 +95,18 @@ The service uses PostgreSQL via Prisma. Database state is divided into four tabl
 - **`IndexerState` ↔ `Stream` & `IndexedEvent`**: `IndexerState.lastLedger` records the block height through which all events and streams have been synced. `IndexerState.cursor` tracks the Soroban RPC event pagination marker.
 
 For full field descriptions, data types, indexes, and relationship details, see [docs/database-schema.md](docs/database-schema.md).
+
+## Glossary
+
+Core indexer terms used across code and documentation include:
+
+- **Cursor**: Opaque Soroban RPC pagination marker (`IndexerState.cursor`). Advances on every poll tick regardless of whether events were found.
+- **Ledger**: Sequential block height on the Stellar network (e.g. `lastLedger`, `chainLedger`).
+- **Backfill**: Indexer catch-up phase scanning historical events from an earlier ledger up to chain head.
+- **Lag**: Calculated difference in ledgers between chain height and indexer applied position (`chainLedger - lastLedger`).
+- **Applied Event**: Contract event whose state updates have been successfully persisted to PostgreSQL (`Stream` and `IndexedEvent`).
+
+For complete definitions and supporting terms, see [docs/glossary.md](docs/glossary.md).
 
 ## API
 
