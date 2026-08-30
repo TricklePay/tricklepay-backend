@@ -138,13 +138,82 @@ npm install
 ./scripts/dev.sh            # starts Postgres, syncs schema, runs with reload
 ```
 
-Or run everything in containers:
+### Running with Docker Compose
+
+The repository includes a multi-container setup in `docker-compose.yml` that starts both the PostgreSQL database and the API service (which automatically runs pending database migrations on startup).
+
+#### Environment Variables for Docker
+
+When running with Docker Compose, the service requires or configures the following environment variables:
+
+| Variable | Required | Description / Default |
+| --- | --- | --- |
+| `STREAM_CONTRACT_ID` | **Yes** | Deployed Soroban contract address (56 characters starting with `C`). Must be provided in `.env` or set in shell environment. |
+| `DATABASE_URL` | Yes | Pre-configured in compose to `postgresql://tricklepay:tricklepay@postgres:5432/tricklepay`. |
+| `NETWORK` | No | Stellar network (`testnet` or `mainnet`). Default in compose: `testnet`. |
+| `PORT` | No | Container HTTP listen port. Default: `3000`. |
+| `HOST` | No | Container listen address. Default: `0.0.0.0`. |
+
+#### Step-by-Step Instructions from a Clean Checkout
+
+1. **Clone the repository and prepare environment configuration:**
+
+   ```bash
+   cp .env.example .env
+   ```
+
+   Edit `.env` and set `STREAM_CONTRACT_ID` to your deployed stream contract address (e.g., `STREAM_CONTRACT_ID=C...`).
+
+2. **Start the database and API containers:**
+
+   ```bash
+   docker compose up --build
+   ```
+
+   To run the stack in detached (background) mode, use:
+
+   ```bash
+   docker compose up -d
+   ```
+
+   The `api` container waits for the `postgres` healthcheck to pass, runs `npx prisma migrate deploy` automatically, and then starts the API service.
+
+3. **Verify and view logs:**
+
+   ```bash
+   docker compose logs -f api
+   ```
+
+   The API endpoint will be available at `http://localhost:3000`.
+
+4. **Stop the stack:**
+
+   ```bash
+   docker compose down
+   ```
+
+   To stop the stack and delete the persistent PostgreSQL volume (`pgdata`), pass the `-v` flag:
+
+   ```bash
+   docker compose down -v
+   ```
+
+#### Building and Running with Standalone Docker
+
+If you already have a PostgreSQL instance running, you can build and run the backend image directly:
 
 ```bash
-STREAM_CONTRACT_ID=C... docker compose up
-```
+# Build the Docker image
+docker build -t tricklepay-backend .
 
-The API listens on `http://localhost:3000`.
+# Run the container
+docker run -d \
+  --name tricklepay-api \
+  -e DATABASE_URL="postgresql://tricklepay:tricklepay@host.docker.internal:5432/tricklepay" \
+  -e STREAM_CONTRACT_ID="C..." \
+  -p 3000:3000 \
+  tricklepay-backend
+```
 
 ## Failed-event replay
 
