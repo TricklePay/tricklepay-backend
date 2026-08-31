@@ -27,6 +27,7 @@ For a record of API and indexer behavior changes, see the [Changelog](CHANGELOG.
 - [Contributing](#contributing)
 - [Project structure](#project-structure)
 - [Frequently asked questions](#frequently-asked-questions)
+- [Troubleshooting](#troubleshooting)
 - [Related repositories](#related-repositories)
 - [License](#license)
 
@@ -145,16 +146,32 @@ separate figures, because only the distance between them means anything:
     "updatedAt": "2025-11-14T03:00:00.000Z"
   },
   "chain": { "latestLedger": 56999999 },
-  "lagLedgers": 709986
+  "lagLedgers": 709986,
+  "failedEventCount": 0
 }
 ```
 
-`indexer.lastLedger` is the highest ledger whose events have been applied, so a
-backfill reads as behind for as long as it is behind. Both figures are as of the
-last completed poll — the API never queries the chain — and `updatedAt` says
-when that was, which is how a stalled indexer, whose lag stops growing, is told
-apart from one that is genuinely level. `lagLedgers` is null until the first
-poll has recorded something to measure.
+**Field reference**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `indexer.initialized` | boolean | `true` once the indexer has completed its first poll and recorded a position. `false` before that — the API returns zeros for the other fields in this state. |
+| `indexer.lastLedger` | number | Highest ledger sequence whose events have been fully applied to the database. Only advances when an event is actually written; a poll that finds no events leaves it unchanged. |
+| `indexer.cursor` | string \| null | Opaque Soroban RPC paging token. The indexer resumes from this token on the next poll. Advances on every poll — including empty ones — so it must not be compared to the chain head to derive lag. `null` before the first poll. |
+| `indexer.updatedAt` | string \| null | ISO-8601 timestamp of when the position was last written. A lag that stops growing combined with a stale `updatedAt` indicates a stalled indexer; a growing `updatedAt` with a steady lag indicates a caught-up indexer on a quiet chain. `null` before the first poll. |
+| `chain.latestLedger` | number | The chain's head ledger as of the indexer's last completed poll. The API never queries the chain directly — this value is read from Postgres, where the poller stored it. |
+| `lagLedgers` | number \| null | `chain.latestLedger - indexer.lastLedger`. The number of ledgers between the chain head and the indexer's position. `null` before the first poll. Never negative. |
+| `failedEventCount` | number | Count of contract events that could not be applied and remain in the `FailedEvent` table. A non-zero value signals events that need operator attention or replay (see [Failed-event replay](#failed-event-replay)). |
+
+**What `lagLedgers` is**
+
+`lagLedgers` is the *gap since the last processed event* — the distance between the chain's head and the highest ledger the indexer actually applied. It tells you how far the indexer's mirror is behind the chain as of the last poll.
+
+**What `lagLedgers` is not**
+
+It is *not* a measure of indexing delay or processing latency. A chain that has produced no new events since the last poll still reports a non-zero lag if the indexer started from an older ledger. Conversely, a freshly started indexer that has caught up to the head will report zero lag even if the poll took several seconds. The figure only changes when either the chain produces a new ledger or the indexer applies an event — it is a positional gap, not a time-based metric.
+
+Both figures are as of the last completed poll — the API never queries the chain — and `updatedAt` says when that was, which is how a stalled indexer, whose lag stops growing, is told apart from one that is genuinely level. `lagLedgers` is null until the first poll has recorded something to measure.
 
 ## Running locally
 
@@ -596,6 +613,199 @@ pending migrations. Never use `prisma migrate dev` in production — it is
 interactive and intended for local development only. The
 [Deployment — Migrations](#migrations) section shows the recommended patterns
 for init-containers and pre-deploy hooks.
+
+## Troubleshooting
+
+### Database not running
+
+**Error text:**
+
+```
+Database connectivity check failed: connection refused
+```
+
+or
+
+```
+PrismaClientKnownRequestError: Error in PostgreSQL connection pool: server closed the connection unexpectedly
+```
+
+**Cause:** The PostgreSQL database is not running or is not reachable at the address specified in `DATABASE_URL`.
+
+**Fix:**
+
+1. If using Docker Compose, start the database:
+   ```bash
+   docker compose up -d postgres
+   ```
+
+2. Verify the database is running:
+   ```bash
+   docker compose ps postgres
+   ```
+
+3. Check that `DATABASE_URL` in your `.env` file matches the Docker Compose configuration:
+   ```
+   DATABASE_URL=postgresql://tricklepay:tricklepay@localhost:5432/tricklepay
+   ```
+
+4. If the database is running but still unreachable, check that the port is not blocked and the container is healthy.
+
+---
+
+### Missing contract id
+
+**Error text:**
+
+```
+Missing required environment variable: STREAM_CONTRACT_ID
+```
+
+or
+
+```
+Configuration error: STREAM_CONTRACT_ID is required
+```
+
+**Cause:** The `STREAM_CONTRACT_ID` environment variable is not set. This is the only required variable besides `DATABASE_URL`.
+
+**Fix:**
+
+1. Copy the example environment file:
+   ```bash
+   cp .env.example .env
+   ```
+
+2. Edit `.env` and set `STREAM_CONTRACT_ID` to the deployed contract address:
+   ```
+   STREAM_CONTRACT_ID=C... (your deployed contract id)
+   ```
+
+3. The contract id starts with `C` and is obtained after deploying the Soroban streaming contract. See the [contracts](https://github.com/TricklePay/tricklepay-contracts) repository for deployment instructions.
+
+---
+
+### Prisma client not generated
+
+**Error text:**
+
+```
+TypeError: Cannot find module '@prisma/client'
+```
+
+or
+
+```
+Error: @prisma/client did not initialize yet. Please run "prisma generate"
+```
+
+**Cause:** The Prisma client has not been generated from the schema. This is required before the application can interact with the database.
+
+**Fix:**
+
+1. Generate the Prisma client:
+   ```bash
+   npx prisma generate
+   ```
+
+2. If you also need to apply database migrations (required for a fresh database):
+   ```bash
+   npx prisma migrate deploy
+   ```
+
+3. The `scripts/dev.sh` script runs both steps automatically, so if you use that script you should not encounter this issue.
+
+---
+
+### TypeScript compilation errors
+
+**Error text:**
+
+```
+error TSxxxx: Cannot find name '...'
+```
+
+or
+
+```
+error TSxxxx: Type '...' is not assignable to type '...'
+```
+
+**Cause:** The codebase has TypeScript errors that prevent compilation.
+
+**Fix:**
+
+1. Run the type checker to see all errors:
+   ```bash
+   npm run typecheck
+   ```
+
+2. Ensure you have the correct Node.js version:
+   ```bash
+   nvm use
+   ```
+
+3. Reinstall dependencies if needed:
+   ```bash
+   rm -rf node_modules
+   npm install
+   ```
+
+---
+
+### Port already in use
+
+**Error text:**
+
+```
+Error: listen EADDRINUSE: address already in use :::3000
+```
+
+**Cause:** Another process is already using port 3000 (the default API port).
+
+**Fix:**
+
+1. Find the process using the port:
+   ```bash
+   lsof -i :3000
+   ```
+
+2. Either stop the other process or configure a different port in your `.env`:
+   ```
+   PORT=3001
+   ```
+
+---
+
+### Tests failing
+
+**Error text:**
+
+```
+FAIL tests/...
+AssertionError: expected ... to equal ...
+```
+
+**Cause:** Tests are failing, possibly due to environment issues or code changes.
+
+**Fix:**
+
+1. Run the full test suite:
+   ```bash
+   npm test
+   ```
+
+2. Run the type checker first to ensure no type errors:
+   ```bash
+   npm run typecheck
+   ```
+
+3. Check that your environment is set up correctly (database running, migrations applied).
+
+4. If a specific test is failing, run only that test file:
+   ```bash
+   npx vitest run --project unit tests/path/to/test.test.ts
+   ```
 
 ## Related repositories
 
