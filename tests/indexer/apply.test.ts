@@ -110,6 +110,35 @@ describe("applyEvent", () => {
     expect(contract.fetchStream).not.hasBeenCalled();
   });
 
+  it("marks the stored stream cancelled when a cancellation event is applied", async () => {
+    const stored = {
+      streamId: 42n,
+      totalAmount: 10_000_000n * UNIT,
+      withdrawn: 2_500_000n * UNIT,
+      startTime: 1735689600n,
+      endTime: 1767225600n,
+      cliffTime: 1740000000n,
+      recipientAmount: 0n,
+      available: 0n,
+      cancelled: false,
+    };
+
+    streams.applyCancellation.mockImplementation(async ({ cancelledAt, recipientAmount }) => {
+      stored.cancelled = true;
+      stored.endTime = cancelledAt;
+      stored.recipientAmount = recipientAmount;
+      stored.available = recipientAmount - stored.withdrawn;
+      return "applied";
+    });
+
+    expect(await apply(CANCELLED)).toBe("applied");
+    expect(stored.cancelled).toBe(true);
+    expect(stored.endTime).toBe(1763089117n);
+    expect(stored.recipientAmount).toBe(3_000_000n * UNIT);
+    expect(stored.available).toBe(500_000n * UNIT);
+    expect(contract.fetchStream).not.hasBeenCalled();
+  });
+
   it("indexes a whole page without a single chain call", async () => {
     // The acceptance criterion, stated directly: replaying every known event in
     // the captured page costs three database writes and no RPC round-trips.
