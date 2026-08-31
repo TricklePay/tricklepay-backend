@@ -296,8 +296,15 @@ export class Poller {
       eventsApplied.inc({ kind: event.kind, outcome });
     }
 
-    // `page.latestLedger` is the chain's head, not this indexer's position, so
-    // it is stored as such: the two together are what make lag visible.
+    // The poller deliberately records `lastLedger` (the highest ledger it
+    // applied) rather than `page.latestLedger` (the chain head) as its own
+    // position. This avoids the failure mode where a backfill or poller falsely
+    // reports itself as caught up with the chain head when it has only reached
+    // the head as a value in the RPC response without having actually applied
+    // all the ledgers up to that point.
+    //
+    // `page.latestLedger` is stored separately as `chainLedger`: the two
+    // together are what make indexer lag visible.
     await saveIndexerPosition({ lastLedger, chainLedger: page.latestLedger, cursor: page.cursor });
 
     // Update the lag gauge. Never negative: the indexer's position cannot
