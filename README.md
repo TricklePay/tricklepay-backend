@@ -17,11 +17,14 @@ For a record of API and indexer behavior changes, see the [Changelog](CHANGELOG.
 ## Table of Contents
 
 - [How it works](#how-it-works)
+- [Database schema](#database-schema)
+- [Glossary](#glossary)
 - [API](#api)
 - [Running locally](#running-locally)
 - [Testing](#testing)
 - [Configuration](#configuration)
 - [Deployment](#deployment)
+- [Contributing](#contributing)
 - [Project structure](#project-structure)
 - [Frequently asked questions](#frequently-asked-questions)
 - [Related repositories](#related-repositories)
@@ -76,8 +79,34 @@ using the same linear vesting formula the contract itself evaluates on-chain.
 That means these figures track wall-clock time rather than the last indexed
 event — a stream's `vested` amount can be higher on a second request than the
 first even though the indexer applied nothing in between — and they agree with
-what the contract would report if queried directly, without ever making that
-chain round-trip.
+## Database schema
+
+The service uses PostgreSQL via Prisma. Database state is divided into four tables:
+
+- **`Stream`**: Stores the current state of each indexed token stream (amounts as wide fixed-point decimals, schedule timestamps as Unix seconds). Updated idempotently using `lastEventId` to guard against duplicate or out-of-order event application.
+- **`IndexedEvent`**: An immutable log of raw decoded contract events (`Created`, `Withdrawn`, `Cancelled`) processed by the indexer.
+- **`FailedEvent`**: Records contract events that failed during processing or database application, allowing operators to inspect and retry failed events via `npm run replay-failed-events`.
+- **`IndexerState`**: Single-row bookkeeping table storing indexer progress (`lastLedger`), latest Stellar network height (`chainLedger`), and RPC paging position (`cursor`).
+
+### Entity Relationships
+
+- **`Stream` ↔ `IndexedEvent`**: `IndexedEvent` records raw event logs; applied events update `Stream` rows. `Stream.lastEventId` ensures delta updates apply idempotently.
+- **`Stream` ↔ `FailedEvent`**: `FailedEvent` logs unapplied events by `streamId` when available for debugging and retry.
+- **`IndexerState` ↔ `Stream` & `IndexedEvent`**: `IndexerState.lastLedger` records the block height through which all events and streams have been synced. `IndexerState.cursor` tracks the Soroban RPC event pagination marker.
+
+For full field descriptions, data types, indexes, and relationship details, see [docs/database-schema.md](docs/database-schema.md).
+
+## Glossary
+
+Core indexer terms used across code and documentation include:
+
+- **Cursor**: Opaque Soroban RPC pagination marker (`IndexerState.cursor`). Advances on every poll tick regardless of whether events were found.
+- **Ledger**: Sequential block height on the Stellar network (e.g. `lastLedger`, `chainLedger`).
+- **Backfill**: Indexer catch-up phase scanning historical events from an earlier ledger up to chain head.
+- **Lag**: Calculated difference in ledgers between chain height and indexer applied position (`chainLedger - lastLedger`).
+- **Applied Event**: Contract event whose state updates have been successfully persisted to PostgreSQL (`Stream` and `IndexedEvent`).
+
+For complete definitions and supporting terms, see [docs/glossary.md](docs/glossary.md).
 
 ## API
 
@@ -138,13 +167,82 @@ npm install
 ./scripts/dev.sh            # starts Postgres, syncs schema, runs with reload
 ```
 
-Or run everything in containers:
+### Running with Docker Compose
+
+The repository includes a multi-container setup in `docker-compose.yml` that starts both the PostgreSQL database and the API service (which automatically runs pending database migrations on startup).
+
+#### Environment Variables for Docker
+
+When running with Docker Compose, the service requires or configures the following environment variables:
+
+| Variable | Required | Description / Default |
+| --- | --- | --- |
+| `STREAM_CONTRACT_ID` | **Yes** | Deployed Soroban contract address (56 characters starting with `C`). Must be provided in `.env` or set in shell environment. |
+| `DATABASE_URL` | Yes | Pre-configured in compose to `postgresql://tricklepay:tricklepay@postgres:5432/tricklepay`. |
+| `NETWORK` | No | Stellar network (`testnet` or `mainnet`). Default in compose: `testnet`. |
+| `PORT` | No | Container HTTP listen port. Default: `3000`. |
+| `HOST` | No | Container listen address. Default: `0.0.0.0`. |
+
+#### Step-by-Step Instructions from a Clean Checkout
+
+1. **Clone the repository and prepare environment configuration:**
+
+   ```bash
+   cp .env.example .env
+   ```
+
+   Edit `.env` and set `STREAM_CONTRACT_ID` to your deployed stream contract address (e.g., `STREAM_CONTRACT_ID=C...`).
+
+2. **Start the database and API containers:**
+
+   ```bash
+   docker compose up --build
+   ```
+
+   To run the stack in detached (background) mode, use:
+
+   ```bash
+   docker compose up -d
+   ```
+
+   The `api` container waits for the `postgres` healthcheck to pass, runs `npx prisma migrate deploy` automatically, and then starts the API service.
+
+3. **Verify and view logs:**
+
+   ```bash
+   docker compose logs -f api
+   ```
+
+   The API endpoint will be available at `http://localhost:3000`.
+
+4. **Stop the stack:**
+
+   ```bash
+   docker compose down
+   ```
+
+   To stop the stack and delete the persistent PostgreSQL volume (`pgdata`), pass the `-v` flag:
+
+   ```bash
+   docker compose down -v
+   ```
+
+#### Building and Running with Standalone Docker
+
+If you already have a PostgreSQL instance running, you can build and run the backend image directly:
 
 ```bash
-STREAM_CONTRACT_ID=C... docker compose up
-```
+# Build the Docker image
+docker build -t tricklepay-backend .
 
-The API listens on `http://localhost:3000`.
+# Run the container
+docker run -d \
+  --name tricklepay-api \
+  -e DATABASE_URL="postgresql://tricklepay:tricklepay@host.docker.internal:5432/tricklepay" \
+  -e STREAM_CONTRACT_ID="C..." \
+  -p 3000:3000 \
+  tricklepay-backend
+```
 
 ## Failed-event replay
 
@@ -166,6 +264,10 @@ it succeeds, and keeps the retry set bounded so one permanently invalid event
 cannot stall the rest.
 
 ## Contributing
+
+For instructions on setting up your local environment, running required checks (`npm run typecheck`, `npm test`, `npm run build`), and submitting pull requests, see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+For global contributor guidelines across the organization, refer to the shared [TricklePay Documentation Guide](https://github.com/TricklePay/tricklepay-docs).
 
 ### Import ordering
 
