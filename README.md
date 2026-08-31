@@ -20,6 +20,9 @@ For a record of API and indexer behavior changes, see the [Changelog](CHANGELOG.
 - [Database schema](#database-schema)
 - [Glossary](#glossary)
 - [API](#api)
+- [Error Responses](#error-responses)
+- [Health Endpoint Semantics](#health-endpoint-semantics)
+- [Metrics](#metrics)
 - [Running locally](#running-locally)
 - [Testing](#testing)
 - [Configuration](#configuration)
@@ -117,7 +120,20 @@ For complete definitions and supporting terms, see [docs/glossary.md](docs/gloss
 | `GET` | `/health` | Liveness check. Returns 200 with the service version; performs no database read. |
 | `GET` | `/ready` | Readiness check. Verifies database connectivity and reports indexer lag; returns 503 when the database is unavailable. |
 | `GET` | `/status` | Indexer progress against the chain. |
-| `GET` | `/streams` | List streams. Query params: `sender`, `recipient`, `token`, `limit` (max 100), `offset` (max 10000), `includeTotal`, `cancelled`. Address filters accept lowercase and padded spellings and are normalized before matching. `total` is only included when `includeTotal=true`; `cancelled` filters by cancellation status when given, and is omitted to return both. |
+| `GET` | `/streams` | List streams. Query params: `sender`, `recipient`, `token`, `limit`, `offset`, `includeTotal`, `cancelled`, `cursor`. Address filters accept lowercase and padded spellings and are normalized before matching. `total` is only included when `includeTotal=true`; `cancelled` filters by cancellation status when given, and is omitted to return both. |
+
+### Pagination Parameters
+
+The `GET /streams` endpoint supports pagination through the following query parameters:
+
+| Parameter | Type | Default | Maximum | Description |
+|-----------|------|---------|---------|-------------|
+| `limit` | integer | 50 | 100 | Maximum number of streams to return per page |
+| `offset` | integer | 0 | 10,000 | Zero-based index of the first stream to return |
+| `cursor` | string | - | - | Opaque cursor from a previous response for stable pagination |
+| `includeTotal` | boolean | false | - | When `true`, includes the total count of matching streams |
+
+**Note:** When `cursor` is provided, `offset` is ignored and offset ceiling checks are skipped. Use cursor-based pagination for stable results under concurrent inserts.
 | `GET` | `/streams/summary` | Counts and exact amount totals per status (`pending`, `streaming`, `completed`, `cancelled`). |
 | `GET` | `/streams/:id` | A single stream by id. |
 | `GET` | `/metrics` | Prometheus metrics. |
@@ -172,6 +188,153 @@ separate figures, because only the distance between them means anything:
 It is *not* a measure of indexing delay or processing latency. A chain that has produced no new events since the last poll still reports a non-zero lag if the indexer started from an older ledger. Conversely, a freshly started indexer that has caught up to the head will report zero lag even if the poll took several seconds. The figure only changes when either the chain produces a new ledger or the indexer applies an event — it is a positional gap, not a time-based metric.
 
 Both figures are as of the last completed poll — the API never queries the chain — and `updatedAt` says when that was, which is how a stalled indexer, whose lag stops growing, is told apart from one that is genuinely level. `lagLedgers` is null until the first poll has recorded something to measure.
+
+## Error Responses
+
+All error responses follow a consistent JSON shape:
+
+```json
+{
+  "code": "VALIDATION_ERROR",
+  "error": "invalid stream id",
+  "requestId": "req-1"
+}
+```
+
+### Error Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `code` | string | Machine-readable error category |
+| `error` | string | Human-readable error message |
+| `requestId` | string | Request id from `x-request-id` header, for matching to server logs |
+
+### Error Codes
+
+| Code | HTTP Status | Description |
+|------|-------------|-------------|
+| `VALIDATION_ERROR` | 400 | Invalid input parameters or malformed request |
+| `NOT_FOUND` | 404 | Requested resource does not exist |
+| `REQUEST_ERROR` | 400 | General client-side request error |
+| `INTERNAL_SERVER_ERROR` | 500 | Server-side failure (see server logs with requestId) |
+
+### Example Error
+
+```bash
+curl -s http://localhost:3000/streams/invalid | jq
+```
+
+```json
+{
+  "code": "VALIDATION_ERROR",
+  "error": "invalid stream id",
+  "requestId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+}
+```
+
+## Health Endpoint Semantics
+
+The service exposes two health endpoints that answer different questions. Wire them to separate probes in your orchestration platform.
+
+### Liveness — `GET /health`
+
+**What it checks:** Whether the Node.js process is running and responsive.
+
+**What it deliberately does NOT check:**
+- Database connectivity
+- Indexer status
+- Chain connectivity
+- Any external dependency
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "version": "1.0.0"
+}
+```
+
+**Intended use:** This is a **liveness probe**. Use it to detect when the process itself is wedged (e.g., deadlocked, crashed, or otherwise unresponsive). If this endpoint stops responding, your orchestration platform should restart the container. The endpoint performs no I/O — it returns immediately from memory — so it stays green even when the database is unreachable or the chain is down.
+
+### Readiness — `GET /ready`
+
+**What it checks:**
+1. Database connectivity (can reach Postgres)
+2. Indexer lag (how far behind the chain)
+
+**What it does NOT check:**
+- Chain connectivity
+- Whether the indexer is currently running
+
+**Response (healthy):**
+```json
+{
+  "status": "ready",
+  "database": "up",
+  "indexer": {
+    "lagLedgers": 1234
+  }
+}
+```
+
+**Response (unhealthy):**
+```json
+{
+  "status": "not_ready",
+  "database": "down",
+  "error": "Connection refused"
+}
+```
+
+**Intended use:** This is a **readiness probe**. Use it to determine whether the instance should receive traffic. If this returns 503, take the instance out of load-balancer rotation — the process is fine, but a dependency isn't. Do NOT restart the container on a readiness failure; wait for the dependency to recover.
+
+### Why Separate Probes?
+
+| Probe | Fires When | Action |
+|-------|------------|--------|
+| Liveness (`/health`) | Process is unresponsive | Restart container |
+| Readiness (`/ready`) | Database unreachable | Remove from rotation, do not restart |
+
+## Metrics
+
+The service exposes Prometheus metrics at `/metrics`. Scrape this endpoint from a Prometheus instance or a compatible collector (Grafana Alloy, Victoria Metrics, etc.).
+
+### Indexer Metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `tricklepay_indexer_events_applied` | Counter | `kind`, `outcome` | Total contract events applied to the database |
+| `tricklepay_indexer_pages_fetched` | Counter | — | Total event pages fetched from the Soroban RPC |
+| `tricklepay_rpc_errors` | Counter | `operation` | Total Soroban RPC calls that resulted in an error |
+| `tricklepay_indexer_poll_errors` | Counter | — | Total poll iterations that failed with an unhandled error |
+| `tricklepay_indexer_poll_success_total` | Counter | — | Total successful indexer poll iterations |
+| `tricklepay_indexer_events_failed` | Counter | `kind` | Total individual events that failed to apply and were skipped |
+| `tricklepay_indexer_lag_ledgers` | Gauge | — | Gap between the chain's latest ledger and the highest ledger the indexer has applied (-1 before first poll) |
+| `tricklepay_indexer_poll_last_success_timestamp_seconds` | Gauge | — | Unix timestamp of the last successful poll (0 before first success) |
+
+### HTTP Metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `tricklepay_http_requests_total` | Counter | `method`, `route`, `status` | Total HTTP requests handled |
+| `tricklepay_http_request_duration_ms` | Histogram | `method`, `route`, `status` | HTTP request duration in milliseconds (buckets: 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000) |
+
+### Example PromQL Queries
+
+**Poll throughput:**
+```promql
+rate(tricklepay_indexer_poll_success_total[5m])
+```
+
+**Stalled poller alert (no successful poll in 5 minutes):**
+```promql
+tricklepay_indexer_poll_last_success_timestamp_seconds < time() - 300
+```
+
+**HTTP request error rate:**
+```promql
+sum(rate(tricklepay_http_requests_total{status=~"5.."}[5m])) / sum(rate(tricklepay_http_requests_total[5m]))
+```
 
 ## Running locally
 
