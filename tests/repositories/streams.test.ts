@@ -10,9 +10,11 @@ import {
   recordFailedEvent,
 } from "../../src/repositories/failed-events.js";
 import {
+  applyWithdrawal,
   countStreams,
   listStreams,
   type StreamFilter,
+  type WithdrawalInput,
 } from "../../src/repositories/streams.js";
 
 type StreamRow = Stream & {
@@ -216,3 +218,52 @@ describe("streams repository token filter", () => {
     expect(where.cancelled).toBe(true);
   });
 });
+
+describe("applyWithdrawal", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("increases the stored withdrawn amount by the event amount when applying withdrawals in sequence", async () => {
+    let storedWithdrawn = new Prisma.Decimal(0);
+
+    const updateManySpy = vi.spyOn(prisma.stream, "updateMany").mockImplementation(async (args: any) => {
+      const inc = args.data?.withdrawn?.increment;
+      if (inc) {
+        storedWithdrawn = storedWithdrawn.plus(inc);
+      }
+      return { count: 1 };
+    });
+
+    const withdrawal1: WithdrawalInput = {
+      streamId: 42n,
+      amount: 2500n,
+      ledger: 100,
+      eventId: "000000000100-0000000001",
+    };
+
+    const withdrawal2: WithdrawalInput = {
+      streamId: 42n,
+      amount: 1500n,
+      ledger: 105,
+      eventId: "000000000105-0000000001",
+    };
+
+    const res1 = await applyWithdrawal(withdrawal1);
+    expect(res1).toBe("applied");
+    expect(storedWithdrawn.toString()).toBe("2500");
+
+    const res2 = await applyWithdrawal(withdrawal2);
+    expect(res2).toBe("applied");
+    expect(storedWithdrawn.toString()).toBe("4000");
+
+    expect(updateManySpy).toHaveBeenCalledTimes(2);
+
+    const call1Data = updateManySpy.mock.calls[0][0].data as Prisma.StreamUpdateManyMutationInput;
+    expect(call1Data.withdrawn).toEqual({ increment: new Prisma.Decimal("2500") });
+
+    const call2Data = updateManySpy.mock.calls[1][0].data as Prisma.StreamUpdateManyMutationInput;
+    expect(call2Data.withdrawn).toEqual({ increment: new Prisma.Decimal("1500") });
+  });
+});
+
