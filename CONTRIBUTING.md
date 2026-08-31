@@ -107,3 +107,10 @@ Separate each group with a single blank line.
 ## Shared Guidelines
 
 For broader guidelines on contract interaction, network configurations, and security practices across all TricklePay repositories, visit the [TricklePay Shared Docs](https://github.com/TricklePay/tricklepay-docs).
+
+---
+
+## Code of Conduct
+
+Please note that this project adheres to a [Code of Conduct](CODE_OF_CONDUCT.md). By participating in this project, you agree to abide by its terms.
+

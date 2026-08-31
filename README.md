@@ -976,6 +976,13 @@ AssertionError: expected ... to equal ...
 - **tricklepay-frontend** — web client built on this API.
 - **tricklepay-docs** — architecture, security model, and contributor guides.
 
+## Contributing
+
+Contributions are welcome! Please review [CONTRIBUTING.md](CONTRIBUTING.md) for setup and development guidelines.
+
+All contributors are expected to adhere to the project's [Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
