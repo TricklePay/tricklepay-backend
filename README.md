@@ -424,6 +424,57 @@ docker run -d \
   tricklepay-backend
 ```
 
+## Failed events table
+
+The `FailedEvent` table is the indexer's operator-facing safety net. When an
+individual event cannot be decoded or applied, the poller records a row so the
+rest of the page can continue without stopping indexing. Each row stores:
+
+- `eventId`: the Soroban RPC `TOID-index` that uniquely identifies the event
+- `kind`: the decoded event kind, or `"unknown"` if decoding failed first
+- `streamId`: the target stream, when available, encoded as a string
+- `ledger`: the ledger in which the event was observed
+- `error`: the most recent exception text from the failed attempt
+- `failureCount`: how many times this event has failed
+- `firstFailedAt` / `lastFailedAt`: timestamps for the first and latest failure
+
+The row is upserted on each failure, so repeated attempts refresh the error and
+increment `failureCount` without creating duplicate rows. A successful replay or a
+subsequent clean apply clears the record.
+
+### Inspecting failed events
+
+You can inspect the table directly with PostgreSQL or by using the built-in
+replay command as a dry run:
+
+```bash
+# see the oldest unresolved failures first
+psql "$DATABASE_URL" -c 'SELECT "eventId", "kind", "streamId", "ledger", "failureCount", "error" FROM "FailedEvent" ORDER BY "ledger" ASC LIMIT 20;'
+
+# count unresolved failures
+psql "$DATABASE_URL" -c 'SELECT COUNT(*) FROM "FailedEvent";'
+
+# preview the next 20 failed rows without changing state
+npm run replay-failed-events -- --dry-run --limit 20
+```
+
+The SQL view is useful when you need to trace the exact failed event, ledger,
+and exception text. The replay command is useful when you want a bounded retry
+without waiting for a full poller sweep.
+
+### Cursor behavior on a failed event
+
+When a single event fails, the indexer does not stop the page or rewind the
+cursor. It logs the error, records the failed row, and continues processing the
+remaining events in the same page. The cursor is saved only after the page is
+finished and `saveIndexerPosition` runs, so the next poll resumes from the page's
+cursor rather than from the bad event itself.
+
+`lastLedger` is advanced only after a successful apply, which means a failed
+event never counts as processed. In other words, one bad event is skipped, the
+cursor still advances past that page, and the indexer continues without being
+left stranded behind a single invalid record.
+
 ## Failed-event replay
 
 Failed events are stored in the database with their event id, ledger, kind, and

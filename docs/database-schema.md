@@ -70,6 +70,27 @@ Records contract events that the indexer failed to process or apply to PostgreSQ
 * **Indexes**:
   * `[ledger]` - Querying failed events by block height.
 
+#### What gets recorded on a failed apply
+
+A failed event is written as a single `FailedEvent` row as soon as the poller catches an exception while decoding or applying the event. The row includes the event identifier, ledger, decoded kind, stream id when it could be recovered, and the most recent failure message. If the same event fails again, the row is updated in place to increment `failureCount` and refresh `error`, rather than creating a duplicate record. When the event later applies successfully, the replay flow clears the row.
+
+#### How to inspect failed events
+
+```sql
+SELECT "eventId", "kind", "streamId", "ledger", "failureCount", "error"
+FROM "FailedEvent"
+ORDER BY "ledger" ASC, "eventId" ASC
+LIMIT 20;
+
+SELECT COUNT(*) FROM "FailedEvent";
+```
+
+This shows the oldest unresolved events first, along with the last error message for each row. Operators can pair this with `npm run replay-failed-events -- --dry-run --limit 20` to preview the next retry batch before mutating state.
+
+#### What happens to the cursor when an event fails
+
+The indexer does not rewind the cursor when a single event fails. It catches the error, records the failed row, and moves on to the next event in the same page. The cursor is only persisted after the page completes and `saveIndexerPosition` runs, so the next poll resumes from the advanced page cursor instead of replaying the bad event. `lastLedger` also advances only after a successful apply, which means a failed event is skipped rather than counted as processed.
+
 ---
 
 ### 4. `IndexerState`
