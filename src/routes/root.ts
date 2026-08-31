@@ -1,3 +1,6 @@
+// Registers the GET / endpoint.
+// This route returns a static API index and does not read from the database.
+
 import type { FastifyInstance } from "fastify";
 
 import type { Config } from "../config.js";
