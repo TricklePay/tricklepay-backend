@@ -90,7 +90,20 @@ chain round-trip.
 | `GET` | `/health` | Liveness check. Returns 200 with the service version; performs no database read. |
 | `GET` | `/ready` | Readiness check. Verifies database connectivity and reports indexer lag; returns 503 when the database is unavailable. |
 | `GET` | `/status` | Indexer progress against the chain. |
-| `GET` | `/streams` | List streams. Query params: `sender`, `recipient`, `token`, `limit` (max 100), `offset` (max 10000), `includeTotal`, `cancelled`. Address filters accept lowercase and padded spellings and are normalized before matching. `total` is only included when `includeTotal=true`; `cancelled` filters by cancellation status when given, and is omitted to return both. |
+| `GET` | `/streams` | List streams. Query params: `sender`, `recipient`, `token`, `limit`, `offset`, `includeTotal`, `cancelled`, `cursor`. Address filters accept lowercase and padded spellings and are normalized before matching. `total` is only included when `includeTotal=true`; `cancelled` filters by cancellation status when given, and is omitted to return both. |
+
+### Pagination Parameters
+
+The `GET /streams` endpoint supports pagination through the following query parameters:
+
+| Parameter | Type | Default | Maximum | Description |
+|-----------|------|---------|---------|-------------|
+| `limit` | integer | 50 | 100 | Maximum number of streams to return per page |
+| `offset` | integer | 0 | 10,000 | Zero-based index of the first stream to return |
+| `cursor` | string | - | - | Opaque cursor from a previous response for stable pagination |
+| `includeTotal` | boolean | false | - | When `true`, includes the total count of matching streams |
+
+**Note:** When `cursor` is provided, `offset` is ignored and offset ceiling checks are skipped. Use cursor-based pagination for stable results under concurrent inserts.
 | `GET` | `/streams/summary` | Counts and exact amount totals per status (`pending`, `streaming`, `completed`, `cancelled`). |
 | `GET` | `/streams/:id` | A single stream by id. |
 | `GET` | `/metrics` | Prometheus metrics. |
