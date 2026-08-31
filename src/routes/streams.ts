@@ -1,3 +1,6 @@
+// Registers the GET /streams, GET /streams/summary, GET /streams/:id/events, and GET /streams/:id endpoints.
+// These routes read stream records, historical events, and aggregations from the database.
+
 import { Prisma, type Stream } from "@prisma/client";
 
 import { StrKey } from "@stellar/stellar-sdk";

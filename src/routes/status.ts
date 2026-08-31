@@ -1,3 +1,6 @@
+// Registers the GET /status endpoint.
+// This route reads the latest indexer position and error counts from the database.
+
 import type { FastifyInstance } from "fastify";
 
 import { countFailedEvents } from "../repositories/failed-events.js";

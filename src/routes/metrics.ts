@@ -1,3 +1,6 @@
+// Registers the GET /metrics endpoint.
+// This route serves in-memory Prometheus metrics and does not read from the database.
+
 import type { FastifyInstance } from "fastify";
 
 import { renderMetrics } from "../metrics.js";
