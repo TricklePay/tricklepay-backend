@@ -116,16 +116,32 @@ separate figures, because only the distance between them means anything:
     "updatedAt": "2025-11-14T03:00:00.000Z"
   },
   "chain": { "latestLedger": 56999999 },
-  "lagLedgers": 709986
+  "lagLedgers": 709986,
+  "failedEventCount": 0
 }
 ```
 
-`indexer.lastLedger` is the highest ledger whose events have been applied, so a
-backfill reads as behind for as long as it is behind. Both figures are as of the
-last completed poll — the API never queries the chain — and `updatedAt` says
-when that was, which is how a stalled indexer, whose lag stops growing, is told
-apart from one that is genuinely level. `lagLedgers` is null until the first
-poll has recorded something to measure.
+**Field reference**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `indexer.initialized` | boolean | `true` once the indexer has completed its first poll and recorded a position. `false` before that — the API returns zeros for the other fields in this state. |
+| `indexer.lastLedger` | number | Highest ledger sequence whose events have been fully applied to the database. Only advances when an event is actually written; a poll that finds no events leaves it unchanged. |
+| `indexer.cursor` | string \| null | Opaque Soroban RPC paging token. The indexer resumes from this token on the next poll. Advances on every poll — including empty ones — so it must not be compared to the chain head to derive lag. `null` before the first poll. |
+| `indexer.updatedAt` | string \| null | ISO-8601 timestamp of when the position was last written. A lag that stops growing combined with a stale `updatedAt` indicates a stalled indexer; a growing `updatedAt` with a steady lag indicates a caught-up indexer on a quiet chain. `null` before the first poll. |
+| `chain.latestLedger` | number | The chain's head ledger as of the indexer's last completed poll. The API never queries the chain directly — this value is read from Postgres, where the poller stored it. |
+| `lagLedgers` | number \| null | `chain.latestLedger - indexer.lastLedger`. The number of ledgers between the chain head and the indexer's position. `null` before the first poll. Never negative. |
+| `failedEventCount` | number | Count of contract events that could not be applied and remain in the `FailedEvent` table. A non-zero value signals events that need operator attention or replay (see [Failed-event replay](#failed-event-replay)). |
+
+**What `lagLedgers` is**
+
+`lagLedgers` is the *gap since the last processed event* — the distance between the chain's head and the highest ledger the indexer actually applied. It tells you how far the indexer's mirror is behind the chain as of the last poll.
+
+**What `lagLedgers` is not**
+
+It is *not* a measure of indexing delay or processing latency. A chain that has produced no new events since the last poll still reports a non-zero lag if the indexer started from an older ledger. Conversely, a freshly started indexer that has caught up to the head will report zero lag even if the poll took several seconds. The figure only changes when either the chain produces a new ledger or the indexer applies an event — it is a positional gap, not a time-based metric.
+
+Both figures are as of the last completed poll — the API never queries the chain — and `updatedAt` says when that was, which is how a stalled indexer, whose lag stops growing, is told apart from one that is genuinely level. `lagLedgers` is null until the first poll has recorded something to measure.
 
 ## Running locally
 
