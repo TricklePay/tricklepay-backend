@@ -17,13 +17,21 @@ model Stream {
   sender        String
   recipient     String
   token         String
+  // Stored in smallest token denomination (e.g. stroops/base units, up to uint128).
+  // Originates from on-chain `created` event or `get_stream`; frozen to vested amount if cancelled.
   totalAmount   Decimal  @db.Decimal(40, 0)
+  // Cumulative amount withdrawn by recipient in smallest token units (e.g. stroops/base units).
   withdrawn     Decimal  @default(0) @db.Decimal(40, 0)
+  // Stream start time as a Unix timestamp in seconds (from contract start_time).
   startTime     BigInt
+  // Stream scheduled end time as a Unix timestamp in seconds; frozen to cancellation timestamp if cancelled.
   endTime       BigInt
+  // Vesting cliff as a Unix timestamp in seconds, before which no tokens can be withdrawn.
   cliffTime     BigInt
   cancelled     Boolean  @default(false)
+  // Ledger sequence number in which the stream was created on-chain.
   createdLedger Int
+  // Ledger sequence number of the most recent on-chain event applied to this row.
   updatedLedger Int
   // Id of the last event applied to this row, in the RPC's `TOID-index` form.
   // Ledger alone is too coarse to tell two events in one ledger apart, so this
@@ -38,22 +46,38 @@ model Stream {
   @@index([token, streamId(sort: Desc)])
 }
 
+// Append-only audit log of all decoded contract events (created, withdrawn, cancelled)
+// emitted by the stream smart contract. Captures the full event payload alongside ledger
+// sequence numbers and transaction hashes for historical tracking and incident review.
 model IndexedEvent {
+  // The RPC's `TOID-index` event id, unique per event on chain and ordered chronologically.
   eventId         String   @id
+  // Event kind: "created", "withdrawn", or "cancelled".
   kind            String
+  // Stream id as a string to avoid bigint serialization dependencies.
   streamId        String
+  // Ledger sequence number in which the transaction emitting this event was closed.
   ledger          Int
+  // Hex-encoded transaction hash containing the contract invocation.
   txHash          String
   sender          String?
   recipient       String?
   token           String?
+  // Initial stream deposit amount in smallest token units (e.g. stroops/base units); present on `created` events.
   totalAmount     Decimal? @db.Decimal(40, 0)
+  // Amount withdrawn in smallest token units (e.g. stroops/base units); present on `withdrawn` events.
   amount          Decimal? @db.Decimal(40, 0)
+  // Vested unwithdrawn balance paid to recipient upon cancellation in smallest token units; present on `cancelled` events.
   recipientAmount Decimal? @db.Decimal(40, 0)
+  // Unvested deposit refunded to sender upon cancellation in smallest token units; present on `cancelled` events.
   senderRefund    Decimal? @db.Decimal(40, 0)
+  // Stream start time as a Unix timestamp in seconds; present on `created` events.
   startTime       BigInt?
+  // Stream end time as a Unix timestamp in seconds; present on `created` events.
   endTime         BigInt?
+  // Stream cliff time as a Unix timestamp in seconds; present on `created` events.
   cliffTime       BigInt?
+  // Ledger close time as a Unix timestamp in seconds when the event was emitted on-chain.
   closedAt        BigInt?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
@@ -75,6 +99,7 @@ model FailedEvent {
   // Stream id, as a string so the model carries no dependency on bigint
   // serialisation. Null when the event could not be decoded at all.
   streamId      String?
+  // Ledger sequence number in which the failed event occurred on-chain.
   ledger        Int
   // Most recent error message.
   error         String
@@ -90,6 +115,7 @@ model FailedEvent {
 // the chain had got when it last looked, and the RPC paging cursor to resume
 // from. Keyed by a fixed string so there is exactly one row per indexed stream.
 model IndexerState {
+  // Fixed singleton identifier ("stream") ensuring exactly one row of indexer bookkeeping.
   id          String   @id
   // The indexer's own position: the highest ledger whose events it has applied.
   // During a backfill this sits well behind the chain, which is the point of
@@ -99,6 +125,7 @@ model IndexerState {
   // between the two rather than something an operator has to ask the network
   // for. Stale if the indexer has stopped, which `updatedAt` reveals.
   chainLedger Int      @default(0)
+  // Opaque RPC paging cursor (in `TOID-index` format) to resume fetching events from.
   cursor      String?
   updatedAt   DateTime @updatedAt
 }
