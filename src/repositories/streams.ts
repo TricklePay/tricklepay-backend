@@ -1,3 +1,13 @@
+// Repository module for stream records and payment stream state.
+//
+// Manages database persistence, lifecycle transitions (creation, withdrawals,
+// and cancellations), state reconciliation, and querying (lookups, filtered
+// listings, aggregations, and cursor pagination) for stream entities.
+//
+// Direct database access is confined to this repository layer: all queries and
+// mutations against the streams table in PostgreSQL must flow through these
+// functions rather than calling the database client directly.
+
 import { Prisma, type Stream } from "@prisma/client";
 
 import { prisma } from "../db.js";

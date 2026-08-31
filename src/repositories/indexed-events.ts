@@ -1,3 +1,13 @@
+// Repository module for indexed contract event history and audit trails.
+//
+// Manages database persistence and querying of historical stream events,
+// providing access to event timelines, decoded parameters, and ledger metadata
+// for auditing and stream history inspection.
+//
+// Direct database access is confined to this repository layer: all reads and
+// writes to the indexed_events table in PostgreSQL must flow through these
+// functions rather than calling the database client directly.
+
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../db.js";
 
