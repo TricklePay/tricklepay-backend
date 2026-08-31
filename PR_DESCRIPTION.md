@@ -2,66 +2,39 @@
 
 ## Summary
 
-This change documents the `FailedEvent` table and the workflow operators use to inspect and retry unresolved events without halting indexer progress.
+This PR updates the project documentation to describe the `FailedEvent` table, how operators can inspect unresolved failed events, and how the indexer continues processing when one event fails.
 
-## What was implemented
+## Files updated
 
-- Added a dedicated `Failed events table` section to the project README.
-- Documented the exact data recorded when an event fails to apply:
-  - `eventId`
-  - `kind`
-  - `streamId`
-  - `ledger`
-  - `error`
-  - `failureCount`
-  - `firstFailedAt` and `lastFailedAt`
-- Added examples for inspecting failed rows in PostgreSQL.
-- Added guidance for using the built-in replay command to check the next batch without mutating state.
-- Clarified the indexer cursor behavior when an event fails: the cursor is advanced past the page, and `lastLedger` only moves after a successful apply.
-- Expanded the database-schema reference to explain what is written to `FailedEvent`, how to query it, and why the cursor is not rewound on a failed event.
+- [README.md](README.md)
+- [docs/database-schema.md](docs/database-schema.md)
 
-## Why this matters
+## What was documented
 
-The indexer is designed to skip bad events instead of stalling indexing. That behavior is only operationally useful if operators know the table exists, what is stored there, and how to query it.
+- What data is stored for a failed event in `FailedEvent`
+- How to inspect the table via SQL queries
+- How to preview failed-event retries using the replay CLI command
+- The cursor behavior when an event fails: the page continues and the cursor is not rewound to the failing event
+- The fact that `lastLedger` only advances after a successful apply
 
-## Verification status
+## Verification performed
 
-Important: the repository currently has existing TypeScript errors unrelated to this documentation-only patch. The latest verification command was:
+I ran the following commands in the repository:
 
 ```bash
+npm install --no-fund --no-audit
 npm run typecheck
+npm test
 ```
 
-and it failed with these issues:
+## Actual results
 
-- `src/indexer/poller.ts`: exported members `indexedEventFromDecoded` and `recordIndexedEvent` are missing
-- `src/routes/streams.ts`: bigint argument mismatch in `getStream(streamId)`
+- `npm install --no-fund --no-audit` completed successfully.
+- `npm run typecheck` failed with 3 TypeScript errors in the current repository state:
+  - `src/indexer/poller.ts` — missing exported members `indexedEventFromDecoded` and `recordIndexedEvent`
+  - `src/routes/streams.ts` — bigint mismatch in `getStream(streamId)`
+- `npm test` failed with 10 failing tests and 314 passing tests in the current repository state.
 
-Those issues predate the documentation change and still need to be resolved before the repo is green.
+## Notes
 
-## Suggested PR title
-
-`docs: document the failed events table`
-
-## Suggested PR body
-
-### Summary
-
-Document the `FailedEvent` table and how operators can inspect and retry failed events.
-
-### Changes
-
-- Added `FailedEvent` table documentation in the main README
-- Added inspection queries and dry-run replay examples
-- Explained the cursor behavior on failed event application
-- Expanded the schema docs to cover persisted failure metadata
-
-### Acceptance criteria
-
-- The documentation explains what is recorded when an event fails to apply.
-- It shows how to inspect the failed events.
-- It states what happens to the indexer cursor when an event fails.
-
-### Notes
-
-The repository currently does not pass `npm run typecheck` because of existing TypeScript errors unrelated to the documentation patch.
+This PR is documentation-only and reflects the verified repository state at the time of writing. It does not claim the repository is fully green; the validation output above is the actual result from the commands run here.
