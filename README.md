@@ -502,17 +502,25 @@ projects and may produce unexpected results.
 ## Configuration
 
 All configuration is read from the environment; `.env.example` is the complete,
-current template — copy it and fill in the required values. The only required
-variables are `DATABASE_URL` and `STREAM_CONTRACT_ID`.
+current template — copy it and fill in the required values.
 
-Everything else is optional, and the template lists each with its default:
-the network defaults to testnet, the RPC URL to the public endpoint for the
-selected network (`SOROBAN_RPC_URL` to override), the server listens on
-`PORT`/`HOST`, and `CORS_ORIGIN` pins which browser origin may call the API.
-`LOG_LEVEL` sets log verbosity, `BODY_LIMIT` and `QUERY_STRING_LIMIT` bound
-request sizes. The indexer polls every `INDEXER_POLL_INTERVAL_MS` (minimum
-1000) starting from `INDEXER_START_LEDGER` — zero means start at the chain's
-latest ledger rather than replaying history. On repeated RPC failures the retry delay doubles each time up to `INDEXER_BACKOFF_MAX_MS` (default 60000), then resets to the normal interval after a successful poll, so a struggling endpoint is not hammered on a fixed schedule. `INDEXER_MAX_PAGES_PER_TICK` (default 1000) caps how many event pages one poll fetches, so a deep backlog is spread across ticks; the cursor is saved after each page so progress is kept.
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `DATABASE_URL` | **Yes** | - | Postgres connection string. |
+| `STREAM_CONTRACT_ID` | **Yes** | - | Deployed Soroban contract address. |
+| `NETWORK` | No | `testnet` | Stellar network (`testnet` or `mainnet`). |
+| `SOROBAN_RPC_URL` | No | *network dependent* | Soroban RPC endpoint. Defaults to the public endpoint for the selected network. |
+| `PORT` | No | `3000` | HTTP server listen port. |
+| `HOST` | No | `0.0.0.0` | HTTP server bind address. |
+| `CORS_ORIGIN` | No | - | Allowed browser origin for the web client. |
+| `LOG_LEVEL` | No | `info` | Log verbosity (`trace`, `debug`, `info`, `warn`, `error`, `fatal`). |
+| `BODY_LIMIT` | No | `1048576` | Largest accepted request body in bytes. |
+| `QUERY_STRING_LIMIT` | No | `2048` | Longest accepted URL query string in bytes. |
+| `TRUSTED_PROXIES` | No | - | Comma-separated list of trusted reverse-proxy addresses. |
+| `INDEXER_POLL_INTERVAL_MS` | No | `5000` | Milliseconds between polls of the chain. |
+| `INDEXER_BACKOFF_MAX_MS` | No | `60000` | Maximum poll retry delay (ms) on RPC failures. |
+| `INDEXER_START_LEDGER` | No | `0` | Ledger to begin indexing from. `0` starts at the chain's latest ledger. |
+| `INDEXER_MAX_PAGES_PER_TICK` | No | `1000` | Maximum number of event pages fetched per poll tick. |
 
 ### Logging
 
