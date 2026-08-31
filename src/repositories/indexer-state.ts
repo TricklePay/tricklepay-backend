@@ -1,3 +1,13 @@
+// Repository module for indexer checkpoint and synchronization state.
+//
+// Manages database persistence and retrieval of the indexer's sync progress,
+// tracking the last processed ledger, chain head ledger, RPC resumption
+// cursor, and update timestamp for the contract stream tracker.
+//
+// Direct database access is confined to this repository layer: all reads and
+// writes to the indexer_state table in PostgreSQL must flow through these
+// functions rather than calling the database client directly.
+
 import { prisma } from "../db.js";
 
 // Fixed key for the single indexer-state row. There is one indexed contract, so

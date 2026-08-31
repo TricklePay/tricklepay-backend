@@ -1,3 +1,14 @@
+// Repository module for failed event records and indexing error tracking.
+//
+// Manages database persistence and queries for contract events that failed to
+// decode or apply during indexing. Tracks failure counts, error details, and
+// resolution status so operators and replay tooling can diagnose and retry stuck
+// events.
+//
+// Direct database access is confined to this repository layer: all queries and
+// mutations against the failed_events table in PostgreSQL must flow through
+// these functions rather than calling the database client directly.
+
 import type { Prisma } from "@prisma/client";
 
 import type { StreamEvent } from "../chain/events.js";
