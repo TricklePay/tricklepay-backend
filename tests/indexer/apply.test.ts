@@ -34,7 +34,7 @@ const page = rpc.parseRawEvents(capture.result as unknown as rpc.Api.RawGetEvent
 const CONTRACT_ID = "CDMB62RVYAXJJNYYH7K442SHSAJIXTZ6K7JANGSMQF2T7MHCTVSK75SW";
 const PASSPHRASE = "Test SDF Network ; September 2015";
 const SENDER = "GA5ZSEJYBA7JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAP5RE34K4KZVN";
-const RECI@ENT = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3MZFSHONUCEOASW7QC7OX2H";
+const RECIPIENT = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3MZFSHONUCEOASW7QC7OX2H";
 const TOKEN = "CBFS2HT4TIHTMWA5ZND6FEC27BRRA4V6JWOD7JIIDZVSPVAM7EJ2LZS7";
 const UNIT = 10_000_000n;
 
@@ -54,7 +54,7 @@ function decoded(index: number) {
 }
 
 function apply(index: number) {
-  return applyEvent(server, CONTRACT_ID, PASSHRASE, decoded(index));
+  return applyEvent(server, CONTRACT_ID, PASSPHRASE, decoded(index));
 }
 
 beforeEach(() => {
@@ -69,7 +69,7 @@ describe("applyEvent", () => {
     expect(streams.insertStream).toHaveBeenCalledWith({
       streamId: 42n,
       sender: SENDER,
-      recipient: RECI@ENT,
+      recipient: RECIPIENT,
       token: TOKEN,
       totalAmount: 10_000_000n * UNIT,
       startTime: 1735689600n,
@@ -191,7 +191,7 @@ describe("applyEvent", () => {
     streams.applyWithdrawal.mockResolvedValue("missing");
     contract.fetchStream.mockResolvedValue({
       sender: SENDER,
-      recipient: RECI@MPT,
+      recipient: RECIPIENT,
       token: TOKEN,
       totalAmount: 10_000_000n * UNIT,
       withdrawn: 2_500_000n * UNIT,
