@@ -1,3 +1,20 @@
+// Registry design notes:
+//
+// Metrics are registered by constructing one of the exported Counter, Gauge,
+// or Histogram classes; each constructor registers a collector in the shared
+// registry. `renderMetrics()` renders every collector in registration order,
+// producing Prometheus text exposition format. A metric with no observed
+// samples still emits a zero line so it appears in the output.
+//
+// Label sets are keyed by their rendered `{k="v",...}` suffix string rather
+// than by object identity, and key order is preserved; callers should pass
+// labels in a consistent order for each metric.
+//
+// New metric names should be snake_case, start with `tricklepay_`, include a
+// subsystem segment (indexer/rpc/http), and describe the unit or event.
+// Counter sample names carry a `_total` suffix; the serializer adds it when
+// the registered counter name does not already end in `_total`.
+//
 // Minimal Prometheus exposition-format implementation. The project uses no
 // metrics library to keep the dependency surface small; the Prometheus text
 // format is simple enough that a single file covers everything needed.
