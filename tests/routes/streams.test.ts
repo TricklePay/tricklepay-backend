@@ -2,7 +2,7 @@ import Fastify from "fastify";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Tests for stream route cache-control headers and ETag support.
+// Tests for stream routes: caching, filtering, pagination, ordering, and validation.
 
 const streamsRepo = vi.hoisted(() => ({
   getStream: vi.fn(),
