@@ -33,6 +33,15 @@ async function getRoot() {
 }
 
 describe("GET /", () => {
+  it("returns 200 with application/json content type", async () => {
+    const app = Fastify();
+    await app.register(rootRoutes(mockConfig));
+    const response = await app.inject({ method: "GET", url: "/" });
+    await app.close();
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["content-type"]).toContain("application/json");
+  });
+
   it("includes the network name in the response", async () => {
     const { statusCode, body } = await getRoot();
     expect(statusCode).toBe(200);

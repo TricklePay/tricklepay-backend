@@ -2,7 +2,7 @@ import Fastify from "fastify";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Tests for stream route cache-control headers and ETag support.
+// Tests for stream routes: caching, filtering, pagination, ordering, and validation.
 
 const streamsRepo = vi.hoisted(() => ({
   getStream: vi.fn(),
@@ -369,6 +369,44 @@ describe("GET /streams offset ceiling", () => {
     expect(response.statusCode).toBe(200);
     expect(streamsRepo.listStreams).toHaveBeenCalledWith(
       expect.objectContaining({ limit: 10, offset: 20 }),
+    );
+  });
+});
+
+describe("GET /streams invalid offset (#134)", () => {
+  it("treats a non-numeric offset as zero", async () => {
+    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
+    const response = await listRequest("/streams?offset=abc");
+    expect(response.statusCode).toBe(200);
+    expect(streamsRepo.listStreams).toHaveBeenCalledWith(
+      expect.objectContaining({ offset: 0 }),
+    );
+  });
+
+  it("treats a negative offset as zero", async () => {
+    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
+    const response = await listRequest("/streams?offset=-5");
+    expect(response.statusCode).toBe(200);
+    expect(streamsRepo.listStreams).toHaveBeenCalledWith(
+      expect.objectContaining({ offset: 0 }),
+    );
+  });
+
+  it("treats an empty string offset as zero", async () => {
+    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
+    const response = await listRequest("/streams?offset=");
+    expect(response.statusCode).toBe(200);
+    expect(streamsRepo.listStreams).toHaveBeenCalledWith(
+      expect.objectContaining({ offset: 0 }),
+    );
+  });
+
+  it("treats a floating-point offset as truncated integer", async () => {
+    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
+    const response = await listRequest("/streams?offset=3.7");
+    expect(response.statusCode).toBe(200);
+    expect(streamsRepo.listStreams).toHaveBeenCalledWith(
+      expect.objectContaining({ offset: 3 }),
     );
   });
 });
