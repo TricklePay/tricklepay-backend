@@ -133,6 +133,16 @@ describe("Poller", () => {
     expect(saved.lastLedger).toBeLessThan(LAST_UNKNOWN);
   });
 
+  it("ignores unknown event kinds without recording a failure", async () => {
+    chain.getContractEvents.mockResolvedValue(pageOf(captured.events.slice(4)));
+
+    await pollOnce({ startLedger: 56000000 });
+
+    expect(indexerState.saveIndexerPosition).toHaveBeenCalled();
+    expect(failedEvents.recordFailedEvent).not.toHaveBeenCalled();
+    expect(indexer.applyEvent).not.toHaveBeenCalled();
+  });
+
   it("leaves its position alone when a page brings no events", async () => {
     // A quiet contract must not look like progress, and must not look like a
     // reset either: only the chain's head moves.
