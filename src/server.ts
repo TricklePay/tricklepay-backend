@@ -22,6 +22,8 @@ import { httpRequestDuration, httpRequestsTotal } from "./metrics.js";
 
 import { isTrustedProxyAddress, parseTrustedProxies } from "./proxy.js";
 
+import { REQUEST_ID_HEADER, sanitizeRequestId } from "./request-id.js";
+
 import { getIndexerPosition } from "./repositories/indexer-state.js";
 
 import {
@@ -34,26 +36,8 @@ import {
 
 import { serviceVersion } from "./version.js";
 
-// ---------------------------------------------------------------------------
-// Request ids.
-//
-// Every request gets an id that appears as the `reqId` field in Fastify's
-// structured request logs and is echoed back in the `x-request-id` response
-// header and error bodies, so a client report can be matched to its log lines.
-// A caller may supply its own id through `x-request-id`, but arbitrary header
-// values are not trusted: an id is forwarded only when it is short and made of
-// safe characters; anything else (or nothing) yields a fresh UUID.
-// ---------------------------------------------------------------------------
-export const REQUEST_ID_HEADER = "x-request-id";
-
-const MAX_REQUEST_ID_LENGTH = 64;
-const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-
-function sanitizeRequestId(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  if (value.length > MAX_REQUEST_ID_LENGTH) return undefined;
-  return REQUEST_ID_PATTERN.test(value) ? value : undefined;
-}
+// Request id forwarding/validation lives in `./request-id.ts` so the rules are
+// testable on their own. `genReqId` below uses it to derive the per-request id.
 
 // ---------------------------------------------------------------------------
 // Error redaction (#74).

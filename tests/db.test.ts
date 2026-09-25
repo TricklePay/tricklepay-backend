@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { checkHealth, prisma } from "../src/db.js";
+import { checkHealth, disconnect, prisma } from "../src/db.js";
 
 describe("checkHealth", () => {
   beforeEach(() => {
@@ -42,5 +42,19 @@ describe("checkHealth", () => {
     const result = await checkHealth();
     
     expect(result).toEqual({ status: "down", error: "database unavailable" });
+  });
+});
+
+describe("disconnect", () => {
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it("closes the shared prisma connection pool", async () => {
+    const spy = vi.spyOn(prisma, "$disconnect").mockResolvedValueOnce(undefined);
+
+    await disconnect();
+
+    expect(spy).toHaveBeenCalledTimes(1);
   });
 });
