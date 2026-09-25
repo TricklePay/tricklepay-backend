@@ -39,3 +39,31 @@ export async function listIndexedEvents(streamId: bigint): Promise<IndexedEventR
   });
   return rows as IndexedEventRecord[];
 }
+
+import type { StreamEvent } from "../chain/events.js";
+
+export function indexedEventFromDecoded(event: StreamEvent): IndexedEventRecord {
+  return {
+    eventId: event.id,
+    kind: event.kind,
+    streamId: event.streamId.toString(),
+    ledger: event.ledger,
+    txHash: event.txHash,
+    sender: "sender" in event ? event.sender : null,
+    recipient: "recipient" in event ? event.recipient : null,
+    token: "token" in event ? event.token : null,
+    totalAmount: "totalAmount" in event ? event.totalAmount as any : null,
+    amount: "amount" in event ? event.amount as any : null,
+    recipientAmount: "recipientAmount" in event ? event.recipientAmount as any : null,
+    senderRefund: "senderRefund" in event ? event.senderRefund as any : null,
+    startTime: "startTime" in event ? event.startTime : null,
+    endTime: "endTime" in event ? event.endTime : null,
+    cliffTime: "cliffTime" in event ? event.cliffTime : null,
+    closedAt: event.closedAt,
+  };
+}
+
+export async function recordIndexedEvent(record: IndexedEventRecord, tx?: any): Promise<void> {
+  const db = tx ?? prisma;
+  await (db as any).indexedEvent.createMany({ data: record, skipDuplicates: true });
+}

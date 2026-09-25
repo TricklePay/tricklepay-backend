@@ -212,7 +212,7 @@ describe("stream listing default ordering", () => {
       limit: 10,
       offset: 0,
     });
-    const ids = result
+    const ids = result.streams
       .filter((s) => s.streamId >= ORDERING_ID_BASE)
       .map((s) => s.streamId);
     expect(ids).toEqual([
@@ -229,9 +229,9 @@ describe("stream listing default ordering", () => {
       sender: SENDERA,
       limit: 10,
     });
-    const ids = result.map((s) => s.streamId);
+    const ids = result.streams.map((s) => s.streamId);
     expect(ids).toEqual([ORDERING_ID_BASE + 2n, ORDERING_ID_BASE + 0n]);
-    for (const s of result) expect(s.sender).toBe(SENDERA);
+    for (const s of result.streams) expect(s.sender).toBe(SENDERA);
   });
 
   it("recipient-filtered queries order by recipient asc then streamId desc", async () => {
@@ -240,9 +240,9 @@ describe("stream listing default ordering", () => {
       recipient: RECIPIENTA,
       limit: 10,
     });
-    const ids = result.map((s) => s.streamId);
+    const ids = result.streams.map((s) => s.streamId);
     expect(ids).toEqual([ORDERING_ID_BASE + 2n, ORDERING_ID_BASE + 1n]);
-    for (const s of result) expect(s.recipient).toBe(RECIPIENTA);
+    for (const s of result.streams) expect(s.recipient).toBe(RECIPIENTA);
   });
 
   it("token-filtered queries order by token asc then streamId desc", async () => {
@@ -251,9 +251,9 @@ describe("stream listing default ordering", () => {
       token: TOKENY,
       limit: 10,
     });
-    const ids = result.map((s) => s.streamId);
+    const ids = result.streams.map((s) => s.streamId);
     expect(ids).toEqual([ORDERING_ID_BASE + 3n, ORDERING_ID_BASE + 0n]);
-    for (const s of result) expect(s.token).toBe(TOKENY);
+    for (const s of result.streams) expect(s.token).toBe(TOKENY);
   });
 
   it("cancelled-only filter still orders by streamId desc", async () => {
@@ -276,7 +276,7 @@ describe("stream listing default ordering", () => {
       orderBy: orderByFromFilter(filter),
       take: 10,
     });
-    const repoIds = viaRepo.map((s) => s.streamId);
+    const repoIds = viaRepo.streams.map((s) => s.streamId);
     const rawIds = viaRaw.map((s) => s.streamId);
     expect(repoIds).toEqual(rawIds);
     expect(repoIds).toEqual([ORDERING_ID_BASE + 3n, ORDERING_ID_BASE + 1n]);

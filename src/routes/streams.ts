@@ -398,7 +398,7 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
         });
       }
 
-      const stream = await getStream(streamId);
+      const stream = await getStream({ streamId });
       if (!stream) {
         return reply.code(404).send({
           code: "NOT_FOUND",
