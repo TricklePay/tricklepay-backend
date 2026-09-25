@@ -6,6 +6,8 @@ The `FailedEvent` table in the TricklePay backend stores chain events that the i
 
 We recommend retaining failed events for at least **30 to 60 days**. This provides sufficient time for operators to review incidents and extract debugging information. 
 
+Before deleting records, operators should attempt to reprocess actionable failures using the replay tool. See [Event Replay Guide](event-replay.md) for instructions on retrying failed events.
+
 Events older than this window that have already been reviewed or resolved may be safely deleted.
 
 ## Cleanup Instructions

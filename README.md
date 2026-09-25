@@ -13,10 +13,12 @@ This service has two halves that run in one process:
 It backs the TricklePay web client and pairs with the
 [contracts](#related-repositories) repository, which holds the on-chain logic.
 For a record of API and indexer behavior changes, see the [Changelog](CHANGELOG.md).
+For guides and technical documentation, see the [Documentation Index](docs/README.md).
 
 ## Table of Contents
 
 - [How it works](#how-it-works)
+- [Documentation](#documentation)
 - [Database schema](#database-schema)
 - [Glossary](#glossary)
 - [API](#api)
@@ -83,6 +85,19 @@ using the same linear vesting formula the contract itself evaluates on-chain.
 That means these figures track wall-clock time rather than the last indexed
 event — a stream's `vested` amount can be higher on a second request than the
 first even though the indexer applied nothing in between — and they agree with
+what the contract would report if queried directly, without ever making that
+chain round-trip.
+
+## Documentation
+
+Comprehensive technical documentation and operational guides are maintained in the [`docs/`](docs/README.md) directory:
+
+- [docs/README.md](docs/README.md): Index of all documentation guides and specifications.
+- [docs/database-schema.md](docs/database-schema.md): Complete schema documentation for all PostgreSQL models and audit tables.
+- [docs/event-replay.md](docs/event-replay.md): Operator guide for running the failed event replay recovery CLI.
+- [docs/failed-events-retention.md](docs/failed-events-retention.md): Retention policy and maintenance procedures for failed event records.
+- [docs/glossary.md](docs/glossary.md): Terminology definitions for domain and indexer concepts.
+
 ## Database schema
 
 The service uses PostgreSQL via Prisma. Database state is divided into four tables:

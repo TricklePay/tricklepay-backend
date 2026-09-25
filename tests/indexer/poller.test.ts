@@ -5,6 +5,7 @@ import pino from "pino";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Config } from "../../src/config.js";
+import { rpcErrors } from "../../src/metrics.js";
 
 import capture from "../fixtures/get-events.json" with { type: "json" };
 
@@ -383,5 +384,26 @@ describe("Poller", () => {
     await poller.start();
 
     expect((poller as any).consecutiveFailures).toBe(1);
+  });
+
+  it("increments rpcErrors and aborts the tick when getContractEvents fails", async () => {
+    // When getContractEvents rejects with an RPC error during a poll tick, the
+    // poller must increment the rpcErrors metric with the operation label, and abort
+    // the tick by throwing the error so no partial state is applied or saved.
+    const rpcError = new Error("RPC service unavailable");
+    chain.getContractEvents.mockRejectedValue(rpcError);
+    const rpcErrorsSpy = vi.spyOn(rpcErrors, "inc");
+
+    const poller = new Poller(server, config, log);
+    (poller as any).running = true;
+
+    await expect(
+      (poller as any).tick({ lastLedger: 56000000 }),
+    ).rejects.toThrow("RPC service unavailable");
+
+    expect(rpcErrorsSpy).toHaveBeenCalledWith({ operation: "getContractEvents" });
+    expect(rpcErrorsSpy).toHaveBeenCalledTimes(1);
+    expect(indexer.applyEvent).not.toHaveBeenCalled();
+    expect(indexerState.saveIndexerPosition).not.toHaveBeenCalled();
   });
 });
