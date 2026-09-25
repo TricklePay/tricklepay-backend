@@ -406,4 +406,35 @@ describe("Poller", () => {
     expect(indexer.applyEvent).not.toHaveBeenCalled();
     expect(indexerState.saveIndexerPosition).not.toHaveBeenCalled();
   });
+
+  it("honours the configured poll interval between ticks", async () => {
+    vi.useFakeTimers();
+    try {
+      const poller = new Poller(server, { ...config, pollIntervalMs: 5000 }, log);
+      
+      let ticks = 0;
+      chain.getContractEvents.mockImplementation(async () => {
+        ticks++;
+        if (ticks === 2) {
+          poller.stop();
+        }
+        return pageOf([]);
+      });
+
+      const pollerPromise = poller.start();
+
+      // The first tick is immediate. We advance time just shy of the interval.
+      await vi.advanceTimersByTimeAsync(4999);
+      expect(chain.getContractEvents).toHaveBeenCalledTimes(1);
+
+      // Advancing the rest of the interval allows the sleep to resolve and the second tick to fire.
+      await vi.advanceTimersByTimeAsync(1);
+      
+      await pollerPromise;
+
+      expect(chain.getContractEvents).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
