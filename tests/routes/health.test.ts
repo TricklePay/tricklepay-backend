@@ -53,4 +53,15 @@ describe("health version field (#76)", () => {
     expect(response.json().status).toBe("ok");
     expect(response.json().version).toBeTypeOf("string");
   });
+
+  it("rejects overlong query strings without affecting normal queries", async () => {
+    const app = await buildServer({ queryStringLimit: 3 });
+
+    const normalResponse = await app.inject({ method: "GET", url: "/health?a=1" });
+    const overlongResponse = await app.inject({ method: "GET", url: "/health?a=12" });
+    await app.close();
+
+    expect(normalResponse.statusCode).toBe(200);
+    expect(overlongResponse.statusCode).toBe(400);
+  });
 });
