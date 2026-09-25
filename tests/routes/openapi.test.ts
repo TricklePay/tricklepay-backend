@@ -208,6 +208,34 @@ describe("GET /docs/json (OpenAPI spec)", () => {
     };
     expect(getById?.responses).toHaveProperty("404");
   });
+
+  it("includes every registered route in the specification", async () => {
+    const app = await buildServer();
+    
+    const registeredPaths = new Set<string>();
+    app.addHook("onRoute", (routeOptions) => {
+      // The swagger UI registers its own routes under /docs; ignore them.
+      if (routeOptions.url.startsWith("/docs")) return;
+      
+      // Convert Fastify path parameters like :id to OpenAPI style {id}
+      const openApiPath = routeOptions.url.replace(/:([a-zA-Z0-9_]+)/g, "{$1}");
+      registeredPaths.add(openApiPath);
+    });
+
+    await app.register(streamRoutes);
+    await app.register(statusRoutes);
+    await app.ready();
+
+    const response = await app.inject({ method: "GET", url: "/docs/json" });
+    await app.close();
+
+    const spec = response.json() as Record<string, unknown>;
+    const specPaths = Object.keys(spec.paths as Record<string, unknown>);
+
+    for (const path of registeredPaths) {
+      expect(specPaths).toContain(path);
+    }
+  });
 });
 
 describe("GET /docs/yaml (OpenAPI spec — YAML)", () => {
