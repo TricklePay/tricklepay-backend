@@ -74,4 +74,26 @@ describe("redactErrorMessage (#74)", () => {
   it("leaves plain validation messages untouched", () => {
     expect(redactErrorMessage("invalid stream id")).toBe("invalid stream id");
   });
+
+  it("never leaks a stack trace or file path to the client", async () => {
+    const app = await buildServer();
+    
+    app.get("/test-stack-leak", async () => {
+      // Some libraries like Prisma embed stack traces and file paths in the error message itself.
+      const err = new Error("Validation failed\n  at functionName (/home/user/project/src/file.ts:10:5)");
+      (err as any).statusCode = 400;
+      throw err;
+    });
+
+    const response = await app.inject({ method: "GET", url: "/test-stack-leak" });
+    await app.close();
+
+    const responseError = response.json().error as string;
+
+    // Assert it produces a single-line message
+    expect(responseError).not.toContain("\n");
+    // Assert no file path appears in the response
+    expect(responseError).not.toContain("/home/user/project");
+    expect(responseError).not.toContain(".ts");
+  });
 });
