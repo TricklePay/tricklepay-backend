@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildServer,
   errorCodeForStatus,
   redactErrorMessage,
 } from "../src/server.js";
@@ -30,6 +31,26 @@ describe("errorCodeForStatus (#73)", () => {
 });
 
 describe("redactErrorMessage (#74)", () => {
+  it("redacts credentials and collapses multi-line errors in responses (#215)", async () => {
+    const app = await buildServer();
+    const error = new Error([
+      "invalid connection postgres://tricklepay:s3cret@db.internal:5432/tricklepay",
+      "    at TCP.connect (node:net:16:7)",
+    ].join("\n")) as Error & { statusCode: number };
+    error.statusCode = 400;
+    app.get("/test-error", async () => {
+      throw error;
+    });
+
+    const response = await app.inject({ method: "GET", url: "/test-error" });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toBe("invalid connection [redacted]");
+    expect(response.json().error).not.toContain("s3cret");
+    expect(response.json().error).not.toContain("at TCP.connect");
+    await app.close();
+  });
+
   it("removes credentials embedded in connection strings", () => {
     const message =
       'Invalid prisma.$queryRaw invocation: postgres://tricklepay:s3cret@db.internal:5432/tricklepay failed';
