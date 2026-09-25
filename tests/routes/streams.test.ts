@@ -279,7 +279,7 @@ describe("GET /streams token filter", () => {
 
 describe("GET /streams sender filter", () => {
   it("omits sender from filter when parameter is omitted", async () => {
-    streamsRepo.listStreams.mockResolvedValue([]);
+    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
     const response = await listRequest("/streams");
     expect(response.statusCode).toBe(200);
     expect(streamsRepo.listStreams).toHaveBeenCalledWith(
@@ -293,7 +293,7 @@ describe("GET /streams sender filter", () => {
       makeStream({ streamId: 1n, sender: ACCOUNT }),
       makeStream({ streamId: 2n, sender: ACCOUNT }),
     ];
-    streamsRepo.listStreams.mockResolvedValue(matches);
+    streamsRepo.listStreams.mockResolvedValue({ streams: matches });
     const response = await listRequest(`/streams?sender=${ACCOUNT}`);
     expect(response.statusCode).toBe(200);
     const body = response.json();
@@ -304,7 +304,7 @@ describe("GET /streams sender filter", () => {
   });
 
   it("returns empty list for sender with no streams", async () => {
-    streamsRepo.listStreams.mockResolvedValue([]);
+    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
     const response = await listRequest(`/streams?sender=${ACCOUNT}`);
     expect(response.statusCode).toBe(200);
     const body = response.json();
@@ -312,7 +312,7 @@ describe("GET /streams sender filter", () => {
   });
 
   it("applies sender to the count query when includeTotal=true", async () => {
-    streamsRepo.listStreams.mockResolvedValue([]);
+    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
     streamsRepo.countStreams.mockResolvedValue(3);
     const response = await listRequest(`/streams?sender=${ACCOUNT}&includeTotal=true`);
     expect(response.statusCode).toBe(200);
@@ -327,7 +327,7 @@ describe("GET /streams sender filter", () => {
     const matches = [
       makeStream({ streamId: 1n, sender: ACCOUNT }),
     ];
-    streamsRepo.listStreams.mockResolvedValue(matches);
+    streamsRepo.listStreams.mockResolvedValue({ streams: matches });
     const response = await listRequest(`/streams?sender=${ACCOUNT}`);
     expect(response.statusCode).toBe(200);
     const body = response.json();
@@ -336,7 +336,7 @@ describe("GET /streams sender filter", () => {
   });
 
   it("normalizes lowercase sender address before filtering", async () => {
-    streamsRepo.listStreams.mockResolvedValue([]);
+    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
     const response = await listRequest(`/streams?sender=${ACCOUNT.toLowerCase()}`);
     expect(response.statusCode).toBe(200);
     expect(streamsRepo.listStreams).toHaveBeenCalledWith(

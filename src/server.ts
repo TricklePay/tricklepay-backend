@@ -110,9 +110,6 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
     genReqId: (req) =>
       sanitizeRequestId(req.headers[REQUEST_ID_HEADER]) ?? randomUUID(),
     querystringParser: (str: string) => {
-      if (config?.queryStringLimit && str.length > config.queryStringLimit) {
-        throw new Error("query string too long");
-      }
       const params = new URLSearchParams(str);
       const result: Record<string, string> = {};
       params.forEach((value, key) => {
@@ -122,10 +119,19 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
     },
   });
 
-  // Record every response against the Prometheus counters. `routeOptions.url`
-  // is the route pattern ("/streams/:id") rather than the resolved path, which
-  // keeps the label set bounded no matter how many distinct ids are requested.
-  // Unmatched requests fall back to "unknown" for the same reason.
+  app.addHook("onRequest", async (request, reply) => {
+    const rawQuery = request.raw.url?.split('?')[1] ?? '';
+    if (config?.queryStringLimit && rawQuery.length > config.queryStringLimit) {
+      void reply.status(400).send({
+        code: "VALIDATION_ERROR",
+        error: "query string too long",
+        requestId: request.id,
+      });
+      return reply;
+    }
+  });
+
+  // Record every response against the Prometheus counters.
   app.addHook("onResponse", async (request, reply) => {
     const labels = {
       method: request.method,
