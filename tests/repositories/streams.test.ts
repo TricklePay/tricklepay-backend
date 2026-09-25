@@ -45,6 +45,30 @@ function partialStream(overrides: Partial<StreamRow> = {}): StreamRow {
 }
 
 describe("failed events repository", () => {
+  it("records the originating error message and event identity", async () => {
+    const upsert = vi.spyOn(prisma.failedEvent, "upsert").mockResolvedValueOnce({} as never);
+    const event = {
+      id: "0000000000000000002",
+      kind: "withdrawn",
+      streamId: 99n,
+      ledger: 321,
+    } as any;
+
+    await recordFailedEvent(
+      failedEventFromDecoded(event, new Error("insufficient balance")),
+    );
+
+    expect(upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { eventId: event.id },
+        create: expect.objectContaining({
+          eventId: event.id,
+          error: "insufficient balance",
+        }),
+      }),
+    );
+  });
+
   it("records the diagnostic details needed for an operator to find a failed event", async () => {
     const upsert = vi.spyOn(prisma.failedEvent, "upsert").mockResolvedValueOnce({} as never);
 
