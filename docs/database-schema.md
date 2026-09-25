@@ -34,22 +34,61 @@ Stores the current state of each token vesting stream as seen on-chain.
 
 ### 2. `IndexedEvent`
 
-Stores raw decoded contract events (`Created`, `Withdrawn`, `Cancelled`) emitted by the Soroban contract.
+Append-only audit log of all decoded contract events emitted by the TricklePay stream smart contract.
 
-* **Purpose**: Maintains an immutable log of processed events for auditing, replay verification, and transaction history.
+#### What the table is for
+
+`IndexedEvent` maintains a permanent, immutable audit log of every supported contract event (`created`, `withdrawn`, `cancelled`) observed on the Stellar blockchain. While the `Stream` table retains only the latest mutable state of each stream, `IndexedEvent` captures the complete historical timeline. It serves:
+- **Auditability and Incident Review**: Enables operators and auditors to inspect historical contract actions, verify state transitions, and review transaction hashes and ledger numbers.
+- **Stream History Inspection**: Powers the historical timeline API (`GET /streams/:id/events`), allowing users to inspect the lifecycle of a stream from creation to withdrawals and cancellation.
+- **Replay and Reconciliation Verification**: Provides an immutable ledger against which current stream balances and state can be cross-checked during investigations.
+
+#### What a single row represents
+
+A single row represents a unique contract event emitted on-chain by the TricklePay smart contract during a Soroban transaction execution. It stores the event's unique chain-wide identifier, event classification, stream parameters, transferred amounts, and block context.
+
 * **Fields**:
-  * `eventId` (`String`, Primary Key): Soroban RPC `TOID-index` event ID, unique across the chain.
-  * `kind` (`String`): Event type (`Created`, `Withdrawn`, `Cancelled`).
-  * `streamId` (`String`): Target stream identifier associated with the event.
-  * `ledger` (`Int`): Ledger height where the event occurred.
-  * `txHash` (`String`): Stellar transaction hash containing the event.
-  * `sender`, `recipient`, `token` (`String?`): Associated addresses present in `Created` events.
-  * `totalAmount`, `amount`, `recipientAmount`, `senderRefund` (`Decimal(40, 0)?`): Event amount payloads.
-  * `startTime`, `endTime`, `cliffTime`, `closedAt` (`BigInt?`): Timestamps present in event payloads.
-  * `createdAt`, `updatedAt` (`DateTime`): Timestamps for record lifecycle.
+  * `eventId` (`String`, Primary Key): The Soroban RPC's `TOID-index` event identifier, unique per event on chain and ordered chronologically.
+  * `kind` (`String`): Event kind, strictly matching one of the supported contract events: `"created"`, `"withdrawn"`, or `"cancelled"`.
+  * `streamId` (`String`): The stream identifier associated with the event, stored as a string to avoid bigint serialization dependencies.
+  * `ledger` (`Int`): Ledger sequence number in which the transaction emitting this event was closed.
+  * `txHash` (`String`): Hex-encoded transaction hash containing the contract invocation.
+  * `sender` (`String?`): Stellar account address of the stream creator; present on `created` events.
+  * `recipient` (`String?`): Stellar account address of the stream recipient; present on `created` and `withdrawn` events.
+  * `token` (`String?`): Contract address / token identifier of the asset being streamed; present on `created` events.
+  * `totalAmount` (`Decimal(40, 0)?`): Initial stream deposit amount in smallest token units (e.g. stroops/base units, up to uint128); present on `created` events.
+  * `amount` (`Decimal(40, 0)?`): Amount withdrawn in smallest token units; present on `withdrawn` events.
+  * `recipientAmount` (`Decimal(40, 0)?`): Vested unwithdrawn balance paid to recipient upon cancellation in smallest token units; present on `cancelled` events.
+  * `senderRefund` (`Decimal(40, 0)?`): Unvested deposit refunded to sender upon cancellation in smallest token units; present on `cancelled` events.
+  * `startTime` (`BigInt?`): Stream start time as a Unix timestamp in seconds; present on `created` events.
+  * `endTime` (`BigInt?`): Stream scheduled end time as a Unix timestamp in seconds; present on `created` events.
+  * `cliffTime` (`BigInt?`): Stream cliff time as a Unix timestamp in seconds; present on `created` events.
+  * `closedAt` (`BigInt?`): Ledger close time as a Unix timestamp in seconds when the event was emitted on-chain.
+  * `createdAt` (`DateTime`): Database timestamp when the record was inserted (`@default(now())`).
+  * `updatedAt` (`DateTime`): Database timestamp when the record was last updated (`@updatedAt`).
 * **Indexes**:
-  * `[streamId, ledger]` - Fast lookup of events for a specific stream.
-  * `[ledger]` - Fast lookup of events by ledger height.
+  * `[streamId, ledger]` - Composite index enabling fast, ordered event timeline retrieval for a specific stream.
+  * `[ledger]` - Index for querying events by ledger sequence height.
+
+#### When a row is written
+
+A row is written during the indexer's polling tick in `src/indexer/poller.ts` (`Poller.applyPage`).
+
+1. **Extraction and Decoding**: When the indexer poller fetches a page of events from the Soroban RPC via `getContractEvents`, each raw event is decoded into a typed `StreamEvent` via `decodeEvent(raw)`.
+2. **Persistence Path**: Immediately after successful decoding and before applying the event to the `Stream` table, the poller invokes:
+   ```ts
+   await recordIndexedEvent(indexedEventFromDecoded(event));
+   ```
+   This calls `recordIndexedEvent` in `src/repositories/indexed-events.ts`, which executes:
+   ```ts
+   await tx.indexedEvent.createMany({
+     data: [...],
+     skipDuplicates: true,
+   });
+   ```
+3. **Idempotency**: Inserting with `skipDuplicates: true` keyed by `eventId` guarantees that re-polling or replaying pages that were already processed will not fail with unique constraint violations or duplicate audit entries.
+4. **Resilience**: If writing to `IndexedEvent` encounters a database error, the failure is caught and logged as a warning (`could not persist indexed-event record`) so that an audit log issue does not abort or block the primary stream state mutation.
+5. **Query Path**: Stored rows are queried through `listIndexedEvents(streamId)` in `src/repositories/indexed-events.ts` to power the `GET /streams/:id/events` route defined in `src/routes/streams.ts`.
 
 ---
 
