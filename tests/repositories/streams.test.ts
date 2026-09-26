@@ -127,6 +127,27 @@ describe("failed events repository", () => {
   });
 });
 
+describe("failed events retention boundary", () => {
+  function isEligibleForRemoval(recordedAt: Date, now: Date, retentionDays = 30): boolean {
+    const cutoff = new Date(now.getTime() - retentionDays * 24 * 60 * 60 * 1000);
+    return recordedAt.getTime() < cutoff.getTime();
+  }
+
+  it("treats records older than the retention window as eligible for removal", () => {
+    const now = new Date("2024-05-31T00:00:00.000Z");
+    const recordedAt = new Date("2024-04-30T23:59:59.999Z");
+
+    expect(isEligibleForRemoval(recordedAt, now)).toBe(true);
+  });
+
+  it("retains records newer than the retention window", () => {
+    const now = new Date("2024-05-31T00:00:00.000Z");
+    const recordedAt = new Date("2024-05-01T00:00:00.000Z");
+
+    expect(isEligibleForRemoval(recordedAt, now)).toBe(false);
+  });
+});
+
 describe("streams repository token filter", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
