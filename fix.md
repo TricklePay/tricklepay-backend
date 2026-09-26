@@ -1,12 +1,12 @@
-#265 Add a test that a request id survives through to an error body
+#266 Add a test that the summary endpoint handles an empty database
 Repo Avatar
 TricklePay/tricklepay-backend
 Summary
-The request id is the link between what a client saw and what the logs hold, so it must appear in the error body as well as the header.
+Aggregates over no rows are where a sum becomes null and a response becomes malformed. The empty case is not covered.
 
 Acceptance criteria
- A test asserts an error body carries the request id.
- A test asserts the header carries the same value.
+ A test asserts the summary endpoint returns zeroed figures with no streams.
+ The response still validates against its schema.
  The suite still passes.
 Getting started
 Fork this repository, clone your fork, and add this repo as upstream:
@@ -16,8 +16,8 @@ cd tricklepay-backend
 git remote add upstream https://github.com/TricklePay/tricklepay-backend.git
 Create a branch for this issue:
 
-git checkout -b test/issue-265
+git checkout -b test/issue-266
 Suggested commit message:
 
-test: assert request ids reach error bodies
+test: cover the summary endpoint with no data
 Run npm run typecheck, npm test, and npm run build before opening a pull request and linking this issue.
