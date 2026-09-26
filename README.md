@@ -515,6 +515,8 @@ For instructions on setting up your local environment, running required checks (
 
 For global contributor guidelines across the organization, refer to the shared [TricklePay Documentation Guide](https://github.com/TricklePay/tricklepay-docs).
 
+All contributors are expected to adhere to the project's [Code of Conduct](CODE_OF_CONDUCT.md).
+
 ### Import ordering
 
 Keep import blocks in one canonical order across the source and tests so file edits do not create noisy diffs:
@@ -582,11 +584,36 @@ current template — copy it and fill in the required values.
 | `LOG_LEVEL` | No | `info` | Log verbosity (`trace`, `debug`, `info`, `warn`, `error`, `fatal`). |
 | `BODY_LIMIT` | No | `1048576` | Largest accepted request body in bytes. |
 | `QUERY_STRING_LIMIT` | No | `2048` | Longest accepted URL query string in bytes. |
-| `TRUSTED_PROXIES` | No | - | Comma-separated list of trusted reverse-proxy addresses. |
+| `TRUSTED_PROXIES` | No | - | Comma-separated list of trusted reverse-proxy addresses or IPv4 CIDR blocks. Forwarded headers are ignored when unset. |
 | `INDEXER_POLL_INTERVAL_MS` | No | `5000` | Milliseconds between polls of the chain. |
 | `INDEXER_BACKOFF_MAX_MS` | No | `60000` | Maximum poll retry delay (ms) on RPC failures. |
 | `INDEXER_START_LEDGER` | No | `0` | Ledger to begin indexing from. `0` starts at the chain's latest ledger. |
 | `INDEXER_MAX_PAGES_PER_TICK` | No | `1000` | Maximum number of event pages fetched per poll tick. |
+
+### Trusted proxies
+
+Forwarded headers (`X-Forwarded-For`, `X-Forwarded-Proto`) are honoured only
+when the direct connection peer is an explicitly trusted proxy. Set
+`TRUSTED_PROXIES` to a comma-separated list of the proxies that sit in front of
+the service, each entry either a bare IP address or an IPv4 CIDR block:
+
+```
+TRUSTED_PROXIES=10.0.0.1,10.0.0.2,192.168.0.0/24
+```
+
+- A bare address matches a single peer exactly, e.g. `10.0.0.1`.
+- A CIDR block matches a range of IPv4 peers, e.g. `192.168.0.0/24`. The prefix
+  must be between 0 and 32; IPv6 CIDR blocks are not accepted.
+- Entries are validated at startup. An entry that is not a valid IP address or
+  IPv4 CIDR block aborts the process rather than silently widening or
+  disabling trust, so a typo is caught before the service accepts traffic.
+
+When `TRUSTED_PROXIES` is unset (or empty), **no** proxy is trusted: forwarded
+headers are ignored and the socket's peer address is used as the client
+address. A direct client therefore cannot spoof the address recorded in logs
+and request metadata. Behind a load balancer or ingress that terminates
+connections, set this to that proxy's address so the original client address
+is preserved.
 
 ### Logging
 
@@ -1056,12 +1083,6 @@ AssertionError: expected ... to equal ...
 - **tricklepay-contracts** — the Soroban streaming contract this service indexes.
 - **tricklepay-frontend** — web client built on this API.
 - **tricklepay-docs** — architecture, security model, and contributor guides.
-
-## Contributing
-
-Contributions are welcome! Please review [CONTRIBUTING.md](CONTRIBUTING.md) for setup and development guidelines.
-
-All contributors are expected to adhere to the project's [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## License
 

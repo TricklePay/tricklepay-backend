@@ -9,7 +9,7 @@
 // functions rather than calling the database client directly.
 
 import type { Prisma } from "@prisma/client";
-import { prisma } from "../db.js";
+import { prisma, withQueryTimeout } from "../db.js";
 
 export type IndexedEventKind = "created" | "withdrawn" | "cancelled";
 
@@ -33,10 +33,12 @@ export interface IndexedEventRecord {
 }
 
 export async function listIndexedEvents(streamId: bigint): Promise<IndexedEventRecord[]> {
-  const rows = await (prisma as any).indexedEvent.findMany({
-    where: { streamId: streamId.toString() },
-    orderBy: { eventId: "asc" },
-  });
+  const rows = await withQueryTimeout(
+    (prisma as any).indexedEvent.findMany({
+      where: { streamId: streamId.toString() },
+      orderBy: { eventId: "asc" },
+    }),
+  );
   return rows as IndexedEventRecord[];
 }
 

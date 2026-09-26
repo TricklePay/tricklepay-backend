@@ -8,7 +8,7 @@
 // writes to the indexer_state table in PostgreSQL must flow through these
 // functions rather than calling the database client directly.
 
-import { prisma } from "../db.js";
+import { prisma, withQueryTimeout } from "../db.js";
 
 // Fixed key for the single indexer-state row. There is one indexed contract, so
 // one row of bookkeeping.
@@ -30,7 +30,9 @@ export interface StoredPosition extends IndexerPosition {
 }
 
 export async function getIndexerPosition(): Promise<StoredPosition | null> {
-  const state = await prisma.indexerState.findUnique({ where: { id: STATE_ID } });
+  const state = await withQueryTimeout(
+    prisma.indexerState.findUnique({ where: { id: STATE_ID } }),
+  );
   if (!state) return null;
   return {
     lastLedger: state.lastLedger,

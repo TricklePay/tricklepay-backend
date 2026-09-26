@@ -1,10 +1,13 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { StreamEvent } from "../../src/chain/events.js";
+
+import { prisma } from "../../src/db.js";
 
 import {
   indexedEventFromDecoded,
   recordIndexedEvent,
+  type IndexedEventRecord,
 } from "../../src/repositories/indexed-events.js";
 
 describe("indexedEventFromDecoded", () => {
@@ -99,5 +102,58 @@ describe("recordIndexedEvent", () => {
     expect(tx.indexedEvent.createMany).toHaveBeenCalledWith(expect.objectContaining({
       skipDuplicates: true,
     }));
+  });
+});
+
+describe("recordIndexedEvent idempotency (#222)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("leaves one row unchanged when the same event is recorded twice", async () => {
+    const rows = new Map<string, Record<string, unknown>>();
+    const createMany = vi
+      .spyOn((prisma as any).indexedEvent, "createMany")
+      .mockImplementation(async ({ data }: any) => {
+        const row = Array.isArray(data) ? data[0] : data;
+        // Mirror the primary key on eventId plus `skipDuplicates`: an id that
+        // is already stored is not written again.
+        if (rows.has(row.eventId)) return { count: 0 };
+        rows.set(row.eventId, row);
+        return { count: 1 };
+      });
+
+    const first: IndexedEventRecord = {
+      eventId: "0241050272077447168-0000000001",
+      kind: "created",
+      streamId: "7",
+      ledger: 42,
+      txHash: "0xabc",
+      sender: "Gsender",
+      recipient: "Grecipient",
+      token: "CADDR",
+      totalAmount: "5" as any,
+      amount: null,
+      recipientAmount: null,
+      senderRefund: null,
+      startTime: 1n,
+      endTime: 2n,
+      cliffTime: 1n,
+      closedAt: 3n,
+    };
+
+    await recordIndexedEvent(first);
+    // A restart re-reads a page from an earlier cursor, handing over the same
+    // event id with staler values; the stored row must survive untouched.
+    await recordIndexedEvent({
+      ...first,
+      ledger: 99,
+      txHash: "0xchanged",
+      totalAmount: "999" as any,
+    });
+
+    expect(createMany).toHaveBeenCalledTimes(2);
+    expect(rows.size).toBe(1);
+    expect(rows.get(first.eventId)).toEqual(first);
   });
 });

@@ -1,8 +1,8 @@
 import { Prisma, type Stream } from "@prisma/client";
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { prisma } from "../../src/db.js";
+import { DEFAULT_QUERY_TIMEOUT_MS, QueryTimeoutError, prisma } from "../../src/db.js";
 
 import {
   clearFailedEvent,
@@ -12,6 +12,7 @@ import {
 import {
   applyWithdrawal,
   countStreams,
+  getStream,
   listStreams,
   upsertStream,
   type StreamFilter,
@@ -331,5 +332,33 @@ describe("streams repository upsert idempotency (#141)", () => {
         }),
       }),
     );
+  });
+});
+
+describe("streams repository bounded reads (#221)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("resolves a read that finishes inside the bound", async () => {
+    vi.spyOn(prisma.stream, "findUnique").mockResolvedValueOnce(null);
+
+    await expect(getStream({ streamId: 1n })).resolves.toBeNull();
+  });
+
+  it("rejects a read that exceeds its bound instead of hanging", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(prisma.stream, "findUnique").mockImplementation(
+      () => new Promise(() => {}) as never,
+    );
+
+    const pending = getStream({ streamId: 1n });
+    const assertion = expect(pending).rejects.toBeInstanceOf(QueryTimeoutError);
+
+    // The query never settles; only the bound can end the wait.
+    vi.advanceTimersByTime(DEFAULT_QUERY_TIMEOUT_MS + 1);
+
+    await assertion;
   });
 });
