@@ -393,3 +393,21 @@ describe("loadConfig — INDEXER_MAX_PAGES_PER_TICK bounds", () => {
     });
   });
 });
+
+describe("loadConfig — TRUSTED_PROXIES validation", () => {
+  it("accepts a valid list of proxies", () => {
+    withEnv({ TRUSTED_PROXIES: "10.0.0.1,10.0.0.2" }, () => {
+      expect(loadConfig().trustedProxies).toEqual(["10.0.0.1", "10.0.0.2"]);
+    });
+  });
+
+  it("rejects a malformed entry at startup", () => {
+    // A malformed entry in the trusted proxy list must be rejected rather than
+    // silently ignored, because silently ignoring it would honour forwarded headers
+    // from an untrusted peer.
+    withEnv({ TRUSTED_PROXIES: "10.0.0.1,not-an-ip" }, () => {
+      expect(() => loadConfig()).toThrow();
+    });
+  });
+});
+
