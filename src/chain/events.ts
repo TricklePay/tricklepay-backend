@@ -53,9 +53,17 @@ export interface CancelledEvent extends BaseEvent {
 
 export type StreamEvent = CreatedEvent | WithdrawnEvent | CancelledEvent;
 
-// The RPC reports ledger close time as an RFC 3339 timestamp; the contract
-// works in whole Unix seconds, so the two agree once the string is converted.
-// Returns NaN when the timestamp cannot be parsed, which the caller rejects.
+/**
+ * Converts the RPC ledger close timestamp to whole Unix seconds as a bigint.
+ *
+ * The RPC reports ledger close time as an RFC 3339 string; the contract works
+ * in whole Unix seconds, so the two agree once the string is parsed and
+ * truncated. Returns the number `NaN` (not a bigint) when the timestamp cannot
+ * be parsed; the caller is expected to detect this and throw `InvalidEventError`.
+ *
+ * @param ledgerClosedAt - RFC 3339 timestamp string from the RPC event response.
+ * @returns Ledger close time in Unix seconds, or `NaN` if the string is unparseable.
+ */
 function closedAtSeconds(ledgerClosedAt: string): bigint | typeof NaN {
   const ms = Date.parse(ledgerClosedAt);
   if (Number.isNaN(ms)) return NaN;
@@ -65,9 +73,17 @@ function closedAtSeconds(ledgerClosedAt: string): bigint | typeof NaN {
 // Maximum value for a uint128: 2^128 - 1.
 const MAX_UINT128 = (1n << 128n) - 1n;
 
-// Rejects amounts that are negative or exceed the uint128 range. Contract
-// events encode unsigned 128-bit integers, so a negative value or one above
-// the maximum indicates a malformed or adversarial payload.
+/**
+ * Guards against amounts that are out of the unsigned 128-bit integer range.
+ *
+ * Contract events encode amounts as uint128. A negative value or one above
+ * `2^128 − 1` indicates a malformed or adversarial payload and should never
+ * be written to the database.
+ *
+ * @param value - The decoded bigint amount to validate.
+ * @param field - The name of the field being checked, used in the error message.
+ * @throws {InvalidEventError} When `value` is negative or exceeds the uint128 maximum.
+ */
 function validateAmount(value: bigint, field: string): void {
   if (value < 0n || value > MAX_UINT128) {
     throw new InvalidEventError(`amount field "${field}" out of uint128 range: ${value}`);
@@ -81,10 +97,27 @@ export class InvalidEventError extends Error {
   }
 }
 
-// Decodes one RPC event into a typed stream event, or returns null if the
-// event is not one this indexer understands. Unknown events are skipped rather
-// than treated as errors so the contract can add events without breaking the
-// indexer. Throws InvalidEventError when metadata or amounts are malformed.
+/**
+ * Decodes one Stellar RPC event into a typed stream event.
+ *
+ * Returns `null` for any event whose name is not recognized by this indexer.
+ * Unknown events are silently skipped rather than treated as errors so the
+ * contract can emit new event kinds without breaking existing indexer
+ * deployments.
+ *
+ * The first topic of every contract event is the event name. For `created`
+ * events, topics[1] and topics[2] carry the indexed `sender` and `recipient`
+ * addresses respectively; for `withdrawn` and `cancelled` events, topics[1]
+ * carries the relevant party. All remaining fields come from the event value
+ * map decoded by `scValToNative`.
+ *
+ * @param event - A raw event object returned by the Stellar RPC `getEvents` call.
+ * @returns A typed `StreamEvent` (discriminated by `kind`), or `null` if the
+ *   event name is not one this indexer handles.
+ * @throws {InvalidEventError} When the event id or ledger metadata is malformed,
+ *   the ledger close timestamp cannot be parsed, or an amount field is outside
+ *   the valid uint128 range.
+ */
 export function decodeEvent(event: rpc.Api.EventResponse): StreamEvent | null {
   const topics = event.topic;
   if (topics.length === 0) return null;

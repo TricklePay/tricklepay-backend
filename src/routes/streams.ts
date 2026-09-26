@@ -7,7 +7,8 @@ import { StrKey } from "@stellar/stellar-sdk";
 
 import type { FastifyInstance } from "fastify";
 
-import { vestedAmount, withdrawableAmount } from "../lib/vesting.js";
+import { sendError, bigIntToStringNullable } from "../lib/response.js";
+import { toView } from "../lib/stream-view.js";
 
 import {
   aggregateStreams,
@@ -50,38 +51,6 @@ function statusOf(stream: Stream, now: bigint): StreamStatus {
   if (now < stream.startTime) return "pending";
   if (now >= stream.endTime) return "completed";
   return "streaming";
-}
-
-// Shapes a stored stream into the API response, computing vested and
-// withdrawable amounts against the current clock so clients see live figures
-// without querying the chain.
-function toView(stream: Stream) {
-  const now = nowSeconds();
-  const total = BigInt(stream.totalAmount.toString());
-  const withdrawn = BigInt(stream.withdrawn.toString());
-  const vested = vestedAmount(total, stream.startTime, stream.endTime, stream.cliffTime, now);
-  const withdrawable = withdrawableAmount(vested, withdrawn);
-  const locked = total - vested;
-  // Vesting progress in basis points, from 0 to 10000, matching the contract.
-  const progress = total === 0n ? 10000 : Number((vested * 10000n) / total);
-
-  return {
-    id: stream.streamId.toString(),
-    sender: stream.sender,
-    recipient: stream.recipient,
-    token: stream.token,
-    totalAmount: total.toString(),
-    withdrawn: withdrawn.toString(),
-    vested: vested.toString(),
-    withdrawable: withdrawable.toString(),
-    locked: locked.toString(),
-    progress,
-    startTime: stream.startTime.toString(),
-    endTime: stream.endTime.toString(),
-    cliffTime: stream.cliffTime.toString(),
-    cancelled: stream.cancelled,
-    status: statusOf(stream, now),
-  };
 }
 
 function parseLimit(raw: string | undefined): number {
@@ -263,24 +232,21 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
       if (query.cursor !== undefined) {
         const decoded = decodeCursor(query.cursor);
         if (decoded === null) {
-          return reply.code(400).send({
-            code: "VALIDATION_ERROR",
-            error: "invalid cursor",
-            requestId: request.id,
-          });
+          return sendError(reply, request, 400, "VALIDATION_ERROR", "invalid cursor");
         }
         cursor = decoded;
       }
 
       const usingCursor = cursor !== undefined;
       if (!usingCursor && offset > MAX_OFFSET) {
-        return reply.code(400).send({
-          code: "VALIDATION_ERROR",
-          error:
-            `offset must not exceed ${MAX_OFFSET}. Page through results in order with limit and offset, ` +
+        return sendError(
+          reply,
+          request,
+          400,
+          "VALIDATION_ERROR",
+          `offset must not exceed ${MAX_OFFSET}. Page through results in order with limit and offset, ` +
             "or narrow them with the sender, recipient, and token filters, or use the returned cursor for stable pagination.",
-          requestId: request.id,
-        });
+        );
       }
 
       const filter: {
@@ -295,11 +261,7 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
         if (!raw) continue;
         const normalized = normalizeAddress(raw);
         if (!normalized) {
-          return reply.code(400).send({
-            code: "VALIDATION_ERROR",
-            error: `invalid ${field} address`,
-            requestId: request.id,
-          });
+          return sendError(reply, request, 400, "VALIDATION_ERROR", `invalid ${field} address`);
         }
         filter[field] = normalized;
       }
@@ -391,20 +353,12 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
       const { id } = request.params as { id: string };
       const streamId = parseStreamId(id);
       if (streamId === null) {
-        return reply.code(400).send({
-          code: "VALIDATION_ERROR",
-          error: "invalid stream id",
-          requestId: request.id,
-        });
+        return sendError(reply, request, 400, "VALIDATION_ERROR", "invalid stream id");
       }
 
       const stream = await getStream({ streamId });
       if (!stream) {
-        return reply.code(404).send({
-          code: "NOT_FOUND",
-          error: "stream not found",
-          requestId: request.id,
-        });
+        return sendError(reply, request, 404, "NOT_FOUND", "stream not found");
       }
 
       const events = await listIndexedEvents(streamId);
@@ -418,14 +372,14 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
         sender: event.sender ?? null,
         recipient: event.recipient ?? null,
         token: event.token ?? null,
-        totalAmount: event.totalAmount ? event.totalAmount.toString() : null,
-        amount: event.amount ? event.amount.toString() : null,
-        recipientAmount: event.recipientAmount ? event.recipientAmount.toString() : null,
-        senderRefund: event.senderRefund ? event.senderRefund.toString() : null,
-        startTime: event.startTime !== null && event.startTime !== undefined ? event.startTime.toString() : null,
-        endTime: event.endTime !== null && event.endTime !== undefined ? event.endTime.toString() : null,
-        cliffTime: event.cliffTime !== null && event.cliffTime !== undefined ? event.cliffTime.toString() : null,
-        closedAt: event.closedAt !== null && event.closedAt !== undefined ? event.closedAt.toString() : null,
+        totalAmount: bigIntToStringNullable(event.totalAmount),
+        amount: bigIntToStringNullable(event.amount),
+        recipientAmount: bigIntToStringNullable(event.recipientAmount),
+        senderRefund: bigIntToStringNullable(event.senderRefund),
+        startTime: bigIntToStringNullable(event.startTime),
+        endTime: bigIntToStringNullable(event.endTime),
+        cliffTime: bigIntToStringNullable(event.cliffTime),
+        closedAt: bigIntToStringNullable(event.closedAt),
       }));
     },
   );
@@ -460,20 +414,12 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
       const { id } = request.params as { id: string };
       const streamId = parseStreamId(id);
       if (streamId === null) {
-        return reply.code(400).send({
-          code: "VALIDATION_ERROR",
-          error: "invalid stream id",
-          requestId: request.id,
-        });
+        return sendError(reply, request, 400, "VALIDATION_ERROR", "invalid stream id");
       }
 
       const stream = await getStream({ streamId });
       if (!stream) {
-        return reply.code(404).send({
-          code: "NOT_FOUND",
-          error: "stream not found",
-          requestId: request.id,
-        });
+        return sendError(reply, request, 404, "NOT_FOUND", "stream not found");
       }
 
       const etag = `"${stream.updatedLedger}"`;
