@@ -12,7 +12,12 @@ const streamsRepo = vi.hoisted(() => ({
   countStreams: vi.fn(),
 }));
 
+const db = vi.hoisted(() => ({
+  checkHealth: vi.fn(),
+}));
+
 vi.mock("../../src/repositories/streams.js", () => streamsRepo);
+vi.mock("../../src/db.js", () => ({ checkHealth: db.checkHealth }));
 
 const { buildServer } = await import("../../src/server.js");
 const { serviceVersion } = await import("../../src/version.js");
@@ -52,6 +57,18 @@ describe("health version field (#76)", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json().status).toBe("ok");
     expect(response.json().version).toBeTypeOf("string");
+  });
+
+  it("returns the unchanged health response while the database is unavailable", async () => {
+    db.checkHealth.mockResolvedValue({ status: "down", error: "database unavailable" });
+
+    const app = await buildServer();
+    const response = await app.inject({ method: "GET", url: "/health" });
+    await app.close();
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ status: "ok", version: serviceVersion });
+    expect(db.checkHealth).not.toHaveBeenCalled();
   });
 
   it("rejects overlong query strings without affecting normal queries", async () => {

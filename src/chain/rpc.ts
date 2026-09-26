@@ -14,6 +14,20 @@ export function createRpcServer(config: Config): rpc.Server {
   });
 }
 
+// Fail before serving requests when the configured RPC endpoint cannot be
+// reached, rather than letting the indexer retry an invalid endpoint forever.
+export async function verifyRpcEndpoint(server: rpc.Server, rpcUrl: string): Promise<void> {
+  try {
+    await server.getLatestLedger();
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `Unable to reach configured Soroban RPC endpoint "${rpcUrl}": ${detail}`,
+      { cause: err },
+    );
+  }
+}
+
 // How many events to ask the RPC for at a time. The poller compares a page's
 // size against this to tell a full page — there is more behind it — from a
 // short one, so the request and that comparison must share the number.
