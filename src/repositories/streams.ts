@@ -10,7 +10,7 @@
 
 import { Prisma, type Stream } from "@prisma/client";
 
-import { prisma } from "../db.js";
+import { prisma, withQueryTimeout } from "../db.js";
 
 export interface UpsertStreamInput {
   streamId: bigint;
@@ -254,7 +254,7 @@ async function classifyMiss(streamId: bigint, tx: Prisma.TransactionClient = pri
 }
 
 export async function getStream({ streamId }: { streamId: bigint }): Promise<Stream | null> {
-  return prisma.stream.findUnique({ where: { streamId } });
+  return withQueryTimeout(prisma.stream.findUnique({ where: { streamId } }));
 }
 
 function whereFromFilter(filter: StreamFilter): Prisma.StreamWhereInput {
@@ -284,12 +284,14 @@ export async function listStreams(filter: StreamFilter): Promise<StreamListResul
   const take = limit + 1;
   const skip = useCursor ? 0 : filter.offset ?? 0;
 
-  const rows = await prisma.stream.findMany({
-    where: whereFromFilter(filter),
-    orderBy: orderByFromFilter(filter),
-    take,
-    skip,
-  });
+  const rows = await withQueryTimeout(
+    prisma.stream.findMany({
+      where: whereFromFilter(filter),
+      orderBy: orderByFromFilter(filter),
+      take,
+      skip,
+    }),
+  );
 
   if (rows.length <= limit) {
     return { streams: rows };
@@ -303,7 +305,7 @@ export async function listStreams(filter: StreamFilter): Promise<StreamListResul
 // Total number of streams matching the filter, ignoring limit and offset, so a
 // client can tell how many pages exist.
 export async function countStreams(filter: StreamFilter): Promise<number> {
-  return prisma.stream.count({ where: whereFromFilter(filter) });
+  return withQueryTimeout(prisma.stream.count({ where: whereFromFilter(filter) }));
 }
 
 export interface StreamAggregate {
@@ -316,11 +318,13 @@ export interface StreamAggregate {
 // over the decimal columns, so totals stay exact no matter how wide the
 // amounts get; they come back as Decimal rather than a JavaScript number.
 export async function aggregateStreams(where: Prisma.StreamWhereInput): Promise<StreamAggregate> {
-  const result = await prisma.stream.aggregate({
-    where,
-    _count: { streamId: true },
-    _sum: { totalAmount: true, withdrawn: true },
-  });
+  const result = await withQueryTimeout(
+    prisma.stream.aggregate({
+      where,
+      _count: { streamId: true },
+      _sum: { totalAmount: true, withdrawn: true },
+    }),
+  );
 
   return {
     count: result._count.streamId,

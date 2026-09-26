@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { checkHealth, disconnect, prisma } from "../src/db.js";
+import {
+  DEFAULT_QUERY_TIMEOUT_MS,
+  QueryTimeoutError,
+  checkHealth,
+  disconnect,
+  prisma,
+  withQueryTimeout,
+} from "../src/db.js";
 
 describe("checkHealth", () => {
   beforeEach(() => {
@@ -56,5 +63,35 @@ describe("disconnect", () => {
     await disconnect();
 
     expect(spy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("withQueryTimeout (#221)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("resolves a query that finishes inside the bound", async () => {
+    await expect(withQueryTimeout(Promise.resolve("row"), 50)).resolves.toBe("row");
+  });
+
+  it("still rejects when the query itself fails inside the bound", async () => {
+    const failure = new Error("connection reset");
+    await expect(withQueryTimeout(Promise.reject(failure), 50)).rejects.toBe(failure);
+  });
+
+  it("rejects a query that exceeds its bound rather than hanging", async () => {
+    vi.useFakeTimers();
+
+    const pending = withQueryTimeout(new Promise(() => {}), 25);
+    const assertion = expect(pending).rejects.toBeInstanceOf(QueryTimeoutError);
+
+    vi.advanceTimersByTime(30);
+
+    await assertion;
+  });
+
+  it("documents a 5s default bound", () => {
+    expect(DEFAULT_QUERY_TIMEOUT_MS).toBe(5000);
   });
 });
