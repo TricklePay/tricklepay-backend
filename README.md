@@ -671,6 +671,13 @@ NETWORK=mainnet
 CORS_ORIGIN=https://<frontend-host>
 ```
 
+### Concurrency
+
+By design, **only one indexer instance may run against a single database at a time**. The indexer is a singleton service that maintains its own cursor state in the database.
+If you run multiple indexer processes pointing to the same database, they will share the same cursor and concurrently fetch and apply the same events. Because the poller applies events idempotently by ID but relies on linear progression, concurrent pollers will double-apply events, overwrite each other's progress records, and severely corrupt the indexer state.
+
+Scaling the read API separately from the indexer is currently not supported out of the box, as the service runs both halves in a single process. To scale the read API horizontally in the future, the application would need an environment flag to disable the poller on replica instances.
+
 ### Probes
 
 The service exposes two separate checks; wire them to separate probes, since

@@ -1,8 +1,8 @@
-import { rpc } from "@stellar/stellar-sdk";
+import { rpc, scValToNative } from "@stellar/stellar-sdk";
 
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { decodeEvent, InvalidEventError, type StreamEvent } from "../../src/chain/events.js";
+import { decodeEvent, InvalidEventError, type StreamEvent, type CreatedEvent } from "../../src/chain/events.js";
 
 import capture from "../fixtures/get-events.json" with { type: "json" };
 
@@ -142,6 +142,18 @@ describe("decodeEvent", () => {
       "totalAmount",
       "txHash",
     ]);
+  });
+
+  it("maps each positional field to the expected property", () => {
+    // Contract event topics are positional, and the decoder relies on that order.
+    // A test that pins the expected order makes a contract change fail loudly here 
+    // rather than silently mis-mapping fields.
+    const event = page.events[CREATED];
+    const decoded = decodeEvent(event) as CreatedEvent;
+    
+    // Pin the expected order of topics: 1 is sender, 2 is recipient.
+    expect(decoded.sender).toBe(scValToNative(event.topic[1]));
+    expect(decoded.recipient).toBe(scValToNative(event.topic[2]));
   });
 
   it("carries the event id and close time from the RPC envelope", () => {
