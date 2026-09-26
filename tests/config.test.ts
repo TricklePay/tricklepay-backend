@@ -217,8 +217,8 @@ describe("loadConfig — INDEXER_POLL_INTERVAL_MS bounds", () => {
   });
 
   it("accepts an ordinary interval", () => {
-    withEnv({ INDEXER_POLL_INTERVAL_MS: "5000" }, () => {
-      expect(loadConfig().pollIntervalMs).toBe(5000);
+    withEnv({ INDEXER_POLL_INTERVAL_MS: "12000" }, () => {
+      expect(loadConfig().pollIntervalMs).toBe(12000);
     });
   });
 

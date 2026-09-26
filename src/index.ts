@@ -1,4 +1,4 @@
-import { createRpcServer } from "./chain/rpc.js";
+import { createRpcServer, verifyRpcEndpoint } from "./chain/rpc.js";
 
 import { loadConfig } from "./config.js";
 
@@ -22,6 +22,8 @@ import { createShutdown } from "./shutdown.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();
+  const rpcServer = createRpcServer(config);
+  await verifyRpcEndpoint(rpcServer, config.rpcUrl);
 
   const app = await buildServer(config);
   await app.register(rootRoutes(config));
@@ -29,9 +31,8 @@ async function main(): Promise<void> {
   await app.register(statusRoutes);
   await app.register(metricsRoutes);
 
-  const poller = new Poller(createRpcServer(config), config, logger);
-  // The indexer runs in the background alongside the HTTP server. A failure
-  // here is logged rather than left to crash the process serving the API.
+  const poller = new Poller(rpcServer, config, logger);
+  // Transient errors after the startup check are retried in the background.
   poller.start().catch((err) => logger.error({ err }, "indexer stopped"));
 
   // Graceful shutdown order (poller -> HTTP server -> database) is documented
@@ -48,4 +49,7 @@ async function main(): Promise<void> {
   }
 }
 
-void main();
+void main().catch((err) => {
+  logger.error({ err }, "failed to start service");
+  process.exitCode = 1;
+});

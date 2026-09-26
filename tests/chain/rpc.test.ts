@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createRpcServer } from "../../src/chain/rpc.js";
+import { rpc } from "@stellar/stellar-sdk";
+
+import { createRpcServer, verifyRpcEndpoint } from "../../src/chain/rpc.js";
 
 import type { Config } from "../../src/config.js";
 
@@ -85,6 +87,19 @@ describe("createRpcServer — allowHttp flag", () => {
     expect(serverSpy).toHaveBeenCalledWith(
       "http://soroban-testnet.stellar.org",
       expect.objectContaining({ allowHttp: false }),
+    );
+  });
+});
+
+describe("verifyRpcEndpoint", () => {
+  it("fails clearly with the configured URL when the endpoint is unreachable", async () => {
+    const endpoint = "http://127.0.0.1:1";
+    const server = {
+      getLatestLedger: vi.fn().mockRejectedValue(new Error("ECONNREFUSED")),
+    } as unknown as rpc.Server;
+
+    await expect(verifyRpcEndpoint(server, endpoint)).rejects.toThrow(
+      `Unable to reach configured Soroban RPC endpoint "${endpoint}": ECONNREFUSED`,
     );
   });
 });
