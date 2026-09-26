@@ -117,4 +117,29 @@ describe("GET /metrics", () => {
     // The /metrics route itself must appear at least once in the counter.
     expect(response.body).toMatch(/tricklepay_http_requests_total\{[^}]*route="\/metrics"/);
   });
+
+  it("keeps metric label sets bounded by using route patterns instead of resolved paths", async () => {
+    const { buildServer } = await import("../../src/server.js");
+    const app = await buildServer();
+    await app.register(metricsRoutes);
+    
+    // Register a parameterized route
+    app.get("/test/:id", async () => "ok");
+
+    // Hit the route with multiple distinct IDs
+    for (let i = 0; i < 5; i++) {
+      await app.inject({ method: "GET", url: `/test/distinct-id-${i}` });
+    }
+
+    const response = await app.inject({ method: "GET", url: "/metrics" });
+    await app.close();
+
+    // The counter should record 5 hits under the single route pattern label
+    const matches = response.body.match(/tricklepay_http_requests_total\{[^}]*route="\/test\/:id"/g) || [];
+    expect(matches.length).toBe(1);
+    expect(response.body).toMatch(/tricklepay_http_requests_total\{[^}]*route="\/test\/:id"[^}]*\}\s+5/);
+    
+    // Ensure raw paths do not leak into the metric labels
+    expect(response.body).not.toContain("distinct-id");
+  });
 });
