@@ -164,6 +164,31 @@ describe("Poller", () => {
     });
   });
 
+  it("never decreases the recorded position when a provider reports a lower ledger", async () => {
+    // If a provider reports a lower ledger than one already applied, the recorded position
+    // (lastLedger) must not move backwards or history would be reprocessed as new.
+    indexerState.getIndexerPosition.mockResolvedValue({
+      lastLedger: 57000000,
+      chainLedger: 57000000,
+      cursor: CURSOR,
+      updatedAt: new Date(0),
+    });
+    
+    // The provider reports a lower latestLedger (e.g. 56000000)
+    chain.getContractEvents.mockResolvedValue({
+      events: [],
+      latestLedger: 56000000,
+      cursor: CURSOR,
+    });
+
+    await pollOnce();
+
+    // The recorded position (lastLedger) remains at 57000000.
+    expect(indexerState.saveIndexerPosition).toHaveBeenCalledWith(
+      expect.objectContaining({ lastLedger: 57000000 })
+    );
+  });
+
   it("starts a backfill below its configured ledger", async () => {
     // Nothing at or after the start ledger has been processed yet, so the
     // position is the ledger below it — the backfill's full lag shows from the
