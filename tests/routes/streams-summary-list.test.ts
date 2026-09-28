@@ -1,6 +1,6 @@
 import Fastify from "fastify";
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Tests that the figures returned by GET /streams/summary are consistent with
 // the stream records returned by GET /streams. The summary aggregates in the
@@ -170,5 +170,65 @@ describe("GET /streams/summary agrees with GET /streams", () => {
     expect(summary.streaming.withdrawn).toBe(
       activeStream.withdrawn.toString(),
     );
+  });
+});
+
+describe("GET /streams/summary cache", () => {
+  const zero = { count: 0, totalAmount: { toString: () => "0" }, withdrawn: { toString: () => "0" } };
+
+  async function appWith(summaryCacheTtlMs: number) {
+    const app = Fastify();
+    await app.register(streamRoutes, { summaryCacheTtlMs });
+    return app;
+  }
+
+  beforeEach(() => {
+    streamsRepo.aggregateStreams.mockResolvedValue(zero);
+    vi.useFakeTimers({ toFake: ["Date"] });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("serves a repeat request inside the window from the cache", async () => {
+    const app = await appWith(10_000);
+    const first = await app.inject({ method: "GET", url: "/streams/summary" });
+    const second = await app.inject({ method: "GET", url: "/streams/summary" });
+    await app.close();
+
+    expect(streamsRepo.aggregateStreams).toHaveBeenCalledTimes(4);
+    expect(second.json()).toEqual(first.json());
+  });
+
+  it("queries again once the window has passed", async () => {
+    const app = await appWith(10_000);
+    await app.inject({ method: "GET", url: "/streams/summary" });
+    vi.advanceTimersByTime(10_000);
+    await app.inject({ method: "GET", url: "/streams/summary" });
+    await app.close();
+
+    expect(streamsRepo.aggregateStreams).toHaveBeenCalledTimes(8);
+  });
+
+  it("never advertises a max-age beyond the window", async () => {
+    const app = await appWith(10_000);
+    const first = await app.inject({ method: "GET", url: "/streams/summary" });
+    vi.advanceTimersByTime(4_000);
+    const second = await app.inject({ method: "GET", url: "/streams/summary" });
+    await app.close();
+
+    expect(first.headers["cache-control"]).toBe("public, max-age=10");
+    expect(second.headers["cache-control"]).toBe("public, max-age=6");
+  });
+
+  it("does not cache when the window is zero", async () => {
+    const app = await appWith(0);
+    await app.inject({ method: "GET", url: "/streams/summary" });
+    const second = await app.inject({ method: "GET", url: "/streams/summary" });
+    await app.close();
+
+    expect(streamsRepo.aggregateStreams).toHaveBeenCalledTimes(8);
+    expect(second.headers["cache-control"]).toBe("no-store");
   });
 });

@@ -122,11 +122,13 @@ function statusWhere(status: StreamStatus, now: bigint): Prisma.StreamWhereInput
   }
 }
 
-export async function streamRoutes(app: FastifyInstance): Promise<void> {
+export async function streamRoutes(app: FastifyInstance, opts: { summaryCacheTtlMs?: number } = {},): Promise<void> {
   // Ensure the shared schemas are available whether this plugin is registered
   // on a full server (which calls addSchema centrally) or a bare Fastify
   // instance in tests. Fastify deduplicates by $id, so calling addSchema when
   // the schema is already present throws; we guard against that here.
+  const summaryCacheTtlMs = opts.summaryCacheTtlMs ?? 30_000;
+  let summaryCache: { body: Record<string, unknown>; expiresAt: number } | null = null;
   if (!app.getSchema(STREAM_VIEW_SCHEMA_ID)) app.addSchema(streamViewSchema);
   if (!app.getSchema(STREAM_LIST_RESPONSE_SCHEMA_ID)) app.addSchema(streamListResponseSchema);
   if (!app.getSchema(STREAM_SUMMARY_RESPONSE_SCHEMA_ID)) {
@@ -302,6 +304,15 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
       },
     },
     async (_request, reply) => {
+      const nowMs = Date.now();
+
+      // Serve the cached body only while strictly inside its window.
+      if (summaryCache && nowMs < summaryCache.expiresAt) {
+        const remaining = Math.floor((summaryCache.expiresAt - nowMs) / 1000);
+        reply.header("Cache-Control", `public, max-age=${remaining}`);
+        return summaryCache.body;
+      }
+
       const now = nowSeconds();
       const entries = await Promise.all(
         SUMMARY_STATUSES.map(async (status) => {
@@ -316,9 +327,15 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
           ] as const;
         }),
       );
+      const body = Object.fromEntries(entries);
 
-      reply.header("Cache-Control", "public, max-age=30");
-      return Object.fromEntries(entries);
+      if (summaryCacheTtlMs > 0) {
+        summaryCache = { body, expiresAt: nowMs + summaryCacheTtlMs };
+        reply.header("Cache-Control", `public, max-age=${Math.floor(summaryCacheTtlMs / 1000)}`);
+      } else {
+        reply.header("Cache-Control", "no-store");
+      }
+      return body;
     },
   );
 

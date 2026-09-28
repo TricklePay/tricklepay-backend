@@ -21,6 +21,7 @@ const mockConfig = {
   maxPagesPerTick: 1000,
   bodyLimit: 1048576,
   queryStringLimit: 2048,
+  summaryCacheTtlMs: 30000,
   trustedProxies: [],
 };
 

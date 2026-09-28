@@ -125,6 +125,7 @@ export interface Config {
   maxPagesPerTick: number;
   bodyLimit: number;
   queryStringLimit: number;
+  summaryCacheTtlMs:number;
   trustedProxies: string[];
 }
 
@@ -163,6 +164,7 @@ export function loadConfig(): Config {
     ),
     bodyLimit: integer("BODY_LIMIT", 1048576), // 1MB default
     queryStringLimit: integer("QUERY_STRING_LIMIT", 2048), // 2KB default
+    summaryCacheTtlMs: integer("SUMMARY_CACHE_TTL_MS", 30000), // 30s default; 0 disables   ← add
     // Forwarded headers are honored only for these direct peers (#75).
     trustedProxies: parseTrustedProxies(process.env.TRUSTED_PROXIES),
   };

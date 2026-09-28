@@ -176,7 +176,7 @@ The `GET /streams` endpoint supports pagination through the following query para
 | `includeTotal` | boolean | false | - | When `true`, includes the total count of matching streams |
 
 **Note:** When `cursor` is provided, `offset` is ignored and offset ceiling checks are skipped. Use cursor-based pagination for stable results under concurrent inserts.
-| `GET` | `/streams/summary` | Aggregate counts and exact total amounts per status (`pending`, `streaming`, `completed`, `cancelled`). Useful for dashboard overview displays without fetching individual streams. Response is cached for 30 seconds. |
+| `GET` | `/streams/summary` | Aggregate counts and exact total amounts per status (`pending`, `streaming`, `completed`, `cancelled`). Useful for dashboard overview displays without fetching individual streams. "Responses are cached in memory and over HTTP for SUMMARY_CACHE_TTL_MS (default 30 s)." |
 | `GET` | `/streams/:id` | A single stream by id. |
 | `GET` | `/metrics` | Prometheus metrics. |
 
@@ -206,6 +206,7 @@ The `/streams/summary` endpoint returns aggregate counts and exact total amounts
 
 All amounts are exact integer base units encoded as strings (not JSON numbers) to preserve full 128-bit precision. The response is cached for 30 seconds (`Cache-Control: public, max-age=30`).
 
+| `SUMMARY_CACHE_TTL_MS` | No | `30000` | How long `GET /streams/summary` responses are cached, in milliseconds. `0` disables caching. |
 **Data Types and Precision**
 - **Amounts** (`totalAmount`, `withdrawn`, `vested`, `withdrawable`, `locked`) are returned as strings holding integer base units.
 - **Times** (`startTime`, `endTime`, `cliffTime`) are returned as Unix seconds encoded as strings.
