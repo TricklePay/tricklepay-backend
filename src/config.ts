@@ -60,6 +60,10 @@ export const DEFAULT_MAX_BACKOFF_MS = 60000;
 // that a normal catch-up drains in one tick.
 export const DEFAULT_MAX_PAGES_PER_TICK = 1000;
 
+// Default per-IP request limit for each fixed window.
+export const DEFAULT_RATE_LIMIT_MAX = 100;
+export const DEFAULT_RATE_LIMIT_WINDOW_MS = 60_000;
+
 function positiveInteger(name: string, fallback: number, min: number): number {
   const raw = process.env[name];
   if (!raw || raw.trim() === "") return fallback;
@@ -126,6 +130,8 @@ export interface Config {
   readonly bodyLimit: number;
   readonly queryStringLimit: number;
   readonly trustedProxies: readonly string[];
+  readonly rateLimitMax?: number;
+  readonly rateLimitWindowMs?: number;
 }
 
 export function loadConfig(): Config {
@@ -140,6 +146,15 @@ export function loadConfig(): Config {
 
   const contractId = required("STREAM_CONTRACT_ID");
   validateContractId(contractId);
+
+  const rateLimitMax = integer("RATE_LIMIT_MAX", DEFAULT_RATE_LIMIT_MAX);
+  if (rateLimitMax === 0) {
+    throw new Error("RATE_LIMIT_MAX must be greater than zero");
+  }
+  const rateLimitWindowMs = integer("RATE_LIMIT_WINDOW_MS", DEFAULT_RATE_LIMIT_WINDOW_MS);
+  if (rateLimitWindowMs === 0) {
+    throw new Error("RATE_LIMIT_WINDOW_MS must be greater than zero");
+  }
 
   return {
     port: integer("PORT", 3000),
@@ -165,5 +180,7 @@ export function loadConfig(): Config {
     queryStringLimit: integer("QUERY_STRING_LIMIT", 2048), // 2KB default
     // Forwarded headers are honored only for these direct peers (#75).
     trustedProxies: parseTrustedProxies(process.env.TRUSTED_PROXIES),
+    rateLimitMax,
+    rateLimitWindowMs,
   };
 }

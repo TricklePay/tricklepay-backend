@@ -1,13 +1,14 @@
-# Request Size Limits
+# Request Limits
 
 The TricklePay backend enforces configurable limits on incoming HTTP requests to protect against resource exhaustion and malformed payloads. This document describes the limits, their defaults, and the behavior when they are exceeded.
 
 ## Overview
 
-Two separate limits are enforced:
+Three separate limits are enforced:
 
 1. **Body size limit**: Maximum size of the request body (POST/PUT payloads).
 2. **Query string limit**: Maximum length of the URL query string portion.
+3. **Request rate limit**: Maximum requests from one client IP in a fixed time window.
 
 Both limits are configurable via environment variables and have sensible defaults for typical API usage.
 
@@ -17,6 +18,8 @@ Both limits are configurable via environment variables and have sensible default
 |----------|---------|-------------|
 | `BODY_LIMIT` | `1048576` (1 MB) | Maximum request body size in bytes |
 | `QUERY_STRING_LIMIT` | `2048` (2 KB) | Maximum URL query string length in bytes |
+| `RATE_LIMIT_MAX` | `100` | Maximum requests per client IP per rate-limit window |
+| `RATE_LIMIT_WINDOW_MS` | `60000` (1 minute) | Duration of the fixed request rate-limit window in milliseconds |
 
 ### Setting Custom Limits
 
@@ -28,6 +31,10 @@ BODY_LIMIT=2097152
 
 # Allow up to 4KB query strings
 QUERY_STRING_LIMIT=4096
+
+# Allow 100 requests per client IP per minute
+RATE_LIMIT_MAX=100
+RATE_LIMIT_WINDOW_MS=60000
 ```
 
 **Note:** Values are in bytes. Common conversions:
@@ -97,6 +104,12 @@ curl "http://localhost:3000/streams?$(python3 -c 'print("x" * 3000)')"
 ### What Counts Toward the Limit
 
 Only the query string itself is measured — the characters after the `?` in the URL. The path, hostname, and protocol are not included.
+
+## Request Rate Limit
+
+Each client IP is allowed `RATE_LIMIT_MAX` requests during a fixed window of `RATE_LIMIT_WINDOW_MS`. The default is 100 requests per minute. When the limit is exceeded, the server returns HTTP 429 with a `Retry-After` header containing the remaining window duration in seconds, rounded up to the next whole second.
+
+The in-memory limiter is local to one server process, so clients behind a load balancer may receive a separate allowance from each instance. Fastify uses the direct peer address unless the proxy is listed in `TRUSTED_PROXIES`; only configure trusted proxies when they overwrite forwarded client-IP headers.
 
 **Example:**
 ```

@@ -14,7 +14,11 @@ import Fastify, {
 
 import { swaggerConfig, swaggerUiConfig } from "./api-spec.js";
 
-import type { Config } from "./config.js";
+import {
+  DEFAULT_RATE_LIMIT_MAX,
+  DEFAULT_RATE_LIMIT_WINDOW_MS,
+  type Config,
+} from "./config.js";
 
 import { checkHealth } from "./db.js";
 
@@ -93,6 +97,8 @@ export function errorCodeForStatus(statusCode: number): ApiErrorCode {
 // with $ref and the plugin emits them as reusable OpenAPI components.
 export async function buildServer(config?: Partial<Config>): Promise<FastifyInstance> {
   const trustedProxies = config?.trustedProxies ?? [];
+  const rateLimitMax = config?.rateLimitMax ?? DEFAULT_RATE_LIMIT_MAX;
+  const rateLimitWindowMs = config?.rateLimitWindowMs ?? DEFAULT_RATE_LIMIT_WINDOW_MS;
   const app = Fastify({
     // Fastify types its logger as FastifyBaseLogger; the pino instance
     // satisfies that interface at runtime.
@@ -149,6 +155,46 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
   // before routing, so even requests that fail early carry the header.
   app.addHook("onRequest", async (request, reply) => {
     reply.header(REQUEST_ID_HEADER, request.id);
+  });
+
+  const clientWindows = new Map<string, { requests: number; resetAt: number }>();
+  const maxTrackedClients = 10_000;
+
+  app.addHook("onRequest", async (request, reply) => {
+    const now = Date.now();
+    let window = clientWindows.get(request.ip);
+
+    if (!window || window.resetAt <= now) {
+      if (window) {
+        clientWindows.delete(request.ip);
+      } else if (clientWindows.size >= maxTrackedClients) {
+        for (const [ip, trackedWindow] of clientWindows) {
+          if (trackedWindow.resetAt <= now) clientWindows.delete(ip);
+        }
+        if (clientWindows.size >= maxTrackedClients) {
+          const oldestIp = clientWindows.keys().next().value;
+          if (oldestIp !== undefined) clientWindows.delete(oldestIp);
+        }
+      }
+      window = { requests: 0, resetAt: now + rateLimitWindowMs };
+    }
+
+    clientWindows.delete(request.ip);
+    clientWindows.set(request.ip, window);
+
+    if (window.requests >= rateLimitMax) {
+      const retryAfter = Math.max(1, Math.ceil((window.resetAt - now) / 1000));
+      return reply
+        .header("Retry-After", String(retryAfter))
+        .status(429)
+        .send({
+          code: errorCodeForStatus(429),
+          error: "rate limit exceeded",
+          requestId: request.id,
+        });
+    }
+
+    window.requests += 1;
   });
 
   // Attach the request id to error bodies so an error a client saw can be

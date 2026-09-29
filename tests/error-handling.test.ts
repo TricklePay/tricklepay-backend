@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   buildServer,
@@ -27,6 +27,36 @@ describe("errorCodeForStatus (#73)", () => {
 
   it("falls back to REQUEST_ERROR for other client errors", () => {
     expect(errorCodeForStatus(429)).toBe("REQUEST_ERROR");
+  });
+});
+
+describe("request rate limiting (#381)", () => {
+  it("returns Retry-After for the remaining fixed-window duration", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(10_000);
+    const app = await buildServer({ rateLimitMax: 1, rateLimitWindowMs: 5000 });
+    app.get("/rate-limited", async () => ({ status: "ok" }));
+
+    try {
+      const first = await app.inject({ method: "GET", url: "/rate-limited" });
+      expect(first.statusCode).toBe(200);
+
+      now.mockReturnValue(12_100);
+      const limited = await app.inject({ method: "GET", url: "/rate-limited" });
+      expect(limited.statusCode).toBe(429);
+      expect(limited.headers["retry-after"]).toBe("3");
+      expect(limited.json()).toMatchObject({ code: "REQUEST_ERROR", error: "rate limit exceeded" });
+
+      now.mockReturnValue(14_100);
+      const nearlyExpired = await app.inject({ method: "GET", url: "/rate-limited" });
+      expect(nearlyExpired.headers["retry-after"]).toBe("1");
+
+      now.mockReturnValue(15_000);
+      const reset = await app.inject({ method: "GET", url: "/rate-limited" });
+      expect(reset.statusCode).toBe(200);
+    } finally {
+      await app.close();
+      now.mockRestore();
+    }
   });
 });
 
