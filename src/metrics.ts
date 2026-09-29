@@ -290,6 +290,12 @@ export const eventsFailed = new Counter(
   ["kind"],
 );
 
+/** Number of failed event records that have not been resolved. */
+export const failedEventBacklog = new Gauge(
+  "tricklepay_indexer_failed_events",
+  "Number of unresolved failed event records awaiting resolution.",
+);
+
 // HTTP ----------------------------------------------------------------------
 
 /** HTTP request durations in milliseconds, by method and route. */

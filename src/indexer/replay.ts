@@ -13,6 +13,7 @@ import { logger } from "../logger.js";
 import {
   clearFailedEvent,
   listFailedEvents,
+  refreshFailedEventBacklog,
   recordFailedEvent,
   type FailedEventInput,
 } from "../repositories/failed-events.js";
@@ -162,6 +163,8 @@ export async function replayFailedEvents(
       failed += 1;
     }
   }
+
+  if (!dryRun) await refreshFailedEventBacklog();
 
   return { attempted, succeeded, failed, dryRun };
 }

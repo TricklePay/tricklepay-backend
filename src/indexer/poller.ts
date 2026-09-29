@@ -26,6 +26,7 @@ import {
 import {
   clearFailedEvent,
   failedEventFromDecoded,
+  refreshFailedEventBacklog,
   recordFailedEvent,
 } from "../repositories/failed-events.js";
 
@@ -79,6 +80,7 @@ export class Poller {
 
   async start(): Promise<void> {
     this.running = true;
+    await refreshFailedEventBacklog();
     let position = await this.resolveStart();
 
     while (this.running) {
@@ -311,6 +313,8 @@ export class Poller {
       chainLedger: page.latestLedger,
       cursor: nextState.cursor,
     });
+
+    await refreshFailedEventBacklog();
 
     // Update the lag gauge. Never negative: the indexer's position cannot
     // outrun the chain head that was observed in the same poll.

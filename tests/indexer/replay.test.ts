@@ -13,6 +13,7 @@ const chain = vi.hoisted(() => ({
 const failedEvents = vi.hoisted(() => ({
   clearFailedEvent: vi.fn(),
   listFailedEvents: vi.fn(),
+  refreshFailedEventBacklog: vi.fn(),
   recordFailedEvent: vi.fn(),
 }));
 
@@ -55,6 +56,7 @@ beforeEach(() => {
     lastFailedAt: new Date(0),
   }]);
   failedEvents.clearFailedEvent.mockResolvedValue(undefined);
+  failedEvents.refreshFailedEventBacklog.mockResolvedValue(undefined);
   failedEvents.recordFailedEvent.mockResolvedValue(undefined);
   chain.getContractEvents.mockResolvedValue({
     events: [captured.events[1]],
@@ -91,5 +93,6 @@ describe("replayFailedEvents", () => {
       { eventId: WITHDRAWAL_EVENT_ID },
       database.tx,
     );
+    expect(failedEvents.refreshFailedEventBacklog).toHaveBeenCalled();
   });
 });
