@@ -35,7 +35,7 @@ export async function applyEvent(
   networkPassphrase: string,
   event: StreamEvent,
   tx?: Prisma.TransactionClient
-): Promise<ApplyOutcome> {
+]: Promise<ApplyOutcome> {
   switch (event.kind) {
     case "created":
       return insertStream({

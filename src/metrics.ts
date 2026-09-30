@@ -283,6 +283,12 @@ export const indexerPollLastSuccess = new Gauge(
   "Unix timestamp in seconds of the last successful indexer poll iteration. 0 before the first success; use with time() to detect a stalled poller.",
 );
 
+/** Number of streams the indexer has indexed. */
+export const indexedStreams = new Gauge(
+  "tricklepay_indexer_indexed_streams",
+  "Number of streams the indexer has indexed.",
+);
+
 /** Total individual events that failed to apply and were skipped. */
 export const eventsFailed = new Counter(
   "tricklepay_indexer_events_failed",
