@@ -67,6 +67,9 @@ export class Poller {
   // first success, so a single transient blip does not leave the poller
   // stuck at a long delay.
   private consecutiveFailures = 0;
+  // Timestamp of the last lag warning log, to avoid spamming warnings on
+  // every tick when the indexer is behind.
+  private lastLagWarningTimestamp = 0;
   private readonly log: Logger;
 
   constructor(
@@ -311,7 +314,22 @@ export class Poller {
 
     // Update the lag gauge. Never negative: the indexer's position cannot
     // outrun the chain head that was observed in the same poll.
-    indexerLagLedgers.set(Math.max(0, page.latestLedger - lastLedger));
+    const lag = Math.max(0, page.latestLedger - lastLedger);
+    indexerLagLedgers.set(lag);
+
+    // Log a warning if the indexer falls behind the configured threshold.
+    // A cooldown of 5 minutes prevents spamming the log on every tick.
+    if (lag > this.config.indexerLagWarningThreshold) {
+      const now = Number(nowSeconds());
+      const warningCooldownSeconds = 300; // 5 minutes
+      if (now - this.lastLagWarningTimestamp >= warningCooldownSeconds) {
+        this.log.warn(
+          { lag, threshold: this.config.indexerLagWarningThreshold },
+          "indexer is behind chain head by more than configured threshold",
+        );
+        this.lastLagWarningTimestamp = now;
+      }
+    }
 
     // Once a page is fetched, always continue from its cursor.
     return { cursor: page.cursor, lastLedger };

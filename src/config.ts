@@ -60,6 +60,11 @@ export const DEFAULT_MAX_BACKOFF_MS = 60000;
 // that a normal catch-up drains in one tick.
 export const DEFAULT_MAX_PAGES_PER_TICK = 1000;
 
+// Default threshold for logging a warning when the indexer falls behind.
+// When the lag exceeds this many ledgers, a warning is logged (with a cooldown
+// to avoid spamming logs on every tick).
+export const DEFAULT_INDEXER_LAG_WARNING_THRESHOLD = 1000;
+
 function positiveInteger(name: string, fallback: number, min: number): number {
   const raw = process.env[name];
   if (!raw || raw.trim() === "") return fallback;
@@ -123,6 +128,7 @@ export interface Config {
   readonly startLedger: number;
   readonly maxBackoffMs: number;
   readonly maxPagesPerTick: number;
+  readonly indexerLagWarningThreshold: number;
   readonly bodyLimit: number;
   readonly queryStringLimit: number;
   readonly trustedProxies: readonly string[];
@@ -160,6 +166,11 @@ export function loadConfig(): Config {
       "INDEXER_MAX_PAGES_PER_TICK",
       DEFAULT_MAX_PAGES_PER_TICK,
       1,
+    ),
+    indexerLagWarningThreshold: positiveInteger(
+      "INDEXER_LAG_WARNING_THRESHOLD",
+      DEFAULT_INDEXER_LAG_WARNING_THRESHOLD,
+      0,
     ),
     bodyLimit: integer("BODY_LIMIT", 1048576), // 1MB default
     queryStringLimit: integer("QUERY_STRING_LIMIT", 2048), // 2KB default
