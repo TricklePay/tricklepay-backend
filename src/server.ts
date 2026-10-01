@@ -13,7 +13,11 @@ import Fastify, {
 
 import { swaggerConfig, swaggerUiConfig } from "./api-spec.js";
 
-import type { Config } from "./config.js";
+import {
+  DEFAULT_RATE_LIMIT_MAX,
+  DEFAULT_RATE_LIMIT_WINDOW_MS,
+  type Config,
+} from "./config.js";
 
 import { registerErrorHandlers } from "./error-handlers.js";
 
@@ -36,7 +40,7 @@ import { registerSharedSchemas } from "./schemas.js";
 // Request-id sanitisation lives in `./request-id.ts`, the echo hook in
 // `./request-id-hook.ts`, error redaction in `./error-redaction.ts`, error
 // handlers in `./error-handlers.ts`, shared schemas in `./schemas.ts`, and
-// health routes in `./health-routes.ts` — all independently testable.
+// health routes in `./health-routes.ts` â€” all independently testable.
 
 // Builds the Fastify instance with the shared logger, CORS, the OpenAPI
 // plugin, and the routes that do not depend on external services. Route groups
@@ -48,6 +52,8 @@ import { registerSharedSchemas } from "./schemas.js";
 // with $ref and the plugin emits them as reusable OpenAPI components.
 export async function buildServer(config?: Partial<Config>): Promise<FastifyInstance> {
   const trustedProxies = config?.trustedProxies ?? [];
+  const rateLimitMax = config?.rateLimitMax ?? DEFAULT_RATE_LIMIT_MAX;
+  const rateLimitWindowMs = config?.rateLimitWindowMs ?? DEFAULT_RATE_LIMIT_WINDOW_MS;
   const app = Fastify({
     // Fastify types its logger as FastifyBaseLogger; the pino instance
     // satisfies that interface at runtime.

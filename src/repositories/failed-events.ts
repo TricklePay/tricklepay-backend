@@ -15,6 +15,8 @@ import type { StreamEvent } from "../chain/events.js";
 
 import { prisma } from "../db.js";
 
+import { failedEventBacklog } from "../metrics.js";
+
 export interface FailedEventInput {
   // The RPC event id — unique per event on chain and used as the primary key.
   eventId: string;
@@ -50,7 +52,19 @@ export async function recordFailedEvent(input: FailedEventInput): Promise<void> 
 
 // Returns the total count of unresolved failed events.
 export async function countFailedEvents(): Promise<number> {
-  return prisma.failedEvent.count();
+  const count = await prisma.failedEvent.count();
+  failedEventBacklog.set(count);
+  return count;
+}
+
+// Refresh telemetry without allowing a metrics-only query failure to interrupt
+// indexing or replay after the underlying event operation has completed.
+export async function refreshFailedEventBacklog(): Promise<void> {
+  try {
+    await countFailedEvents();
+  } catch {
+    // Keep the last observed gauge value until the database is reachable again.
+  }
 }
 
 // Removes the failed-event row for an event that subsequently applied cleanly.

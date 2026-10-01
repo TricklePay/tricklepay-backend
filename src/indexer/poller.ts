@@ -26,6 +26,7 @@ import {
 import {
   clearFailedEvent,
   failedEventFromDecoded,
+  refreshFailedEventBacklog,
   recordFailedEvent,
 } from "../repositories/failed-events.js";
 
@@ -38,7 +39,7 @@ import { applyEvent } from "./apply.js";
 // The loop's state between ticks: where to read from next, and how far the
 // indexer has actually got. `lastLedger` is carried across ticks because a page
 // that applies nothing must leave it alone rather than reset it.
-interface Position {
+interface IndexerState {
   cursor?: string;
   startLedger?: number;
   lastLedger: number;
@@ -79,6 +80,7 @@ export class Poller {
 
   async start(): Promise<void> {
     this.running = true;
+    await refreshFailedEventBacklog();
     let position = await this.resolveStart();
 
     await this.runLoop(position);
@@ -130,7 +132,7 @@ export class Poller {
   // stored. A backfill has processed nothing at or after its start ledger, so
   // it claims the one below. Starting from the chain's head means deliberately
   // skipping everything before it, so that head is already fully processed.
-  private async resolveStart(): Promise<Position> {
+  private async resolveStart(): Promise<IndexerState> {
     const saved = await getIndexerPosition();
     if (saved?.cursor) {
       this.log.info({ cursor: saved.cursor }, "resuming from saved cursor");
@@ -193,8 +195,7 @@ export class Poller {
       }
 
       pagesFetched.inc();
-      const nextPosition = await this.applyPage(page, current.lastLedger);
-      current = nextPosition;
+      current = await this.applyPage(page, current);
       pages += 1;
       events += page.events.length;
 
@@ -228,8 +229,8 @@ export class Poller {
     return current;
   }
 
-  private async applyPage(page: EventPage, previousLastLedger: number): Promise<Position> {
-    let lastLedger = previousLastLedger;
+  private async applyPage(page: EventPage, state: IndexerState): Promise<IndexerState> {
+    const nextState: IndexerState = { ...state, cursor: page.cursor };
 
     for (const raw of page.events) {
       let event;
@@ -306,7 +307,7 @@ export class Poller {
       // Raised only once the write has landed. If applying throws, the tick
       // aborts without saving, so the page is read again and this ledger is
       // never claimed as processed on the strength of a write that failed.
-      lastLedger = Math.max(lastLedger, event.ledger);
+      nextState.lastLedger = Math.max(nextState.lastLedger, event.ledger);
       eventsApplied.inc({ kind: event.kind, outcome });
     }
 
