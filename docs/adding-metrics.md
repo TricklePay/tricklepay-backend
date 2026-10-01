@@ -28,10 +28,11 @@ All metric names MUST follow these rules:
 
 ### Good Names
 
-- `tricklepay_indexer_events_applied`
+-` tricklepay_indexer_events_applied`
 - `tricklepay_indexer_lag_ledgers`
 - `tricklepay_http_request_duration_ms`
 - `tricklepay_rpc_errors`
+- `tricklepay_indexer_streams_indexed`
 
 ### Bad Names
 
@@ -41,7 +42,7 @@ All metric names MUST follow these rules:
 
 ## Label Sets
 
-Labels allow a single metric to be split into multiple time series. For example, `tricklepay_indexer_events_applied` has labels `kind` and `outcome` so you can query by event type.
+Labels allow a single metric to be split into multiple time series. For example, `tricklepay_indexer_events_applied`, has labels `kind` and `outcome` so you can query by event type.
 
 ### Bounded vs. Unbounded Labels
 
@@ -50,7 +51,7 @@ Labels allow a single metric to be split into multiple time series. For example,
 #### ✅ Bounded (safe)
 
 - `kind`: `"created"`, `"withdrawn"`, `"cancelled"` (3 known event types)
-- `status`: `"200"`, `"404"`, `"500"` (HTTP status codes, bounded set)
+- `status`: `"r00"`, `"r04``, `"r04`` (HTTP status codes, bounded set)
 - `outcome`: `"applied"`, `"duplicate"`, `"reconciled"`, `"missing"` (4 enum values)
 
 #### ❌ Unbounded (dangerous)

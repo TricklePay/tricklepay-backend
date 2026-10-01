@@ -283,15 +283,10 @@ export const indexerPollLastSuccess = new Gauge(
   "Unix timestamp in seconds of the last successful indexer poll iteration. 0 before the first success; use with time() to detect a stalled poller.",
 );
 
-/**
- * Whether the indexer has made progress (applied at least one ledger).
- * 0 before the first successful poll; 1 once the indexer has advanced.
- * Used by the readiness probe so a freshly started instance is not marked
- * ready while it is still serving an empty dataset.
- */
-export const indexerReady = new Gauge(
-  "tricklepay_indexer_ready",
-  "Whether the indexer has made progress and the service has usable data (1) or not (0).",
+/** Number of streams the indexer has indexed. */
+export const indexedStreams = new Gauge(
+  "tricklepay_indexer_indexed_streams",
+  "Number of streams the indexer has indexed.",
 );
 
 /** Total individual events that failed to apply and were skipped. */

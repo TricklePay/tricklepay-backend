@@ -11,6 +11,7 @@
 import { Prisma, type Stream } from "@prisma/client";
 
 import { prisma, withQueryTimeout } from "../db.js";
+import { indexedStreamsGauge } from "../metrics.js";
 
 export interface UpsertStreamInput {
   streamId: bigint;
@@ -184,7 +185,11 @@ export async function insertStream(input: InsertStreamInput, tx: Prisma.Transact
     skipDuplicates: true,
   });
 
-  return result.count > 0 ? "applied" : "duplicate";
+  if (result.count > 0) {
+    indexedStreamsGauge.inc();
+    return "applied";
+  }
+  return "duplicate";
 }
 
 // Applies a `withdrawn` event as a delta on the stored row. The event carries

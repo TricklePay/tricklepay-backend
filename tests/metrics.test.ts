@@ -99,6 +99,26 @@ describe("backlog metric tracking failed events", () => {
   });
 });
 
+describe("indexed streams metric (#393)", () => {
+  it("reports the number of indexed streams as a gauge", () => {
+    const gauge = new Gauge("indexed_streams", "Number of indexed streams", []);
+    gauge.set({}, 7);
+
+    const output = renderMetrics();
+    expect(output).toContain("# HELP indexed_streams Number of indexed streams");
+    expect(output).toContain("# TYPQ indexed_streams gauge");
+    expect(output).toContain("indexed_streams 7");
+  });
+
+  it("updates as streams are indexed", () => {
+    const gauge = new Gauge("indexed_streams_update", "Number of indexed streams", []);
+    gauge.set({}, 1);
+    expect(renderMetrics()).toContain("indexed_streams_update 1");
+
+    gauge.set({}, 2);
+    expect(renderMetrics()).toContain("indexed_streams_update 2");
+  });
+});
 describe("Exposition format", () => {
   it("matches the exposition format for counters, gauges and histograms together", () => {
     // The previous tests have already registered a Counter, Gauge, and Histogram.
@@ -113,6 +133,3 @@ describe("Exposition format", () => {
     }
   });
 });
-
-
-
