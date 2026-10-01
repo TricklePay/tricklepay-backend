@@ -95,4 +95,84 @@ describe("replayFailedEvents", () => {
     );
     expect(failedEvents.refreshFailedEventBacklog).toHaveBeenCalled();
   });
+
+  it("replays a recorded failed event and applies it to stream state", async () => {
+    // The recorded failure predates the event applying cleanly; replay must
+    // find the event on chain, apply it for real, and report success.
+    const appliedAmounts: bigint[] = [];
+    indexer.applyEvent.mockImplementation(async (_server, _contract, _passphrase, event) => {
+      appliedAmounts.push(event.amount);
+      return "applied";
+    });
+
+    const result = await replayFailedEvents(
+      {} as rpc.Server,
+      CONTRACT_ID,
+      PASSPHRASE,
+    );
+
+    expect(appliedAmounts).toHaveLength(1);
+    expect(result).toEqual({ attempted: 1, succeeded: 1, failed: 0, dryRun: false });
+    expect(failedEvents.clearFailedEvent).toHaveBeenCalledWith(
+      { eventId: WITHDRAWAL_EVENT_ID },
+      database.tx,
+    );
+    expect(failedEvents.recordFailedEvent).not.toHaveBeenCalled();
+  });
+
+  it("clears the failure record after a successful replay, inside the apply transaction", async () => {
+    indexer.applyEvent.mockResolvedValue("applied");
+
+    await replayFailedEvents({} as rpc.Server, CONTRACT_ID, PASSPHRASE);
+
+    // The clear happens with the same transaction client applyEvent used, so
+    // a crash can never leave the event applied but still marked failed.
+    expect(failedEvents.clearFailedEvent).toHaveBeenCalledTimes(1);
+    expect(failedEvents.clearFailedEvent).toHaveBeenCalledWith(
+      { eventId: WITHDRAWAL_EVENT_ID },
+      database.tx,
+    );
+    expect(failedEvents.recordFailedEvent).not.toHaveBeenCalled();
+  });
+
+  it("keeps the failure record when the event can no longer be found on chain", async () => {
+    chain.getContractEvents.mockResolvedValue({
+      events: [],
+      latestLedger: 56999999,
+      cursor: "",
+    });
+
+    const result = await replayFailedEvents(
+      {} as rpc.Server,
+      CONTRACT_ID,
+      PASSPHRASE,
+    );
+
+    expect(result).toEqual({ attempted: 1, succeeded: 0, failed: 1, dryRun: false });
+    expect(indexer.applyEvent).not.toHaveBeenCalled();
+    expect(failedEvents.clearFailedEvent).not.toHaveBeenCalled();
+    expect(failedEvents.recordFailedEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventId: WITHDRAWAL_EVENT_ID,
+        error: expect.stringContaining("not found on chain"),
+      }),
+    );
+  });
+
+  it("dry-run reports what would happen without touching the database", async () => {
+    indexer.applyEvent.mockResolvedValue("applied");
+
+    const result = await replayFailedEvents(
+      {} as rpc.Server,
+      CONTRACT_ID,
+      PASSPHRASE,
+      { dryRun: true },
+    );
+
+    expect(result).toEqual({ attempted: 1, succeeded: 1, failed: 0, dryRun: true });
+    expect(indexer.applyEvent).not.toHaveBeenCalled();
+    expect(database.transaction).not.toHaveBeenCalled();
+    expect(failedEvents.clearFailedEvent).not.toHaveBeenCalled();
+    expect(failedEvents.recordFailedEvent).not.toHaveBeenCalled();
+  });
 });

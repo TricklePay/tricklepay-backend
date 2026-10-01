@@ -2,8 +2,8 @@ import Fastify from "fastify";
 
 import { describe, expect, it } from "vitest";
 
-// Root endpoint returns the configured Stellar network name so clients can
-// catch testnet/mainnet wiring mistakes without reading private configuration.
+// Root endpoint returns the configured Stellar network name so clients
+can // catch testnet/mainnet wiring mistakes without reading private configuration.
 
 const { rootRoutes } = await import("../../src/routes/root.js");
 
@@ -12,7 +12,7 @@ const mockConfig = {
   port: 3000,
   host: "0.0.0.0",
   databaseUrl: "postgres://test",
-  networkPassphrase: "Test SDF Network ; September 2015",
+  networkPassphrase: "Test DF Network ; September 2015",
   rpcUrl: "https://soroban-testnet.stellar.org",
   contractId: "CA123",
   pollIntervalMs: 5000,
@@ -60,7 +60,6 @@ describe("GET /", () => {
 
   it("includes the indexed contract id", async () => {
     const { body } = await getRoot();
-    expect(body.contractId).toBe(mockConfig.contractId);
+    expect(body.contractId).toBe(config.contractId);
   });
-
 });

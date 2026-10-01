@@ -8,7 +8,6 @@ import swaggerUi from "@fastify/swagger-ui";
 
 import Fastify, {
   type FastifyBaseLogger,
-  type FastifyError,
   type FastifyInstance,
 } from "fastify";
 
@@ -20,72 +19,28 @@ import {
   type Config,
 } from "./config.js";
 
-import { checkHealth } from "./db.js";
+import { registerErrorHandlers } from "./error-handlers.js";
+
+import { registerHealthRoutes } from "./health-routes.js";
 
 import { logger } from "./logger.js";
 
-import { httpRequestDuration, httpRequestsTotal } from "./metrics.js";
+import { registerMetricsPlugin } from "./metrics-plugin.js";
 
-import { isTrustedProxyAddress, parseTrustedProxies } from "./proxy.js";
+import { isTrustedProxyAddress } from "./proxy.js";
+
+import { parseQueryString } from "./query-string-parser.js";
 
 import { REQUEST_ID_HEADER, sanitizeRequestId } from "./request-id.js";
 
-import { getIndexerPosition } from "./repositories/indexer-state.js";
+import { registerRequestIdHook } from "./request-id-hook.js";
 
-import {
-  apiErrorSchema,
-  indexerStatusSchema,
-  streamListResponseSchema,
-  streamSummaryResponseSchema,
-  streamViewSchema,
-  apiIndexSchema,
-} from "./schema.js";
+import { registerSharedSchemas } from "./schemas.js";
 
-import { serviceVersion } from "./version.js";
-
-// Request id forwarding/validation lives in `./request-id.ts` so the rules are
-// testable on their own. `genReqId` below uses it to derive the per-request id.
-
-// ---------------------------------------------------------------------------
-// Error redaction (#74).
-//
-// Raw RPC or database errors can carry connection strings, SQL fragments, or
-// stack traces that must never reach a client. Outgoing messages are stripped
-// of credential-bearing URLs and collapsed to their first line; the original
-// error is preserved in the structured request log together with the request
-// id for diagnosis.
-// ---------------------------------------------------------------------------
-
-/** Matches URLs with an authority that can embed credentials, e.g. postgres://user:pass@host/db */
-const CREDENTIAL_URL_PATTERN = /[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\s/@]*:[^\s/@]*@[^\s]*/g;
-
-export function redactErrorMessage(message: string): string {
-  // Keep only the first line so stack traces and multi-line driver errors are
-  // never echoed back to clients.
-  const firstLine = message.split("\n")[0].trim();
-  return firstLine.replace(CREDENTIAL_URL_PATTERN, "[redacted]");
-}
-
-// ---------------------------------------------------------------------------
-// Structured error codes (#73).
-//
-// Every API failure carries a stable, machine-readable `code` alongside the
-// existing message and status, so clients can branch on the category without
-// parsing human-readable text.
-// ---------------------------------------------------------------------------
-
-export type ApiErrorCode =
-  | "VALIDATION_ERROR"
-  | "NOT_FOUND"
-  | "REQUEST_ERROR"
-  | "INTERNAL_SERVER_ERROR";
-
-export function errorCodeForStatus(statusCode: number): ApiErrorCode {
-  if (statusCode === 400) return "VALIDATION_ERROR";
-  if (statusCode === 404) return "NOT_FOUND";
-  if (statusCode >= 500) return "INTERNAL_SERVER_ERROR";
-  return "REQUEST_ERROR";
-}
+// Request-id sanitisation lives in `./request-id.ts`, the echo hook in
+// `./request-id-hook.ts`, error redaction in `./error-redaction.ts`, error
+// handlers in `./error-handlers.ts`, shared schemas in `./schemas.ts`, and
+// health routes in `./health-routes.ts` — all independently testable.
 
 // Builds the Fastify instance with the shared logger, CORS, the OpenAPI
 // plugin, and the routes that do not depend on external services. Route groups
@@ -118,18 +73,12 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
     // logger, so it lands in every structured request log line as `reqId`.
     genReqId: (req) =>
       sanitizeRequestId(req.headers[REQUEST_ID_HEADER]) ?? randomUUID(),
-    querystringParser: (str: string) => {
-      const params = new URLSearchParams(str);
-      const result: Record<string, string> = {};
-      params.forEach((value, key) => {
-        result[key] = value;
-      });
-      return result;
-    },
+    querystringParser: parseQueryString,
   });
 
+  // Enforce the query string length limit before routing.
   app.addHook("onRequest", async (request, reply) => {
-    const rawQuery = request.raw.url?.split('?')[1] ?? '';
+    const rawQuery = request.raw.url?.split("?")[1] ?? "";
     if (config?.queryStringLimit && rawQuery.length > config.queryStringLimit) {
       void reply.status(400).send({
         code: "VALIDATION_ERROR",
@@ -140,96 +89,15 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
     }
   });
 
-  // Record every response against the Prometheus counters.
-  app.addHook("onResponse", async (request, reply) => {
-    const labels = {
-      method: request.method,
-      route: request.routeOptions?.url ?? "unknown",
-      status: String(reply.statusCode),
-    };
-    httpRequestsTotal.inc(labels);
-    httpRequestDuration.observe(labels, reply.elapsedTime);
-  });
+  // Echo the request id header on every response.
+  registerRequestIdHook(app);
 
-  // Echo the request id on every response so clients can quote it back. Set
-  // before routing, so even requests that fail early carry the header.
-  app.addHook("onRequest", async (request, reply) => {
-    reply.header(REQUEST_ID_HEADER, request.id);
-  });
+  // Record every response against the Prometheus counters and histograms.
+  await registerMetricsPlugin(app);
 
-  const clientWindows = new Map<string, { requests: number; resetAt: number }>();
-  const maxTrackedClients = 10_000;
-
-  app.addHook("onRequest", async (request, reply) => {
-    const now = Date.now();
-    let window = clientWindows.get(request.ip);
-
-    if (!window || window.resetAt <= now) {
-      if (window) {
-        clientWindows.delete(request.ip);
-      } else if (clientWindows.size >= maxTrackedClients) {
-        for (const [ip, trackedWindow] of clientWindows) {
-          if (trackedWindow.resetAt <= now) clientWindows.delete(ip);
-        }
-        if (clientWindows.size >= maxTrackedClients) {
-          const oldestIp = clientWindows.keys().next().value;
-          if (oldestIp !== undefined) clientWindows.delete(oldestIp);
-        }
-      }
-      window = { requests: 0, resetAt: now + rateLimitWindowMs };
-    }
-
-    clientWindows.delete(request.ip);
-    clientWindows.set(request.ip, window);
-
-    if (window.requests >= rateLimitMax) {
-      const retryAfter = Math.max(1, Math.ceil((window.resetAt - now) / 1000));
-      return reply
-        .header("Retry-After", String(retryAfter))
-        .status(429)
-        .send({
-          code: errorCodeForStatus(429),
-          error: "rate limit exceeded",
-          requestId: request.id,
-        });
-    }
-
-    window.requests += 1;
-  });
-
-  // Attach the request id to error bodies so an error a client saw can be
-  // traced to its log lines. Status codes are preserved and each failure
-  // carries a stable machine-readable code (#73). Outgoing messages are
-  // redacted so connection strings, SQL fragments, or stack traces never
-  // reach the client (#74); the original error is logged server-side with
-  // the request id for diagnosis.
-  app.setErrorHandler((err: FastifyError, request, reply) => {
-    const statusCode = typeof err.statusCode === "number" && err.statusCode >= 400
-      ? err.statusCode
-      : 500;
-    if (statusCode >= 500) {
-      request.log.error({ err }, "request failed");
-    }
-    const message =
-      statusCode >= 500
-        ? "internal server error"
-        : redactErrorMessage(err.message);
-    void reply.status(statusCode).send({
-      code: errorCodeForStatus(statusCode),
-      error: message,
-      requestId: request.id,
-    });
-  });
-
-  // Unmatched routes bypass the error handler, so they get their own handler —
-  // with the request id attached like every other error response.
-  app.setNotFoundHandler((request, reply) => {
-    void reply.status(404).send({
-      code: errorCodeForStatus(404),
-      error: `Route ${request.method} ${request.url} not found`,
-      requestId: request.id,
-    });
-  });
+  // Attach structured error codes, redacted messages, and request ids to
+  // every error response.
+  registerErrorHandlers(app);
 
   // The web client fetches this API from the browser, so it is always a
   // cross-origin caller once the two run on separate ports or hosts. The data
@@ -243,12 +111,7 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
 
   // Register shared schemas so routes can reference them with { $ref: "$id" }.
   // @fastify/swagger will emit them as named components in the spec.
-  app.addSchema(streamViewSchema);
-  app.addSchema(streamListResponseSchema);
-  app.addSchema(streamSummaryResponseSchema);
-  app.addSchema(indexerStatusSchema);
-  app.addSchema(apiErrorSchema);
-  app.addSchema(apiIndexSchema);
+  registerSharedSchemas(app);
 
   // Generate the OpenAPI 3.0 spec from route schemas automatically.
   await app.register(swagger, swaggerConfig);
@@ -257,78 +120,8 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
   // and /docs/yaml (these paths are the @fastify/swagger-ui defaults).
   await app.register(swaggerUi, swaggerUiConfig);
 
-  app.get("/health", {
-    schema: {
-      summary: "Liveness check",
-      description:
-        "Returns 200 when the server is up, along with the running service version. No database read is performed.",
-      tags: ["indexer"],
-      response: {
-        200: {
-          type: "object",
-          required: ["status", "version"],
-          properties: {
-            status: { type: "string", enum: ["ok"] },
-            version: {
-              type: "string",
-              description:
-                "Service version from the package manifest, for distinguishing binaries during rolling releases.",
-            },
-          },
-        },
-      },
-    },
-  }, async () => {
-    return { status: "ok", version: serviceVersion };
-  });
-
-  app.get("/ready", {
-    schema: {
-      summary: "Readiness check",
-      description:
-        "Verifies database connectivity and reports indexer lag. Returns 503 when a dependency is unavailable.",
-      tags: ["indexer"],
-      response: {
-        200: {
-          type: "object",
-          required: ["status", "database", "indexer"],
-          properties: {
-            status: { type: "string", enum: ["ready"] },
-            database: { type: "string", enum: ["up"] },
-            indexer: {
-              type: "object",
-              required: ["lagLedgers"],
-              properties: {
-                lagLedgers: { type: ["integer", "null"] },
-              },
-            },
-          },
-        },
-        503: {
-          type: "object",
-          required: ["status", "database"],
-          properties: {
-            status: { type: "string", enum: ["not_ready"] },
-            database: { type: "string", enum: ["down"] },
-            error: { type: "string" },
-          },
-        },
-      },
-    },
-  }, async (_request, reply) => {
-    const db = await checkHealth();
-    if (db.status === "down") {
-      void reply.status(503);
-      return { status: "not_ready", database: "down", error: db.error };
-    }
-
-    const position = await getIndexerPosition();
-    const lagLedgers = position
-      ? Math.max(0, position.chainLedger - position.lastLedger)
-      : null;
-
-    return { status: "ready", database: "up", indexer: { lagLedgers } };
-  });
+  // Liveness and readiness probes.
+  registerHealthRoutes(app);
 
   return app;
 }

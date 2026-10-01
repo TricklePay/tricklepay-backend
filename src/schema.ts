@@ -329,11 +329,17 @@ export const indexerStatusSchema = {
   properties: {
     indexer: {
       type: "object",
-      required: ["initialized", "lastLedger", "cursor", "updatedAt"],
+      required: ["initialized", "startLedger", "lastLedger", "cursor", "updatedAt"],
       properties: {
         initialized: {
           type: "boolean",
           description: "False until the indexer completes its first poll.",
+        },
+        startLedger: {
+          type: "integer",
+          description:
+            "Configured ledger to begin indexing from for a fresh database. 0 starts at the chain's latest ledger; a saved cursor takes precedence.",
+          examples: [0, 56290013],
         },
         lastLedger: {
           type: "integer",

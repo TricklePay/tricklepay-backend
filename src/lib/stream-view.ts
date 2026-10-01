@@ -24,7 +24,7 @@ function statusOf(stream: Stream, now: bigint): StreamStatus {
 }
 
 // ---------------------------------------------------------------------------
-// toView (#158)
+// mapStreamResponse (#363)
 // ---------------------------------------------------------------------------
 
 /**
@@ -39,7 +39,7 @@ function statusOf(stream: Stream, now: bigint): StreamStatus {
  * @param stream - The raw stream row from the database.
  * @returns The API-ready view object matching the `StreamView` JSON Schema.
  */
-export function toView(stream: Stream) {
+export function mapStreamResponse(stream: Stream) {
   const now = nowSeconds();
   const total = BigInt(stream.totalAmount.toString());
   const withdrawn = BigInt(stream.withdrawn.toString());
@@ -67,3 +67,6 @@ export function toView(stream: Stream) {
     status: statusOf(stream, now),
   };
 }
+
+/** @deprecated Use mapStreamResponse for new callers. */
+export const toView = mapStreamResponse;

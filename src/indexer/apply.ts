@@ -20,6 +20,61 @@ import {
 // nothing to write.
 export type ApplyOutcome = "applied" | "duplicate" | "reconciled" | "missing";
 
+type EventHandler<E extends StreamEvent = StreamEvent> = (
+  server: rpc.Server,
+  contractId: string,
+  networkPassphrase: string,
+  event: E,
+  tx?: Prisma.TransactionClient,
+) => Promise<ApplyOutcome>;
+
+type CreatedEvent = Extract<StreamEvent, { kind: "created" }>;
+type WithdrawnEvent = Extract<StreamEvent, { kind: "withdrawn" }>;
+type CancelledEvent = Extract<StreamEvent, { kind: "cancelled" }>;
+
+const eventHandlers: {
+  created: EventHandler<CreatedEvent>;
+  withdrawn: EventHandler<WithdrawnEvent>;
+  cancelled: EventHandler<CancelledEvent>;
+} = {
+  created: async (_server, _contractId, _networkPassphrase, event, tx) =>
+    insertStream({
+      streamId: event.streamId,
+      sender: event.sender,
+      recipient: event.recipient,
+      token: event.token,
+      totalAmount: event.totalAmount,
+      startTime: event.startTime,
+      endTime: event.endTime,
+      cliffTime: event.cliffTime,
+      ledger: event.ledger,
+      eventId: event.id,
+    }, tx),
+
+  withdrawn: async (server, contractId, networkPassphrase, event, tx) =>
+    orReconcile(
+      await applyWithdrawal({
+        streamId: event.streamId,
+        amount: event.amount,
+        ledger: event.ledger,
+        eventId: event.id,
+      }, tx),
+      server, contractId, networkPassphrase, event, tx,
+    ),
+
+  cancelled: async (server, contractId, networkPassphrase, event, tx) =>
+    orReconcile(
+      await applyCancellation({
+        streamId: event.streamId,
+        recipientAmount: event.recipientAmount,
+        cancelledAt: event.closedAt,
+        ledger: event.ledger,
+        eventId: event.id,
+      }, tx),
+      server, contractId, networkPassphrase, event, tx,
+    ),
+};
+
 // Applies a decoded event by writing what the event itself carries. `created`
 // carries the whole stream, and `withdrawn` and `cancelled` carry deltas the
 // stored row can absorb, so the ordinary path is a single database write and no
@@ -36,54 +91,8 @@ export async function applyEvent(
   event: StreamEvent,
   tx?: Prisma.TransactionClient
 ): Promise<ApplyOutcome> {
-  switch (event.kind) {
-    case "created":
-      return insertStream({
-        streamId: event.streamId,
-        sender: event.sender,
-        recipient: event.recipient,
-        token: event.token,
-        totalAmount: event.totalAmount,
-        startTime: event.startTime,
-        endTime: event.endTime,
-        cliffTime: event.cliffTime,
-        ledger: event.ledger,
-        eventId: event.id,
-      }, tx);
-
-    case "withdrawn":
-      return orReconcile(
-        await applyWithdrawal({
-          streamId: event.streamId,
-          amount: event.amount,
-          ledger: event.ledger,
-          eventId: event.id,
-        }, tx),
-        server,
-        contractId,
-        networkPassphrase,
-        event,
-        tx
-      );
-
-    case "cancelled":
-      return orReconcile(
-        await applyCancellation({
-          streamId: event.streamId,
-          recipientAmount: event.recipientAmount,
-          // The contract freezes a cancelled stream at the moment it was
-          // cancelled, which is the close time of the ledger the event is in.
-          cancelledAt: event.closedAt,
-          ledger: event.ledger,
-          eventId: event.id,
-        }, tx),
-        server,
-        contractId,
-        networkPassphrase,
-        event,
-        tx
-      );
-  }
+  const handler = eventHandlers[event.kind] as EventHandler<typeof event>;
+  return handler(server, contractId, networkPassphrase, event, tx);
 }
 
 // A delta only makes sense against a row that exists. When one arrives for an

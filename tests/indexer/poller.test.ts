@@ -107,6 +107,7 @@ async function pollOnce(overrides: Partial<Config> = {}) {
 }
 
 beforeEach(() => {
+  vi.restoreAllMocks();
   vi.resetAllMocks();
   indexerState.getIndexerPosition.mockResolvedValue(null);
   indexer.applyEvent.mockResolvedValue("applied");
@@ -286,6 +287,67 @@ describe("Poller", () => {
     const [saved] = indexerState.saveIndexerPosition.mock.calls[0];
     // The third decoded event is at ledger 56290012; the fourth fails.
     expect(saved.lastLedger).toBeLessThan(LAST_APPLIED);
+  });
+
+  it("asserts a partially applied page is not recorded as complete when an event fails midway", async () => {
+    chain.getContractEvents.mockResolvedValue(pageOf(captured.events));
+
+    let callCount = 0;
+    let firstAppliedLedger = 0;
+    indexer.applyEvent.mockImplementation(async (_s: any, _c: any, _n: any, event: any) => {
+      callCount++;
+      if (callCount === 1) {
+        firstAppliedLedger = event.ledger;
+        return "applied";
+      }
+      throw new Error("event apply failed midway");
+    });
+
+    await pollOnce({ startLedger: 56000000 });
+
+    expect(indexerState.saveIndexerPosition).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lastLedger: firstAppliedLedger,
+      }),
+    );
+    expect(firstAppliedLedger).toBeLessThan(LAST_APPLIED);
+  });
+
+  it("does not record page completion if processing is interrupted midway by an unhandled error", async () => {
+    chain.getContractEvents.mockResolvedValue(pageOf(captured.events));
+
+    const eventsModule = await import("../../src/chain/events.js");
+    let callCount = 0;
+    vi.spyOn(eventsModule, "decodeEvent").mockImplementation((raw: any) => {
+      callCount++;
+      if (callCount === 2) {
+        throw new Error("Unhandled DB error mid-page");
+      }
+      return {
+        id: raw.id ?? "unknown",
+        ledger: raw.ledger ?? 0,
+        closedAt: 0n,
+        txHash: raw.txHash ?? "",
+        kind: "created",
+        streamId: 1n,
+        sender: "A",
+        recipient: "B",
+        token: "C",
+        totalAmount: 100n,
+        startTime: 0n,
+        endTime: 100n,
+        cliffTime: 0n,
+      };
+    });
+
+    const poller = new Poller(server, config, log);
+    (poller as any).running = true;
+
+    await expect((poller as any).tick({ lastLedger: 56000000 })).rejects.toThrow(
+      "Unhandled DB error mid-page",
+    );
+
+    expect(indexerState.saveIndexerPosition).not.toHaveBeenCalled();
   });
 
   it("detects a cursor regression and skips the page", async () => {
@@ -470,6 +532,56 @@ describe("Poller", () => {
     expect(indexerState.saveIndexerPosition).not.toHaveBeenCalled();
   });
 
+  it("counts an RPC timeout (AbortError) as an rpcError and does not crash the poller", async () => {
+    // A timeout surfaces as an AbortError (name === "AbortError") from the
+    // Stellar SDK when the underlying fetch is cancelled. The poller must count
+    // it in the rpcErrors metric — so operators see it — and then let the error
+    // propagate to the poll loop, which catches it and continues. The process
+    // must not crash.
+    const timeoutError = new Error("The operation was aborted due to timeout");
+    timeoutError.name = "AbortError";
+    chain.getContractEvents.mockRejectedValue(timeoutError);
+    const rpcErrorsSpy = vi.spyOn(rpcErrors, "inc");
+
+    const poller = new Poller(server, config, log);
+    (poller as any).running = true;
+
+    // tick() increments rpcErrors and rethrows — callers must handle the throw.
+    await expect(
+      (poller as any).tick({ lastLedger: 56000000 }),
+    ).rejects.toThrow("The operation was aborted due to timeout");
+
+    // The timeout is counted under the correct operation label.
+    expect(rpcErrorsSpy).toHaveBeenCalledWith({ operation: "getContractEvents" });
+    expect(rpcErrorsSpy).toHaveBeenCalledTimes(1);
+
+    // No partial state was saved — the tick aborted cleanly.
+    expect(indexer.applyEvent).not.toHaveBeenCalled();
+    expect(indexerState.saveIndexerPosition).not.toHaveBeenCalled();
+  });
+
+  it("keeps the poller running after an RPC timeout and counts it as a poll error", async () => {
+    // The poll loop in start() must catch the rethrown timeout, increment
+    // pollErrors, and continue rather than letting the process exit. A second
+    // tick that succeeds proves the loop recovered.
+    const timeoutError = new Error("network timeout");
+    timeoutError.name = "AbortError";
+
+    let callCount = 0;
+    chain.getContractEvents.mockImplementation(async () => {
+      callCount++;
+      if (callCount === 1) throw timeoutError;
+      // Second call succeeds and triggers the stop-on-save helper.
+      return pageOf([]);
+    });
+
+    await pollOnce();
+
+    // The timeout tick incremented pollErrors and the loop kept going.
+    // A successful second tick saved a position, proving the loop survived.
+    expect(indexerState.saveIndexerPosition).toHaveBeenCalled();
+  });
+
   it("honours the configured poll interval between ticks", async () => {
     vi.useFakeTimers();
     try {
@@ -499,5 +611,45 @@ describe("Poller", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  describe("cursor resume and fresh start behavior", () => {
+    it("resumes from a stored cursor rather than the configured start ledger", async () => {
+      const storedCursor = "000000100-saved-cursor";
+      indexerState.getIndexerPosition.mockResolvedValue({
+        lastLedger: 50000000,
+        chainLedger: CHAIN_HEAD,
+        cursor: storedCursor,
+        updatedAt: new Date(0),
+      });
+
+      chain.getContractEvents.mockResolvedValue(pageOf([]));
+
+      await pollOnce({ startLedger: 10000000 });
+
+      expect(chain.getContractEvents).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({ cursor: storedCursor }),
+      );
+    });
+
+    it("starts a fresh database from the configured ledger when no cursor is stored", async () => {
+      indexerState.getIndexerPosition.mockResolvedValue(null);
+
+      chain.getContractEvents.mockResolvedValue(pageOf([]));
+
+      const configuredStart = 45000000;
+      await pollOnce({ startLedger: configuredStart });
+
+      expect(chain.getContractEvents).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({ startLedger: configuredStart }),
+      );
+      expect(indexerState.saveIndexerPosition).toHaveBeenCalledWith(
+        expect.objectContaining({ lastLedger: configuredStart - 1 }),
+      );
+    });
   });
 });

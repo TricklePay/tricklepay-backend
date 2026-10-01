@@ -2,9 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   buildServer,
+} from "../src/server.js";
+
+import {
   errorCodeForStatus,
   redactErrorMessage,
-} from "../src/server.js";
+} from "../src/error-redaction.js";
 
 // Structured error codes (#73): every failure carries a stable machine-
 // readable code derived from the status, without changing messages or status

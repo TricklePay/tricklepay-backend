@@ -8,7 +8,8 @@ import { StrKey } from "@stellar/stellar-sdk";
 import type { FastifyInstance } from "fastify";
 
 import { sendError, bigIntToStringNullable } from "../lib/response.js";
-import { toView } from "../lib/stream-view.js";
+import { parsePagination } from "../lib/pagination.js";
+import { mapStreamResponse } from "../lib/stream-view.js";
 
 import {
   aggregateStreams,
@@ -34,26 +35,13 @@ import {
 } from "../schema.js";
 import { listIndexedEvents } from "../repositories/indexed-events.js";
 import { nowSeconds } from "../lib/time.js";
+import { DEFAULT_STREAM_SUMMARY_CACHE_TTL_MS } from "../config.js";
 
-const MAX_LIMIT = 100;
-const DEFAULT_LIMIT = 50;
 // Above this offset a scan gets expensive enough that callers should page
 // through results in order or narrow them with filters instead.
 const MAX_OFFSET = 10000;
 
 type StreamStatus = "pending" | "streaming" | "completed" | "cancelled";
-
-function parseLimit(raw: string | undefined): number {
-  const value = raw ? Number(raw) : DEFAULT_LIMIT;
-  if (!Number.isFinite(value) || value <= 0) return DEFAULT_LIMIT;
-  return Math.min(Math.floor(value), MAX_LIMIT);
-}
-
-function parseOffset(raw: string | undefined): number {
-  const value = raw ? Number(raw) : 0;
-  if (!Number.isFinite(value) || value < 0) return 0;
-  return Math.floor(value);
-}
 
 function parseIncludeTotal(raw: string | undefined): boolean {
   return raw === "true";
@@ -97,6 +85,13 @@ function normalizeAddress(raw: string): string | null {
 
 const SUMMARY_STATUSES = ["pending", "streaming", "completed", "cancelled"] as const;
 
+type SummaryEntry = { count: number; totalAmount: string; withdrawn: string };
+type SummaryPayload = Record<StreamStatus, SummaryEntry>;
+
+export type StreamRoutesOptions = {
+  summaryCacheTtlMs?: number;
+};
+
 // The database-side predicate for each lifecycle status, mirroring `statusOf`:
 // cancelled wins first, then the start/end time windows against the clock.
 function statusWhere(status: StreamStatus, now: bigint): Prisma.StreamWhereInput {
@@ -112,7 +107,13 @@ function statusWhere(status: StreamStatus, now: bigint): Prisma.StreamWhereInput
   }
 }
 
-export async function streamRoutes(app: FastifyInstance): Promise<void> {
+export async function streamRoutes(
+  app: FastifyInstance,
+  opts: StreamRoutesOptions = {},
+): Promise<void> {
+  const summaryCacheTtlMs = opts.summaryCacheTtlMs ?? DEFAULT_STREAM_SUMMARY_CACHE_TTL_MS;
+  let cachedSummary: { payload: SummaryPayload; createdAt: number } | null = null;
+
   // Ensure the shared schemas are available whether this plugin is registered
   // on a full server (which calls addSchema centrally) or a bare Fastify
   // instance in tests. Fastify deduplicates by $id, so calling addSchema when
@@ -166,7 +167,7 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
             },
             limit: {
               type: "string",
-              description: `Maximum results to return. Capped at ${MAX_LIMIT}. Defaults to ${DEFAULT_LIMIT}.`,
+              description: "Maximum results to return. Capped at 100. Defaults to 50.",
               examples: ["10"],
             },
             offset: {
@@ -215,8 +216,7 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
         cursor?: string;
       };
 
-      const limit = parseLimit(query.limit);
-      const offset = parseOffset(query.offset);
+      const { limit, offset } = parsePagination(query);
 
       let cursor: bigint | undefined;
       if (query.cursor !== undefined) {
@@ -268,7 +268,7 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
 
       reply.header("Cache-Control", "public, max-age=30");
       return {
-        streams: listResult.streams.map(toView),
+        streams: listResult.streams.map(mapStreamResponse),
         ...(total === undefined ? {} : { total }),
         ...(listResult.nextCursor === undefined ? {} : { nextCursor: listResult.nextCursor }),
         limit,
@@ -292,6 +292,16 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
       },
     },
     async (_request, reply) => {
+      const requestTimeMs = Date.now();
+      if (summaryCacheTtlMs > 0 && cachedSummary !== null) {
+        const ageMs = requestTimeMs - cachedSummary.createdAt;
+        if (ageMs >= 0 && ageMs < summaryCacheTtlMs) {
+          const maxAgeSeconds = Math.floor((summaryCacheTtlMs - ageMs) / 1000);
+          reply.header("Cache-Control", `public, max-age=${maxAgeSeconds}`);
+          return cachedSummary.payload;
+        }
+      }
+
       const now = nowSeconds();
       const entries = await Promise.all(
         SUMMARY_STATUSES.map(async (status) => {
@@ -307,8 +317,14 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
         }),
       );
 
-      reply.header("Cache-Control", "public, max-age=30");
-      return Object.fromEntries(entries);
+      const payload = Object.fromEntries(entries) as SummaryPayload;
+      const createdAt = Date.now();
+      if (summaryCacheTtlMs > 0) cachedSummary = { payload, createdAt };
+      reply.header(
+        "Cache-Control",
+        `public, max-age=${Math.floor(summaryCacheTtlMs / 1000)}`,
+      );
+      return payload;
     },
   );
 
@@ -421,7 +437,7 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
         return reply.code(304).send();
       }
 
-      return toView(stream);
+      return mapStreamResponse(stream);
     },
   );
 }

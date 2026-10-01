@@ -12,7 +12,7 @@ try {
   // No .env file found; rely on the ambient environment.
 }
 
-const NETWORK_PASSPHRASES: Record<string, string> = {
+const NETWORK_PASSTHRASES: Record<string, string> = {
   testnet: "Test SDF Network ; September 2015",
   mainnet: "Public Global Stellar Network ; September 2015",
 };
@@ -60,9 +60,8 @@ export const DEFAULT_MAX_BACKOFF_MS = 60000;
 // that a normal catch-up drains in one tick.
 export const DEFAULT_MAX_PAGES_PER_TICK = 1000;
 
-// Default per-IP request limit for each fixed window.
-export const DEFAULT_RATE_LIMIT_MAX = 100;
-export const DEFAULT_RATE_LIMIT_WINDOW_MS = 60_000;
+// Summary aggregates are expensive and commonly polled, so cache them briefly.
+export const DEFAULT_STREAM_SUMMARY_CACHE_TTL_MS = 2_000;
 
 function positiveInteger(name: string, fallback: number, min: number): number {
   const raw = process.env[name];
@@ -115,6 +114,19 @@ function validateContractId(contractId: string): void {
   }
 }
 
+// Rejects a configured start ledger that is beyond the current chain head.
+// Such a value would leave the indexer waiting forever with no events, which
+// looks identical to a broken RPC endpoint, so it is rejected at startup with
+// a message that explains the problem.
+export function validateStartLedger(startLedger: number, chainHead: number): void {
+  if (startLedger > chainHead) {
+    throw new Error(
+      `INDEXER_START_LEDGER ${startLedger} is beyond the chain head ${chainHead}. ` +
+        `The indexer would wait forever with no events. Set INDEXER_START_LEDGER to ${chainHead} or lower.`,
+    );
+  }
+}
+
 export interface Config {
   readonly port: number;
   readonly host: string;
@@ -127,6 +139,7 @@ export interface Config {
   readonly startLedger: number;
   readonly maxBackoffMs: number;
   readonly maxPagesPerTick: number;
+  readonly summaryCacheTtlMs: number;
   readonly bodyLimit: number;
   readonly queryStringLimit: number;
   readonly trustedProxies: readonly string[];
@@ -136,7 +149,7 @@ export interface Config {
 
 export function loadConfig(): Config {
   const network = optional("NETWORK", "testnet");
-  const networkPassphrase = NETWORK_PASSPHRASES[network];
+  const networkPassphrase = NETWORK_PASSPHRASES[Network];
   if (!networkPassphrase) {
     throw new Error(`Unknown NETWORK "${network}"; expected "testnet" or "mainnet"`);
   }
@@ -175,6 +188,10 @@ export function loadConfig(): Config {
       "INDEXER_MAX_PAGES_PER_TICK",
       DEFAULT_MAX_PAGES_PER_TICK,
       1,
+    ),
+    summaryCacheTtlMs: integer(
+      "STREAM_SUMMARY_CACHE_TTL_MS",
+      DEFAULT_STREAM_SUMMARY_CACHE_TTL_MS,
     ),
     bodyLimit: integer("BODY_LIMIT", 1048576), // 1MB default
     queryStringLimit: integer("QUERY_STRING_LIMIT", 2048), // 2KB default

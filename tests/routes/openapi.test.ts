@@ -73,6 +73,23 @@ describe("GET /docs/json (OpenAPI spec)", () => {
     expect(paths).toHaveProperty("/status");
   });
 
+  it("documents the configured start ledger in the status response schema", async () => {
+    const spec = await getSpec();
+    const schemas = (
+      spec.components as { schemas?: Record<string, unknown> }
+    )?.schemas ?? {};
+    const indexerStatus = schemas["IndexerStatus"] as {
+      properties?: Record<string, unknown>;
+    };
+    const indexer = indexerStatus.properties?.indexer as {
+      properties?: Record<string, unknown>;
+      required?: string[];
+    };
+
+    expect(indexer.properties).toHaveProperty("startLedger");
+    expect(indexer.required).toContain("startLedger");
+  });
+
   it("documents the GET /health path", async () => {
     const spec = await getSpec();
     const paths = spec.paths as Record<string, unknown>;

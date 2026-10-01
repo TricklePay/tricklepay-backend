@@ -174,6 +174,10 @@ export const customHistogram = new Histogram(
 );
 ```
 
+## Database Query Duration
+
+`tricklepay_database_query_duration_ms` records the duration of each Prisma SQL query in milliseconds. It is observed from Prisma query events in the shared client, so it includes query execution across API and indexer database operations. The histogram has no labels, keeping its series count fixed; use database logs or traces when individual query identification is needed.
+
 ## Testing
 
 After adding a metric:
