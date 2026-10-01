@@ -29,9 +29,9 @@ const { statusRoutes } = await import("../../src/routes/status.js");
 const CURSOR = "0241763773516349440-0000000001";
 const POLLED_AT = new Date("2025-11-14T03:00:00.000Z");
 
-async function getStatus() {
+async function getStatus(startLedger = 0) {
   const app = Fastify();
-  await app.register(statusRoutes);
+  await app.register(statusRoutes, { startLedger });
   const response = await app.inject({ method: "GET", url: "/status" });
   await app.close();
 
@@ -56,9 +56,10 @@ describe("GET /status", () => {
     });
     failedEvents.countFailedEvents.mockResolvedValue(0);
 
-    expect(await getStatus()).toEqual({
+    expect(await getStatus(55999500)).toEqual({
       indexer: {
         initialized: true,
+        startLedger: 55999500,
         lastLedger: 56290013,
         cursor: CURSOR,
         updatedAt: "2025-11-14T03:00:00.000Z",
@@ -106,7 +107,13 @@ describe("GET /status", () => {
     failedEvents.countFailedEvents.mockResolvedValue(0);
 
     expect(await getStatus()).toEqual({
-      indexer: { initialized: false, lastLedger: 0, cursor: null, updatedAt: null },
+      indexer: {
+        initialized: false,
+        startLedger: 0,
+        lastLedger: 0,
+        cursor: null,
+        updatedAt: null,
+      },
       chain: { latestLedger: 0 },
       lagLedgers: null,
       failedEventCount: 0,

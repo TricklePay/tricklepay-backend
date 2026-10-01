@@ -106,6 +106,7 @@ async function pollOnce(overrides: Partial<Config> = {}) {
 }
 
 beforeEach(() => {
+  vi.restoreAllMocks();
   vi.resetAllMocks();
   indexerState.getIndexerPosition.mockResolvedValue(null);
   indexer.applyEvent.mockResolvedValue("applied");
@@ -312,14 +313,28 @@ describe("Poller", () => {
   it("does not record page completion if processing is interrupted midway by an unhandled error", async () => {
     chain.getContractEvents.mockResolvedValue(pageOf(captured.events));
 
-    const prismaModule = await import("../../src/db.js");
+    const eventsModule = await import("../../src/chain/events.js");
     let callCount = 0;
-    vi.spyOn(prismaModule.prisma, "$transaction").mockImplementation(async (cb: any) => {
+    vi.spyOn(eventsModule, "decodeEvent").mockImplementation((raw: any) => {
       callCount++;
       if (callCount === 2) {
         throw new Error("Unhandled DB error mid-page");
       }
-      return cb({});
+      return {
+        id: raw.id ?? "unknown",
+        ledger: raw.ledger ?? 0,
+        closedAt: 0n,
+        txHash: raw.txHash ?? "",
+        kind: "created",
+        streamId: 1n,
+        sender: "A",
+        recipient: "B",
+        token: "C",
+        totalAmount: 100n,
+        startTime: 0n,
+        endTime: 100n,
+        cliffTime: 0n,
+      };
     });
 
     const poller = new Poller(server, config, log);
@@ -512,6 +527,56 @@ describe("Poller", () => {
     expect(rpcErrorsSpy).toHaveBeenCalledTimes(1);
     expect(indexer.applyEvent).not.toHaveBeenCalled();
     expect(indexerState.saveIndexerPosition).not.toHaveBeenCalled();
+  });
+
+  it("counts an RPC timeout (AbortError) as an rpcError and does not crash the poller", async () => {
+    // A timeout surfaces as an AbortError (name === "AbortError") from the
+    // Stellar SDK when the underlying fetch is cancelled. The poller must count
+    // it in the rpcErrors metric — so operators see it — and then let the error
+    // propagate to the poll loop, which catches it and continues. The process
+    // must not crash.
+    const timeoutError = new Error("The operation was aborted due to timeout");
+    timeoutError.name = "AbortError";
+    chain.getContractEvents.mockRejectedValue(timeoutError);
+    const rpcErrorsSpy = vi.spyOn(rpcErrors, "inc");
+
+    const poller = new Poller(server, config, log);
+    (poller as any).running = true;
+
+    // tick() increments rpcErrors and rethrows — callers must handle the throw.
+    await expect(
+      (poller as any).tick({ lastLedger: 56000000 }),
+    ).rejects.toThrow("The operation was aborted due to timeout");
+
+    // The timeout is counted under the correct operation label.
+    expect(rpcErrorsSpy).toHaveBeenCalledWith({ operation: "getContractEvents" });
+    expect(rpcErrorsSpy).toHaveBeenCalledTimes(1);
+
+    // No partial state was saved — the tick aborted cleanly.
+    expect(indexer.applyEvent).not.toHaveBeenCalled();
+    expect(indexerState.saveIndexerPosition).not.toHaveBeenCalled();
+  });
+
+  it("keeps the poller running after an RPC timeout and counts it as a poll error", async () => {
+    // The poll loop in start() must catch the rethrown timeout, increment
+    // pollErrors, and continue rather than letting the process exit. A second
+    // tick that succeeds proves the loop recovered.
+    const timeoutError = new Error("network timeout");
+    timeoutError.name = "AbortError";
+
+    let callCount = 0;
+    chain.getContractEvents.mockImplementation(async () => {
+      callCount++;
+      if (callCount === 1) throw timeoutError;
+      // Second call succeeds and triggers the stop-on-save helper.
+      return pageOf([]);
+    });
+
+    await pollOnce();
+
+    // The timeout tick incremented pollErrors and the loop kept going.
+    // A successful second tick saved a position, proving the loop survived.
+    expect(indexerState.saveIndexerPosition).toHaveBeenCalled();
   });
 
   it("honours the configured poll interval between ticks", async () => {

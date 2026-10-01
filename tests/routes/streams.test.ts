@@ -1,6 +1,6 @@
 import Fastify from "fastify";
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Tests for stream routes: caching, filtering, pagination, ordering, and validation.
 
@@ -60,9 +60,9 @@ async function getStreamById(id: string, headers: Record<string, string> = {}) {
   return response;
 }
 
-async function listRequest(url: string) {
+async function listRequest(url: string, options: { summaryCacheTtlMs?: number } = {}) {
   const app = Fastify();
-  await app.register(streamRoutes);
+  await app.register(streamRoutes, options);
   const response = await app.inject({ method: "GET", url });
   await app.close();
   return response;
@@ -70,6 +70,10 @@ async function listRequest(url: string) {
 
 beforeEach(() => {
   vi.resetAllMocks();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("GET /streams/:id", () => {
@@ -575,7 +579,7 @@ describe("GET /streams/summary", () => {
     });
     const response = await listRequest("/streams/summary");
     expect(response.statusCode).toBe(200);
-    expect(response.headers["cache-control"]).toBe("public, max-age=30");
+    expect(response.headers["cache-control"]).toBe("public, max-age=2");
     expect(response.json()).toEqual({
       pending: { count: 0, totalAmount: "0", withdrawn: "0" },
       streaming: { count: 0, totalAmount: "0", withdrawn: "0" },
@@ -599,6 +603,45 @@ describe("GET /streams/summary", () => {
       completed: { count: 3, totalAmount: "99999999999999999999999999", withdrawn: "42" },
       cancelled: { count: 4, totalAmount: "12345", withdrawn: "12345" },
     });
+  });
+
+  it("serves cached aggregates only until the configured TTL expires", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    streamsRepo.aggregateStreams.mockResolvedValue({
+      count: 1,
+      totalAmount: "100",
+      withdrawn: "0",
+    });
+
+    const app = Fastify();
+    await app.register(streamRoutes, { summaryCacheTtlMs: 2000 });
+    const first = await app.inject({ method: "GET", url: "/streams/summary" });
+    vi.advanceTimersByTime(1500);
+    const cached = await app.inject({ method: "GET", url: "/streams/summary" });
+    vi.advanceTimersByTime(500);
+    const expired = await app.inject({ method: "GET", url: "/streams/summary" });
+    await app.close();
+
+    expect(first.headers["cache-control"]).toBe("public, max-age=2");
+    expect(cached.headers["cache-control"]).toBe("public, max-age=0");
+    expect(streamsRepo.aggregateStreams).toHaveBeenCalledTimes(8);
+    expect(expired.statusCode).toBe(200);
+  });
+
+  it("does not cache when the configured TTL is zero", async () => {
+    streamsRepo.aggregateStreams.mockResolvedValue({
+      count: 0,
+      totalAmount: "0",
+      withdrawn: "0",
+    });
+    const app = Fastify();
+    await app.register(streamRoutes, { summaryCacheTtlMs: 0 });
+    await app.inject({ method: "GET", url: "/streams/summary" });
+    await app.inject({ method: "GET", url: "/streams/summary" });
+    await app.close();
+
+    expect(streamsRepo.aggregateStreams).toHaveBeenCalledTimes(8);
   });
 });
 

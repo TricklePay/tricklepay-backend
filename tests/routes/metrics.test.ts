@@ -82,6 +82,15 @@ describe("GET /metrics", () => {
     expect(body).toContain("tricklepay_http_request_duration_ms_count");
   });
 
+  it("includes the database query duration histogram without labels", async () => {
+    const body = (await getMetrics()).body;
+    expect(body).toContain("# HELP tricklepay_database_query_duration_ms");
+    expect(body).toContain("# TYPE tricklepay_database_query_duration_ms histogram");
+    expect(body).toContain("tricklepay_database_query_duration_ms_bucket{le=");
+    expect(body).toContain("tricklepay_database_query_duration_ms_count ");
+    expect(body).not.toContain('tricklepay_database_query_duration_ms_count{');
+  });
+
   it("includes HTTP requests total counter", async () => {
     const body = (await getMetrics()).body;
     expect(body).toContain("# HELP tricklepay_http_requests_total");

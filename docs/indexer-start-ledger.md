@@ -4,10 +4,12 @@
 
 The `INDEXER_START_LEDGER` environment variable determines the earliest ledger sequence the indexer will scan for contract events when starting from a fresh database with no saved cursor position.
 
+The `GET /status` response reports this configured value as `indexer.startLedger`. A value of `0` means the indexer starts from the chain's current head when there is no saved cursor; the reported value does not replace `indexer.lastLedger`, which is the current indexed position.
+
 When the indexer starts:
 1. If a saved cursor exists in the database, the indexer resumes from that cursor (the start ledger is ignored).
-2. Otherwise, if `INDEXER_START_LEDGER` is set to a positive integer, the indexer begins scanning from that ledger sequence.
-3. If `INDEXER_START_LEDGER` is `0` or unset (default), the indexer starts from the chain's current head ledger, indexing only new activity going forward.
+2. Otherwise, if `INDEXER_START_LEDGER` is set to a positive integer, the indexer begins scanning from that ledger sequence. If the configured ledger is beyond the chain's current head, startup fails with an error explaining the mismatch rather than waiting for a ledger that does not exist yet.
+3. If `INDEXER_START_LEDGER` is `0 or unset (default), the indexer starts from the chain's current head ledger, indexing only new activity going forward.
 
 ## How to choose a value
 
@@ -30,7 +32,9 @@ If you're rebuilding the database from scratch with an existing contract, set th
 
 ## What happens when set too high
 
-If `INDEXER_START_LEDGER` is set higher than the contract's first events:
+If `INDEXER_START_LEDGER` is set higher than the chain's current head ledger, the indexer refuses to start and logs an error naming the configured ledger and the chain head. This is deliberate: the indexer would otherwise sit waiting for a ledger that does not exist yet, which looks identical to a broken RPC endpoint. Set the value at or below the chain head, or to `0` to start from the head.
+
+If `INDEXER_START_LEDGER` is set higher than the contract's first events (but not beyond the chain head):
 - Streams created before the start ledger will never be indexed
 - `Withdrawn` or `Cancelled` events for those streams will fail to apply (the stream won't exist in the database)
 - Failed events will be logged and recorded in the `FailedEvent` table
@@ -55,7 +59,9 @@ If `INDEXER_START_LEDGER` is set earlier than necessary (e.g., before the contra
 
 ## Related configuration
 
-- `INDEXER_POLL_INTERVAL_MS`: Controls how frequently the indexer polls for new events
-- `INDEXER_MAX_PAGES_PER_TICK`: Limits how many event pages are processed per poll iteration during backfill
+-  `INDEXER_POLL_INTERVAL_MS`: Controls how frequently the indexer polls for new events
+-  `INDEXER_MAX_PAGES_PER_TICK`: Limits how many event pages are processed per poll iteration during backfill
+
+## Related configuration
 
 See the main [README Configuration section](../README.md#configuration) for complete environment variable documentation.

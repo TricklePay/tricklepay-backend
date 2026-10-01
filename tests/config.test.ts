@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_MAX_BACKOFF_MS,
   DEFAULT_MAX_PAGES_PER_TICK,
+  DEFAULT_STREAM_SUMMARY_CACHE_TTL_MS,
   MIN_POLL_INTERVAL_MS,
   isLocalUrl,
   loadConfig,
@@ -91,6 +92,7 @@ describe("loadConfig — default values for unset optional settings", () => {
         INDEXER_START_LEDGER: undefined,
         INDEXER_BACKOFF_MAX_MS: undefined,
         INDEXER_MAX_PAGES_PER_TICK: undefined,
+        STREAM_SUMMARY_CACHE_TTL_MS: undefined,
         TRUSTED_PROXIES: undefined,
       },
       () => {
@@ -103,6 +105,7 @@ describe("loadConfig — default values for unset optional settings", () => {
           startLedger: 0,
           maxBackoffMs: DEFAULT_MAX_BACKOFF_MS,
           maxPagesPerTick: DEFAULT_MAX_PAGES_PER_TICK,
+          summaryCacheTtlMs: DEFAULT_STREAM_SUMMARY_CACHE_TTL_MS,
           bodyLimit: 1048576,
           queryStringLimit: 2048,
           trustedProxies: [],
@@ -117,6 +120,25 @@ describe("loadConfig — default values for unset optional settings", () => {
         network: "mainnet",
         rpcUrl: "https://mainnet.sorobanrpc.com",
       });
+    });
+  });
+});
+
+describe("loadConfig — STREAM_SUMMARY_CACHE_TTL_MS", () => {
+  it("accepts a configured non-negative TTL", () => {
+    withEnv({ STREAM_SUMMARY_CACHE_TTL_MS: "2500" }, () => {
+      expect(loadConfig().summaryCacheTtlMs).toBe(2500);
+    });
+    withEnv({ STREAM_SUMMARY_CACHE_TTL_MS: "0" }, () => {
+      expect(loadConfig().summaryCacheTtlMs).toBe(0);
+    });
+  });
+
+  it("rejects negative values", () => {
+    withEnv({ STREAM_SUMMARY_CACHE_TTL_MS: "-1" }, () => {
+      expect(() => loadConfig()).toThrow(
+        "Environment variable STREAM_SUMMARY_CACHE_TTL_MS must be a non-negative integer",
+      );
     });
   });
 });

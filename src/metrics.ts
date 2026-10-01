@@ -296,6 +296,14 @@ export const eventsFailed = new Counter(
   ["kind"],
 );
 
+// Database -----------------------------------------------------------------
+
+/** Database query execution durations in milliseconds. */
+export const databaseQueryDuration = new Histogram(
+  "tricklepay_database_query_duration_ms",
+  "Time spent executing a database query in milliseconds.",
+);
+
 // HTTP ----------------------------------------------------------------------
 
 /** HTTP request durations in milliseconds, by method and route. */

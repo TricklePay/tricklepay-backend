@@ -7,6 +7,8 @@ import { countFailedEvents } from "../repositories/failed-events.js";
 
 import { getIndexerPosition } from "../repositories/indexer-state.js";
 
+import { INDEXER_STATUS_SCHEMA_ID, indexerStatusSchema } from "../schema.js";
+
 // The default TTL for the server-side status cache. Kept short (2 s) so
 // monitoring tools get a reasonably fresh view without hammering the database
 // on every poll. The value is exported so tests can pass a custom TTL and
@@ -16,6 +18,7 @@ export const STATUS_CACHE_TTL_MS = 2_000;
 type StatusPayload = {
   indexer: {
     initialized: boolean;
+    startLedger: number;
     lastLedger: number;
     cursor: string | null;
     updatedAt: string | null;
@@ -46,6 +49,8 @@ function makeStatusCache(ttlMs: number) {
 export type StatusRoutesOptions = {
   /** Override the cache TTL (milliseconds). Defaults to STATUS_CACHE_TTL_MS. */
   cacheTtlMs?: number;
+  /** Configured ledger from which indexing begins when there is no saved cursor. */
+  startLedger?: number;
 };
 
 // Reports how far the indexer has progressed, so an operator or monitor can see
@@ -63,39 +68,57 @@ export async function statusRoutes(
   opts: StatusRoutesOptions = {},
 ): Promise<void> {
   const ttlMs = opts.cacheTtlMs ?? STATUS_CACHE_TTL_MS;
+  const startLedger = opts.startLedger ?? 0;
   const cache = makeStatusCache(ttlMs);
 
-  app.get("/status", async (_request, reply) => {
-    const now = Date.now();
-    const hit = cache.get(now);
-    if (hit !== null) {
+  if (!app.getSchema(INDEXER_STATUS_SCHEMA_ID)) app.addSchema(indexerStatusSchema);
+
+  app.get(
+    "/status",
+    {
+      schema: {
+        summary: "Report indexer progress",
+        description:
+          "Reports the configured start ledger alongside the indexer's current position, chain head, and lag.",
+        tags: ["indexer"],
+        response: {
+          200: { $ref: INDEXER_STATUS_SCHEMA_ID },
+        },
+      },
+    },
+    async (_request, reply) => {
+      const now = Date.now();
+      const hit = cache.get(now);
+      if (hit !== null) {
+        reply.header("Cache-Control", "no-store");
+        return hit;
+      }
+
+      const position = await getIndexerPosition();
+      const failedEventCount = await countFailedEvents();
+
+      const payload: StatusPayload = {
+        indexer: {
+          initialized: position !== null,
+          startLedger,
+          lastLedger: position?.lastLedger ?? 0,
+          cursor: position?.cursor ?? null,
+          updatedAt: position?.updatedAt.toISOString() ?? null,
+        },
+        chain: {
+          latestLedger: position?.chainLedger ?? 0,
+        },
+        // Ledgers behind the chain, or null before the first poll has recorded
+        // anything to measure against. Never negative: the head is read in the
+        // same poll that applies the events, so the position cannot outrun it.
+        lagLedgers: position ? Math.max(0, position.chainLedger - position.lastLedger) : null,
+        failedEventCount,
+      };
+
+      cache.set(payload, now);
       reply.header("Cache-Control", "no-store");
-      return hit;
-    }
-
-    const position = await getIndexerPosition();
-    const failedEventCount = await countFailedEvents();
-
-    const payload: StatusPayload = {
-      indexer: {
-        initialized: position !== null,
-        lastLedger: position?.lastLedger ?? 0,
-        cursor: position?.cursor ?? null,
-        updatedAt: position?.updatedAt.toISOString() ?? null,
-      },
-      chain: {
-        latestLedger: position?.chainLedger ?? 0,
-      },
-      // Ledgers behind the chain, or null before the first poll has recorded
-      // anything to measure against. Never negative: the head is read in the
-      // same poll that applies the events, so the position cannot outrun it.
-      lagLedgers: position ? Math.max(0, position.chainLedger - position.lastLedger) : null,
-      failedEventCount,
-    };
-
-    cache.set(payload, now);
-    reply.header("Cache-Control", "no-store");
-    return payload;
-  });
+      return payload;
+    },
+  );
 }
 

@@ -55,6 +55,50 @@ describe("registerMetric helper (#367)", () => {
   });
 });
 
+describe("backlog metric tracking failed events", () => {
+  it("asserts the gauge rises when a failure is recorded", () => {
+    const backlogGauge = new Gauge(
+      "tricklepay_failed_events_backlog_rise",
+      "Tracks unresolved failed events backlog",
+    );
+    let failedEventsCount = 0;
+    const recordFailure = () => {
+      failedEventsCount += 1;
+      backlogGauge.set(failedEventsCount);
+    };
+
+    backlogGauge.set(failedEventsCount);
+    expect(renderMetrics()).toContain("tricklepay_failed_events_backlog_rise 0");
+
+    recordFailure();
+    expect(renderMetrics()).toContain("tricklepay_failed_events_backlog_rise 1");
+
+    recordFailure();
+    expect(renderMetrics()).toContain("tricklepay_failed_events_backlog_rise 2");
+  });
+
+  it("asserts it falls when the record is cleared", () => {
+    const backlogGauge = new Gauge(
+      "tricklepay_failed_events_backlog_fall",
+      "Tracks unresolved failed events backlog",
+    );
+    let failedEventsCount = 2;
+    backlogGauge.set(failedEventsCount);
+    expect(renderMetrics()).toContain("tricklepay_failed_events_backlog_fall 2");
+
+    const clearRecord = () => {
+      failedEventsCount = Math.max(0, failedEventsCount - 1);
+      backlogGauge.set(failedEventsCount);
+    };
+
+    clearRecord();
+    expect(renderMetrics()).toContain("tricklepay_failed_events_backlog_fall 1");
+
+    clearRecord();
+    expect(renderMetrics()).toContain("tricklepay_failed_events_backlog_fall 0");
+  });
+});
+
 describe("indexed streams metric (#393)", () => {
   it("reports the number of indexed streams as a gauge", () => {
     const gauge = new Gauge("indexed_streams", "Number of indexed streams", []);
@@ -75,7 +119,6 @@ describe("indexed streams metric (#393)", () => {
     expect(renderMetrics()).toContain("indexed_streams_update 2");
   });
 });
-
 describe("Exposition format", () => {
   it("matches the exposition format for counters, gauges and histograms together", () => {
     // The previous tests have already registered a Counter, Gauge, and Histogram.

@@ -81,9 +81,14 @@ export class Poller {
     this.running = true;
     let position = await this.resolveStart();
 
+    await this.runLoop(position);
+  }
+
+  /** Owns scheduling and failure backoff; one tick is deliberately separate. */
+  private async runLoop(position: Position): Promise<void> {
     while (this.running) {
       try {
-        position = await this.tick(position);
+        position = await this.tick(position, () => this.running);
         // A successful iteration breaks the streak — back off returns to the
         // normal interval so a recovered RPC is not punished for past failures.
         this.consecutiveFailures = 0;
@@ -132,6 +137,12 @@ export class Poller {
       return { cursor: saved.cursor, lastLedger: saved.lastLedger };
     }
     if (this.config.startLedger > 0) {
+      const latest = await this.server.getLatestLedger();
+      if (this.config.startLedger > latest.sequence) {
+        throw new Error(
+          `configured start ledger ${this.config.startLedger} is beyond the chain head ${latest.sequence}; the indexer would wait forever for events that cannot exist yet. Set START_LEDGER at or below the current chain head.`,
+        );
+      }
       this.log.info({ ledger: this.config.startLedger }, "backfilling from configured ledger");
       return { startLedger: this.config.startLedger, lastLedger: this.config.startLedger - 1 };
     }
@@ -149,7 +160,8 @@ export class Poller {
   //
   // The cursor is saved after every page, so a backlog interrupted part way
   // through resumes where it stopped rather than starting the tick over.
-  private async tick(position: Position): Promise<Position> {
+  /** Execute one poll tick. This can be called directly by tests or tooling. */
+  async tick(position: Position, shouldContinue: () => boolean = () => true): Promise<Position> {
     let current = position;
     let pages = 0;
     let events = 0;
@@ -157,12 +169,12 @@ export class Poller {
     // `running` is checked between pages as well, so a stop during a long
     // backfill takes effect at the next page boundary instead of at the end of
     // the whole backlog.
-    while (this.running) {
+    while (shouldContinue()) {
       let page: EventPage;
       try {
         page = await getContractEvents(this.server, this.config.contractId, current);
       } catch (err) {
-        rpcErrors.inc({ operation: "getContractEvents" });
+        rpcErrors.inc({/ operation: "getContractEvents" });
         throw err;
       }
 
@@ -267,8 +279,8 @@ export class Poller {
           return res;
         });
       } catch (err) {
-        // Log the failure and record it in the database so an operator can
-        // find it without tailing logs. The event is then skipped so the rest
+        // Log the failure and record it in the database so an operator
+        // can find it without tailing logs. The event is then skipped so the rest
         // of the page — and the cursor — are not held hostage by one bad event.
         this.log.error(
           { err, kind: event.kind, streamId: event.streamId.toString(), eventId: event.id, ledger: event.ledger },
@@ -299,22 +311,16 @@ export class Poller {
     }
 
     // The poller deliberately records `lastLedger` (the highest ledger it
-    // applied) rather than `page.latestLedger` (the chain head) as its own
+    // applied) rather than `page.latestLedger (chain head) as its own
     // position. This avoids the failure mode where a backfill or poller falsely
     // reports itself as caught up with the chain head when it has only reached
     // the head as a value in the RPC response without having actually applied
-    // all the ledgers up to that point.
-    //
-    // `page.latestLedger` is stored separately as `chainLedger`: the two
-    // together are what make indexer lag visible.
-    await saveIndexerPosition({ lastLedger, chainLedger: page.latestLedger, cursor: page.cursor });
+    // all the ledgers up to it.
+    const nextCursor = page.cursor;
+    await saveIndexerPosition({ cursor: nextCursor, lastLedger });
+    indexerLagledgers.set(Math.max(0, page.latestLedger - lastLedger));
 
-    // Update the lag gauge. Never negative: the indexer's position cannot
-    // outrun the chain head that was observed in the same poll.
-    indexerLagLedgers.set(Math.max(0, page.latestLedger - lastLedger));
-
-    // Once a page is fetched, always continue from its cursor.
-    return { cursor: page.cursor, lastLedger };
+    return { cursor: nextCursor, lastLedger };
   }
 }
 
