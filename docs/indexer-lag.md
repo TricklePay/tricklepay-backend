@@ -85,7 +85,7 @@ This does **not** mean nearly two million ledgers of transactions were missed. I
 
 Compare `lagLedgers` with `indexer.updatedAt`:
 
-| `lagLedgers` | `updatedAt` advancing? | Interpretation |
+| `lagLedgers` | `updatedAt' advancing? | Interpretation |
 |---|---|---|
 | Small or zero | Yes | Indexer is keeping up; contract is active. |
 | Large | Yes | Backfill in progress, or contract has been quiet. Normal. |
@@ -97,6 +97,16 @@ If `updatedAt` is advancing and `lagLedgers` is large but stable (not growing), 
 If `updatedAt` is advancing and `lagLedgers` is shrinking, a backfill is in progress.
 
 If `updatedAt` has not changed in several minutes, the indexer process may have crashed or stalled.
+
+---
+
+## Readiness signal
+
+The `GET /ready` readiness probe reflects whether the indexer has made progress, not merely whether dependencies answer. A freshly started instance that has not yet completed a indexer poll reports not ready, even if the database and Soroban RPC are reachable.
+
+Readiness is determined by the presence of an `IndexerState` position with a non-null `indexer.updatedAt`. Once the indexer has written its first position, the service is considered ready. This is intentionally independent of lag: a backfilling indexer with a large `lagLedgers` is still ready, because it has usable data and is making progress.
+
+Liveness (`GET /health`) is unaffected by this change: liveness continues to reflect only whether the process is running and able to respond.
 
 ---
 

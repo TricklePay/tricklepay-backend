@@ -29,6 +29,18 @@ export interface StoredPosition extends IndexerPosition {
   updatedAt: Date;
 }
 
+// Whether the indexer has made usable progress. Readiness uses this to distinguish
+// a freshly started instance (no stored position, or one that has not yet
+// advanced beyond its initial value) from one that is serving indexed data.
+// Liveness is unaffected: this only governs readiness.
+export function hasIndexerProgress(position: StoredPosition | null): boolean {
+  if (!position) return false;
+  // A position is usable once the indexer has processed at least one ledger.
+  // chainLedger may be 0 before the first chain head is observed, so the
+  // indexer's own lastLedger is the authoritative signal.
+  return position.lastLedger > 0;
+}
+
 export async function getIndexerPosition(): Promise<StoredPosition | null> {
   const state = await withQueryTimeout(
     prisma.indexerState.findUnique({ where: { id: STATE_ID } }),
@@ -43,8 +55,8 @@ export async function getIndexerPosition(): Promise<StoredPosition | null> {
 }
 
 // Writes the position reached by a completed poll. `lastLedger` is expected to
-// move forward only; the caller carries it across ticks and raises it as events
-// are applied, so a poll that applied nothing leaves it where it was.
+// move forward only; the caller carries it across ticks and raises it as
+// events are applied, so a poll that applied nothing leaves it where it was.
 export async function saveIndexerPosition(position: IndexerPosition): Promise<void> {
   await prisma.indexerState.upsert({
     where: { id: STATE_ID },

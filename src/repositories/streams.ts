@@ -262,6 +262,8 @@ export async function getStream({ streamId }: { streamId: bigint }): Promise<Str
   return withQueryTimeout(prisma.stream.findUnique({ where: { streamId } }));
 }
 
+// Repository naming convention: use `get` for one record, `list` for
+// collections, `count` for totals, and action verbs for mutations.
 function whereFromFilter(filter: StreamFilter): Prisma.StreamWhereInput {
   const where: Prisma.StreamWhereInput = {};
   if (filter.sender) where.sender = filter.sender;

@@ -109,9 +109,17 @@ describe("loadConfig — default values for unset optional settings", () => {
           bodyLimit: 1048576,
           queryStringLimit: 2048,
           trustedProxies: [],
+          rateLimitMax: DEFAULT_RATE_LIMIT_MAX,
+          rateLimitWindowMs: DEFAULT_RATE_LIMIT_WINDOW_MS,
         });
       },
     );
+  });
+
+  it("loads custom request rate limits", () => {
+    withEnv({ RATE_LIMIT_MAX: "25", RATE_LIMIT_WINDOW_MS: "30000" }, () => {
+      expect(loadConfig()).toMatchObject({ rateLimitMax: 25, rateLimitWindowMs: 30000 });
+    });
   });
 
   it("switches the default RPC URL to the selected network", () => {

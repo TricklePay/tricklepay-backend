@@ -27,6 +27,7 @@ There is currently **no dedicated database error counter or database connection 
 | `tricklepay_indexer_poll_last_success_timestamp_seconds` | If this timestamp stops advancing while database errors appear, the indexer is not completing polls. |
 | `tricklepay_indexer_poll_success_total` | Should resume increasing when poll iterations complete successfully after recovery. |
 | `tricklepay_indexer_events_failed_total` | May increase when event application fails. Check whether the cause was a database error and whether failed events were recorded for replay. |
+| `tricklepay_indexer_failed_events` | Current number of unresolved failed-event records. It is refreshed at startup and after indexer pages or replay operations; compare it across scrapes to see whether the backlog is growing or clearing. |
 
 `GET /metrics` exposes these samples. The `/ready` endpoint is a direct database check and is often the clearest immediate signal.
 

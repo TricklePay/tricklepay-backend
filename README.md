@@ -160,7 +160,7 @@ curl http://localhost:3000/docs/yaml > openapi.yaml
 | --- | --- | --- |
 | `GET` | `/` | Service index: name, version, and a list of endpoints. |
 | `GET` | `/health` | Liveness check. Returns 200 with the service version; performs no database read. |
-| `GET` | `/ready` | Readiness check. Verifies database connectivity and reports indexer lag; returns 503 when the database is unavailable. |
+| `GET` | `/ready` | Readiness check. Verifies database connectivity and that the indexer has made progress; returns 503 when the database is unavailable or the indexer has not yet applied any events. |
 | `GET` | `/status` | Indexer progress against the chain. Response includes `Cache-Control: no-store` to prevent stale lag readings. |
 | `GET` | `/streams` | List streams. Query params: `sender`, `recipient`, `token`, `limit`, `offset`, `includeTotal`, `cancelled`, `cursor`. Address filters accept lowercase and padded spellings and are normalized before matching. `total` is only included when `includeTotal=true`; `cancelled` filters by cancellation status when given, and is omitted to return both. |
 
@@ -297,6 +297,18 @@ curl -s http://localhost:3000/streams/invalid | jq
 ```
 
 ## Health Endpoint Semantics
+
+`/health` is a liveness probe: it returns 200 with the service version and
+performs no database read, so it stays green even when dependencies are down.
+
+`/ready` is a readiness probe and reflects whether the service has usable
+data, not merely whether dependencies answer. It verifies database
+connectivity and that the indexer has made progress — specifically, that
+`IndexerState.lastLedger` has advanced past its initial value, meaning at
+least one event has been applied to Postgres. A freshly started instance that
+has not yet indexed anything returns 503, so traffic is not routed to an
+instance that would serve an empty list. Liveness is unaffected: `/health`
+continues to return 200 regardless of indexer progress.
 
 The service exposes two health endpoints that answer different questions. Wire them to separate probes in your orchestration platform.
 
