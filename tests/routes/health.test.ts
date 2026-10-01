@@ -5,6 +5,10 @@ import { describe, expect, it, vi } from "vitest";
 // /health must report the running service version so deployment tooling can
 // distinguish old and new binaries during rolling releases (#76). The value
 // comes from the package manifest and requires no database or RPC access.
+//
+// /readiness must reflect whether the indexer has made progress (#384):
+// a freshly started instance must not be marked ready while it is still
+// serving an empty list. Liveness (/health) is unaffected.
 
 const streamsRepo = vi.hoisted(() => ({
   getStream: vi.fn(),
@@ -16,8 +20,13 @@ const db = vi.hoisted(() => ({
   checkHealth: vi.fn(),
 }));
 
-vi.mock("../../src/repositories/streams.js", () => streamsRepo);
+const indexer = vi.hoisted(() => ({
+  hasMadeProgress: vi.fn(),
+}));
+
+vi.mock("../../src/repositories/streams.js", streamsRepo);
 vi.mock("../../src/db.js", () => ({ checkHealth: db.checkHealth }));
+vi.mock("../../src/indexer.js", () => indexer);
 
 const { buildServer } = await import("../../src/server.js");
 const { serviceVersion } = await import("../../src/version.js");
@@ -38,13 +47,13 @@ describe("health version field (#76)", () => {
   });
 
   it("exposes the same value through the shared version module", () => {
-    expect(serviceVersion).toBeTypeOf("string");
+    expect(serviceVersion).toBetTypeOf("string");
     expect(serviceVersion.length).toBeGreaterThan(0);
     expect(serviceVersion).not.toBe("unknown");
   });
 
   it("stays independent of external dependencies when streams lookups fail", async () => {
-    streamsRepo.getStream.mockRejectedValue(new Error("database down"));
+    streamsRepo.getStream.mockRejected(new Error("database down"));
 
     const app = await buildServer();
     await app.register((await import("../../src/routes/streams.js")).streamRoutes);
@@ -56,11 +65,11 @@ describe("health version field (#76)", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json().status).toBe("ok");
-    expect(response.json().version).toBeTypeOf("string");
+    expect(response.json().version).toBetTypeOf("string");
   });
 
   it("returns the unchanged health response while the database is unavailable", async () => {
-    db.checkHealth.mockResolvedValue({ status: "down", error: "database unavailable" });
+    db.checkHealth.mockResolved({ status: "down", error: "database unavailable" });
 
     const app = await buildServer();
     const response = await app.inject({ method: "GET", url: "/health" });
@@ -80,5 +89,40 @@ describe("health version field (#76)", () => {
 
     expect(normalResponse.statusCode).toBe(200);
     expect(overlongResponse.statusCode).toBe(400);
+  });
+});
+
+describe("readiness indexer progress (#384)", () => {
+  it("reports not ready while the indexer has made no progress", async () => {
+    indexer.hasMadeProgress.mockReturnValue(false);
+
+    const app = await buildServer();
+    const response = await app.inject({ method: "GET", url: "/readiness" });
+    await app.close();
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toEqual({ status: "not_ready" });
+  });
+
+  it("reports ready once the indexer has made progress", async () => {
+    indexer.hasMadeProgress.mockReturnValue(true);
+
+    const app = await buildServer();
+    const response = await app.inject({ method: "GET", url: "/readiness" });
+    await app.close();
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ status: "ok" });
+  });
+
+  it("keeps liveness unaffected while the indexer has made no progress", async () => {
+    indexer.hasMadeProgress.mockReturnValue(false);
+
+    const app = await buildServer();
+    const response = await app.inject({ method: "GET", url: "/health" });
+    await app.close();
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().status).toBe("ok");
   });
 });

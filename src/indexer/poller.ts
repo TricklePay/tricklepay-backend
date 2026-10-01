@@ -68,6 +68,11 @@ export class Poller {
   // first success, so a single transient blip does not leave the poller
   // stuck at a long delay.
   private consecutiveFailures = 0;
+  // Whether the indexer has made any progress since startup. Readiness depends
+  // on this because a freshly started instance that has not yet applied any
+  // events is not yet usable. Once true it stays true for the lifetime of the
+  // process, so readiness is not flipped back by a transient poll failure.
+  private hasProgressed = false;
   private readonly log: Logger;
 
   constructor(
@@ -76,6 +81,12 @@ export class Poller {
     logger: Logger,
   ) {
     this.log = logger.child({ module: "indexer" });
+  }
+
+  // Whether the indexer has made progress. The readiness endpoint uses this to
+  // decide whether the service has usable data. Liveness is unaffected.
+  is Ready(): boolean {
+    return this.hasProgressed;
   }
 
   async start(): Promise<void> {
@@ -218,6 +229,13 @@ export class Poller {
       this.log.info({ pages, events }, "drained event backlog");
     }
 
+    // Any event applied during this tick means the indexer has made progress and
+    // the service now has usable data. This is set before the heartbeat below
+    // so a readiness check after a successful tick observes the update.
+    if (events > 0) {
+      this.hasProgressed = true;
+    }
+
     // A tick that reaches here completed without throwing, so the poller is
     // alive. Operators use the timestamp to tell a quiet chain (still polling
     // successfully) from a stalled poller (no successful tick), and the counter
@@ -242,7 +260,7 @@ export class Poller {
             { err, eventId: raw.id, ledger: raw.ledger },
             "malformed event — skipping",
           );
-          eventsFailed.inc({ kind: "malformed" });
+          eventsFailed.inc({);
           try {
             await recordFailedEvent({
               eventId: raw.id ?? "unknown",
@@ -280,8 +298,8 @@ export class Poller {
           return res;
         });
       } catch (err) {
-        // Log the failure and record it in the database so an operator
-        // can find it without tailing logs. The event is then skipped so the rest
+// Log the failure and record it in the database so an operator can
+        // find it without tailing logs. The event is then skipped so the rest
         // of the page — and the cursor — are not held hostage by one bad event.
         this.log.error(
           { err, kind: event.kind, streamId: event.streamId.toString(), eventId: event.id, ledger: event.ledger },
@@ -316,12 +334,23 @@ export class Poller {
     // position. This avoids the failure mode where a backfill or poller falsely
     // reports itself as caught up with the chain head when it has only reached
     // the head as a value in the RPC response without having actually applied
-    // all the ledgers up to it.
-    const nextCursor = page.cursor;
-    await saveIndexerPosition({ cursor: nextCursor, lastLedger });
-    indexerLagledgers.set(Math.max(0, page.latestLedger - lastLedger));
+// all the ledgers up to it.
+    await saveIndexerPosition({
+      cursor: page.cursor,
+      lastLedger,
+    });
 
-    return { cursor: nextCursor, lastLedger };
+    // Metric of how far behind the chain head the indexer is. The RPC response
+    // carries the latest ledger it knows about, so the difference is a direct
+    // measure of lag. A negative difference is clamped to zero to avoid
+    // reporting a negative lag if the RPC response is briefly stale.
+    const lag = Math.max(0, page.latestLedger - lastLedger);
+    indexerLagLedgers.set(lag);
+
+    return {
+      cursor: page.cursor,
+      lastLedger,
+    };
   }
 }
 
