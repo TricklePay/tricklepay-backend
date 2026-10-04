@@ -608,23 +608,31 @@ describe("GET /streams/summary", () => {
   it("serves cached aggregates only until the configured TTL expires", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
-    streamsRepo.aggregateStreams.mockResolvedValue({
-      count: 1,
-      totalAmount: "100",
-      withdrawn: "0",
-    });
+    let generation = 0;
+    streamsRepo.aggregateStreams.mockImplementation(() =>
+      Promise.resolve(
+        generation === 0
+          ? { count: 1, totalAmount: "100", withdrawn: "0" }
+          : { count: 2, totalAmount: "200", withdrawn: "25" },
+      ),
+    );
 
     const app = Fastify();
     await app.register(streamRoutes, { summaryCacheTtlMs: 2000 });
     const first = await app.inject({ method: "GET", url: "/streams/summary" });
     vi.advanceTimersByTime(1500);
     const cached = await app.inject({ method: "GET", url: "/streams/summary" });
+    generation = 1;
     vi.advanceTimersByTime(500);
     const expired = await app.inject({ method: "GET", url: "/streams/summary" });
     await app.close();
 
     expect(first.headers["cache-control"]).toBe("public, max-age=2");
     expect(cached.headers["cache-control"]).toBe("public, max-age=0");
+    expect(first.json().pending).toEqual({ count: 1, totalAmount: "100", withdrawn: "0" });
+    expect(cached.json()).toEqual(first.json());
+    expect(expired.json().pending).toEqual({ count: 2, totalAmount: "200", withdrawn: "25" });
+    expect(expired.json()).not.toEqual(first.json());
     expect(streamsRepo.aggregateStreams).toHaveBeenCalledTimes(8);
     expect(expired.statusCode).toBe(200);
   });
