@@ -609,6 +609,16 @@ npm test          # single run, as CI does it
 npm run test:watch
 ```
 
+### Unused dependency check
+
+Run `npm run depcheck` to scan for dependencies that are not imported anywhere in the codebase. This helps keep the dependency tree lean and reduces install time and audit surface.
+
+```bash
+npm run depcheck
+```
+
+The command uses [depcheck](https://github.com/depcheck/depcheck) and reports both unused dependencies and missing dependencies (imports that are not declared in package.json). Address any findings by either removing the unused dependency or adding the missing one.
+
 They cover the parts of the service that have to agree with something outside
 it: `lib/vesting.ts`, which mirrors the contract's vesting math case for case,
 and `chain/events.ts`, which is decoded from a stored Soroban RPC `getEvents`
