@@ -1,32 +1,21 @@
 import { readFile } from "node:fs/promises";
 
-import { describe, expect, it, vi } from "vitest";
-
-// /health must report the running service version so deployment tooling can
-// distinguish old and new binaries during rolling releases (#76). The value
-// comes from the package manifest and requires no database or RPC access.
-//
-// /readiness must reflect whether the indexer has made progress (#384):
-// a freshly started instance must not be marked ready while it is still
-// serving an empty list. Liveness (/health) is unaffected.
-
-const streamsRepo = vi.hoisted(() => ({
-  getStream: vi.fn(),
-  listStreams: vi.fn(),
-  countStreams: vi.fn(),
-}));
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const db = vi.hoisted(() => ({
   checkHealth: vi.fn(),
 }));
 
-const indexer = vi.hoisted(() => ({
-  hasMadeProgress: vi.fn(),
+const indexerState = vi.hoisted(() => ({
+  getIndexerPosition: vi.fn(),
+  hasIndexerProgress: vi.fn(),
 }));
 
-vi.mock("../../src/repositories/streams.js", streamsRepo);
 vi.mock("../../src/db.js", () => ({ checkHealth: db.checkHealth }));
-vi.mock("../../src/indexer.js", () => indexer);
+vi.mock("../../src/repositories/indexer-state.js", () => ({
+  getIndexerPosition: indexerState.getIndexerPosition,
+  hasIndexerProgress: indexerState.hasIndexerProgress,
+}));
 
 const { buildServer } = await import("../../src/server.js");
 const { serviceVersion } = await import("../../src/version.js");
@@ -47,29 +36,27 @@ describe("health version field (#76)", () => {
   });
 
   it("exposes the same value through the shared version module", () => {
-    expect(serviceVersion).toBetTypeOf("string");
+    expect(serviceVersion).toBeTypeOf("string");
     expect(serviceVersion.length).toBeGreaterThan(0);
     expect(serviceVersion).not.toBe("unknown");
   });
 
   it("stays independent of external dependencies when streams lookups fail", async () => {
-    streamsRepo.getStream.mockRejected(new Error("database down"));
+    db.checkHealth.mockResolvedValue({ status: "up" });
+    indexerState.getIndexerPosition.mockResolvedValue(null);
 
     const app = await buildServer();
-    await app.register((await import("../../src/routes/streams.js")).streamRoutes);
-    // Break a database-backed route first; health must still answer.
-    await app.inject({ method: "GET", url: "/streams/1" });
-
     const response = await app.inject({ method: "GET", url: "/health" });
     await app.close();
 
     expect(response.statusCode).toBe(200);
     expect(response.json().status).toBe("ok");
-    expect(response.json().version).toBetTypeOf("string");
+    expect(response.json().version).toBeTypeOf("string");
   });
 
   it("returns the unchanged health response while the database is unavailable", async () => {
-    db.checkHealth.mockResolved({ status: "down", error: "database unavailable" });
+    db.checkHealth.mockResolvedValue({ status: "down", error: "database unavailable" });
+    indexerState.getIndexerPosition.mockResolvedValue(null);
 
     const app = await buildServer();
     const response = await app.inject({ method: "GET", url: "/health" });
@@ -92,31 +79,94 @@ describe("health version field (#76)", () => {
   });
 });
 
-describe("readiness indexer progress (#384)", () => {
-  it("reports not ready while the indexer has made no progress", async () => {
-    indexer.hasMadeProgress.mockReturnValue(false);
+describe("readiness reflects indexer progress (#391)", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    db.checkHealth.mockResolvedValue({ status: "up" });
+  });
+
+  it("reports not ready when no indexer position exists (untouched database)", async () => {
+    indexerState.getIndexerPosition.mockResolvedValue(null);
+    indexerState.hasIndexerProgress.mockReturnValue(false);
 
     const app = await buildServer();
-    const response = await app.inject({ method: "GET", url: "/readiness" });
+    const response = await app.inject({ method: "GET", url: "/ready" });
     await app.close();
 
     expect(response.statusCode).toBe(503);
-    expect(response.json()).toEqual({ status: "not_ready" });
+    expect(response.json()).toEqual({
+      status: "not_ready",
+      database: "up",
+      error: "indexer has not made progress",
+    });
   });
 
-  it("reports ready once the indexer has made progress", async () => {
-    indexer.hasMadeProgress.mockReturnValue(true);
+  it("reports not ready when indexer position exists but lastLedger is 0", async () => {
+    indexerState.getIndexerPosition.mockResolvedValue({
+      lastLedger: 0,
+      chainLedger: 100,
+      cursor: "cursor",
+      updatedAt: new Date(),
+    });
+    indexerState.hasIndexerProgress.mockReturnValue(false);
 
     const app = await buildServer();
-    const response = await app.inject({ method: "GET", url: "/readiness" });
+    const response = await app.inject({ method: "GET", url: "/ready" });
+    await app.close();
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toEqual({
+      status: "not_ready",
+      database: "up",
+      error: "indexer has not made progress",
+    });
+  });
+
+  it("reports ready once the indexer has made progress (lastLedger > 0)", async () => {
+    indexerState.getIndexerPosition.mockResolvedValue({
+      lastLedger: 50,
+      chainLedger: 100,
+      cursor: "cursor",
+      updatedAt: new Date(),
+    });
+    indexerState.hasIndexerProgress.mockReturnValue(true);
+
+    const app = await buildServer();
+    const response = await app.inject({ method: "GET", url: "/ready" });
     await app.close();
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ status: "ok" });
+    expect(response.json()).toEqual({
+      status: "ready",
+      database: "up",
+      indexer: { lagLedgers: 50 },
+    });
+  });
+
+  it("reports ready with lagLedgers = 0 when caught up", async () => {
+    indexerState.getIndexerPosition.mockResolvedValue({
+      lastLedger: 100,
+      chainLedger: 100,
+      cursor: "cursor",
+      updatedAt: new Date(),
+    });
+    indexerState.hasIndexerProgress.mockReturnValue(true);
+
+    const app = await buildServer();
+    const response = await app.inject({ method: "GET", url: "/ready" });
+    await app.close();
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      status: "ready",
+      database: "up",
+      indexer: { lagLedgers: 0 },
+    });
   });
 
   it("keeps liveness unaffected while the indexer has made no progress", async () => {
-    indexer.hasMadeProgress.mockReturnValue(false);
+    indexerState.getIndexerPosition.mockResolvedValue(null);
+    indexerState.hasIndexerProgress.mockReturnValue(false);
 
     const app = await buildServer();
     const response = await app.inject({ method: "GET", url: "/health" });

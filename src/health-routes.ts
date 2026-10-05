@@ -1,15 +1,15 @@
 // ---------------------------------------------------------------------------
 // Health routes (#240).
 //
-// /health — liveness: returns 200 as long as the process is up.
-// /ready  — readiness: checks database connectivity and indexer lag.
+// /health ï¿½ liveness: returns 200 as long as the process is up.
+// /ready  ï¿½ readiness: checks database connectivity and indexer lag.
 // ---------------------------------------------------------------------------
 
 import type { FastifyInstance } from "fastify";
 
 import { checkHealth } from "./db.js";
 
-import { getIndexerPosition } from "./repositories/indexer-state.js";
+import { getIndexerPosition, hasIndexerProgress } from "./repositories/indexer-state.js";
 
 import { serviceVersion } from "./version.js";
 
@@ -92,6 +92,11 @@ export function registerHealthRoutes(app: FastifyInstance): void {
       }
 
       const position = await getIndexerPosition();
+      if (!hasIndexerProgress(position)) {
+        void reply.status(503);
+        return { status: "not_ready", database: "up", error: "indexer has not made progress" };
+      }
+
       const lagLedgers = position
         ? Math.max(0, position.chainLedger - position.lastLedger)
         : null;
