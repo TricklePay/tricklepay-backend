@@ -16,6 +16,7 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
     "replay-failed-events": "tsx src/indexer/replay.ts",
+    "depcheck": "depcheck",
     "postinstall": "prisma generate",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev"
@@ -31,6 +32,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.20.1",
+    "depcheck": "^1.4.7",
     "prisma": "^6.2.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
