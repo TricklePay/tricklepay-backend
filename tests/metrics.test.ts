@@ -27,6 +27,26 @@ describe("Gauge", () => {
   });
 });
 
+describe("Gauge.increment", () => {
+  it("increments an unlabeled gauge from zero, without turning it into a counter", () => {
+    const gauge = new Gauge("test_indexed_streams_increment", "Created streams", []);
+    gauge.inc();
+    gauge.inc();
+
+    expect(renderMetrics()).toContain("test_indexed_streams_increment 2");
+    expect(renderMetrics()).not.toContain("test_indexed_streams_increment_total");
+  });
+
+  it("increments only the matching label set and preserves set values", () => {
+    const gauge = new Gauge("test_gauge_increment_by_label", "Gauge updates", ["status"]);
+    gauge.set({ status: "running" }, 4);
+    gauge.inc({ status: "running" }, 2);
+    gauge.inc({ status: "stopped" });
+    expect(renderMetrics()).toContain('test_gauge_increment_by_label{status="running"} 6');
+    expect(renderMetrics()).toContain('test_gauge_increment_by_label{status="stopped"} 1');
+  });
+});
+
 describe("Histogram", () => {
   it("observations are cumulative across buckets", () => {
     const hist = new Histogram("test_hist", "A test histogram", [], [10, 50, 100]);
@@ -106,7 +126,7 @@ describe("indexed streams metric (#393)", () => {
 
     const output = renderMetrics();
     expect(output).toContain("# HELP indexed_streams Number of indexed streams");
-    expect(output).toContain("# TYPQ indexed_streams gauge");
+    expect(output).toContain("# TYPE indexed_streams gauge");
     expect(output).toContain("indexed_streams 7");
   });
 

@@ -121,6 +121,12 @@ export class Gauge {
     }
   }
 
+  /** Increment the current value for one label set (zero when unseen). */
+  inc(labels: Record<string, string> = {}, amount = 1): void {
+    const key = labelsKey(labels);
+    this.values.set(key, (this.values.get(key) ?? 0) + amount);
+  }
+
   private serialize(): string {
     const lines: string[] = [
       `# HELP ${this.name} ${this.help}`,
