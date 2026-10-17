@@ -151,4 +151,62 @@ describe("GET /metrics", () => {
     // Ensure raw paths do not leak into the metric labels
     expect(response.body).not.toContain("distinct-id");
   });
+
+  it("folds distinct unmatched paths into one unknown series without hiding matched routes (#500)", async () => {
+    const { buildServer } = await import("../../src/server.js");
+    const app = await buildServer();
+    await app.register(metricsRoutes);
+    app.get("/cardinality/:id", async () => ({ ok: true }));
+
+    try {
+      // Metrics are registered globally. Compare counters before/after this
+      // test rather than assuming earlier tests left the registry empty.
+      const { renderMetrics } = await import("../../src/metrics.js");
+      const metricLines = () => renderMetrics().split("\n");
+      const countFor = (lines: string[], metric: string, route: string, status: number) => {
+        const entries = lines.filter(
+          (line) =>
+            line.startsWith(`${metric}{method="GET",`) &&
+            line.includes(`route="${route}",status="${status}"`),
+        );
+        expect(entries.length).toBeLessThanOrEqual(1);
+        return Number(entries[0]?.split(" ").at(-1) ?? 0);
+      };
+
+      const baseline = metricLines();
+      const counter = "tricklepay_http_requests_total";
+      const histogramCount = "tricklepay_http_request_duration_ms_count";
+      const unknownBefore = countFor(baseline, counter, "unknown", 404);
+      const durationBefore = countFor(baseline, histogramCount, "unknown", 404);
+      const matchedBefore = countFor(baseline, counter, "/cardinality/:id", 200);
+
+      for (let i = 0; i < 12; i++) {
+        const reply = await app.inject({
+          method: "GET",
+          url: `/does-not-exist-${i}/${i * 19}`,
+        });
+        expect(reply.statusCode).toBe(404);
+      }
+      for (let i = 0; i < 3; i++) {
+        const reply = await app.inject({ method: "GET", url: `/cardinality/id-${i}` });
+        expect(reply.statusCode).toBe(200);
+      }
+
+      const after = metricLines();
+      expect(countFor(after, counter, "unknown", 404) - unknownBefore).toBe(12);
+      expect(countFor(after, histogramCount, "unknown", 404) - durationBefore).toBe(12);
+      expect(countFor(after, counter, "/cardinality/:id", 200) - matchedBefore).toBe(3);
+
+      // Crucially, none of the attacker-controlled missing paths or matching
+      // parameter values become distinct Prometheus time series.
+      const exposition = after.join("\n");
+      expect(exposition).not.toContain("does-not-exist-");
+      expect(exposition).not.toContain("id-0");
+      // Each family must have one series, even for all 12 unrelated paths.
+      expect(after.filter((line) => line.startsWith(`${counter}{method="GET",route="unknown",status="404"}`))).toHaveLength(1);
+      expect(after.filter((line) => line.startsWith(`${histogramCount}{method="GET",route="unknown",status="404"}`))).toHaveLength(1);
+    } finally {
+      await app.close();
+    }
+  });
 });
