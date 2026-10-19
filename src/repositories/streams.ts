@@ -76,6 +76,10 @@ export interface StreamFilter {
   cursor?: bigint;
   limit?: number;
   offset?: number;
+  startAfter?: bigint;
+  startBefore?: bigint;
+  endAfter?: bigint;
+  endBefore?: bigint;
 }
 
 export interface StreamListResult {
@@ -271,6 +275,19 @@ function whereFromFilter(filter: StreamFilter): Prisma.StreamWhereInput {
   if (filter.token) where.token = filter.token;
   if (filter.cancelled !== undefined) where.cancelled = filter.cancelled;
   if (filter.cursor !== undefined) where.streamId = { lt: filter.cursor };
+  
+  // Schedule range filters
+  if (filter.startAfter !== undefined || filter.startBefore !== undefined) {
+    where.startTime = {};
+    if (filter.startAfter !== undefined) where.startTime.gt = filter.startAfter;
+    if (filter.startBefore !== undefined) where.startTime.lt = filter.startBefore;
+  }
+  if (filter.endAfter !== undefined || filter.endBefore !== undefined) {
+    where.endTime = {};
+    if (filter.endAfter !== undefined) where.endTime.gt = filter.endAfter;
+    if (filter.endBefore !== undefined) where.endTime.lt = filter.endBefore;
+  }
+  
   return where;
 }
 
