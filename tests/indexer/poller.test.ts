@@ -426,6 +426,64 @@ describe("Poller", () => {
     expect(indexer.applyEvent).toHaveBeenCalled();
   });
 
+  it("ends the tick after a page that repeats its own request cursor (#546)", async () => {
+    // The stuck-page guard used to compare each page's cursor with the tick's
+    // initial cursor, so it only caught a stuck *first* page. A later page
+    // that repeats the cursor it was requested with is equally stuck — the
+    // next fetch would return the same events — so the tick must end after
+    // that page rather than refetch it until maxPagesPerTick.
+    const poller = new Poller(server, config, log);
+    (poller as any).running = true;
+
+    // Page 1 is requested with "cx1" and moves the cursor to "cx2"; page 2 is
+    // requested with "cx2" but returns "cx2" again, so the backlog cannot
+    // advance past it.
+    chain.getContractEvents
+      .mockResolvedValueOnce(fullPage("cx2"))
+      .mockResolvedValueOnce(fullPage("cx2"));
+
+    const after = await (poller as any).tick({ cursor: "cx1", lastLedger: 56000000 });
+
+    // Page 2 ended the tick: nothing further was requested.
+    expect(chain.getContractEvents).toHaveBeenCalledTimes(2);
+    expect(after.cursor).toBe("cx2");
+    // The stuck page still applied and saved its own cursor, so the next tick
+    // resumes from it rather than from before the first page.
+    expect(indexerState.saveIndexerPosition).toHaveBeenCalledWith(
+      expect.objectContaining({ cursor: "cx2" }),
+    );
+  });
+
+  it("still ends the tick on a first page that repeats the tick's cursor (#546)", async () => {
+    // The first page's request cursor is the tick's initial cursor, so the
+    // first-page behaviour is unchanged by the fix: a page that returns the
+    // cursor it was requested with ends the tick immediately.
+    const poller = new Poller(server, config, log);
+    (poller as any).running = true;
+
+    chain.getContractEvents.mockResolvedValue(fullPage("cx1"));
+
+    const after = await (poller as any).tick({ cursor: "cx1", lastLedger: 56000000 });
+
+    expect(chain.getContractEvents).toHaveBeenCalledTimes(1);
+    expect(after.cursor).toBe("cx1");
+  });
+
+  it("keeps fetching when every page advances its own request cursor (#546)", async () => {
+    // Distinct cursors on every page must not trip the guard: the tick stops
+    // on the page cap, not on a stuck-page detection.
+    const poller = new Poller(server, { ...config, maxPagesPerTick: 3 }, log);
+    (poller as any).running = true;
+
+    let seq = 0;
+    chain.getContractEvents.mockImplementation(async () => fullPage(cursors[seq++]));
+
+    const after = await (poller as any).tick({ cursor: "cx0", lastLedger: 56000000 });
+
+    expect(chain.getContractEvents).toHaveBeenCalledTimes(3);
+    expect(after.cursor).toBe(cursors[2]);
+  });
+
   // Uses a realistic interval so the doubling is observable (the shared config
   // uses pollIntervalMs 0, which would collapse every delay to 0).
   const backoffConfig = { ...config, pollIntervalMs: 1000, maxBackoffMs: 7000 };

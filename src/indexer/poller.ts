@@ -52,7 +52,10 @@ interface IndexerState {
 // The cursor is checked too, as a stop for a page that is full but has not
 // moved on. Fetching that page again would return the same events forever, so
 // it is treated as the end of the backlog and left for the next tick rather
-// than retried without pause.
+// than retried without pause. The comparison is against the cursor that
+// requested *this* page, not the tick's initial cursor: from the second page
+// on, the request cursor is the previous page's, and only the page's own
+// request cursor tells whether that page moved the backlog.
 export function isBacklogDrained(page: EventPage, requestedCursor?: string): boolean {
   return page.events.length < EVENT_PAGE_LIMIT || page.cursor === requestedCursor;
 }
@@ -204,12 +207,21 @@ export class Poller {
         break;
       }
 
+      // The cursor this page was requested with, captured before `applyPage`
+      // folds the page's own cursor into the state. `position.cursor` is the
+      // request cursor of the first page only; from the second page on the
+      // request cursor is the previous page's, and a page that repeats its own
+      // request cursor is just as stuck as a first page that repeats the
+      // tick's. Comparing against `position.cursor` here would let that page
+      // be refetched until `maxPagesPerTick`.
+      const requestedCursor = current.cursor;
+
       pagesFetched.inc();
       current = await this.applyPage(page, current);
       pages += 1;
       events += page.events.length;
 
-      const drained = isBacklogDrained(page, position.cursor);
+      const drained = isBacklogDrained(page, requestedCursor);
       if (drained) break;
 
       // A cap keeps one tick from running forever on a huge backlog. The cursor
