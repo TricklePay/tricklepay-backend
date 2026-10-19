@@ -158,11 +158,14 @@ curl http://localhost:3000/docs/yaml > openapi.yaml
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `GET` | `/` | Service index: name, version, and a list of endpoints. |
+| `GET` | `/` | Service index: `name`, `description`, `network`, `contractId`, and the endpoint list (no `version` property). |
 | `GET` | `/health` | Liveness check. Returns 200 with the service version; performs no database read. |
-| `GET` | `/ready` | Readiness check. Verifies database connectivity and that the indexer has made progress; returns 503 when the database is unavailable or the indexer has not yet applied any events. |
+| `GET` | `/ready` | Readiness check. Returns 503 when PostgreSQL is unavailable or the stored indexer position has not advanced past `lastLedger = 0`. Event application is not required. |
 | `GET` | `/status` | Indexer progress against the chain. Response includes `Cache-Control: no-store` to prevent stale lag readings. |
 | `GET` | `/streams` | List streams. Query params: `sender`, `recipient`, `token`, `limit`, `offset`, `includeTotal`, `cancelled`, `cursor`. Address filters accept lowercase and padded spellings and are normalized before matching. `total` is only included when `includeTotal=true`; `cancelled` filters by cancellation status when given, and is omitted to return both. |
+| `GET` | `/streams/summary` | Aggregate counts and exact amounts by stream status. Uses the configurable cache window; see [Stream Summary Endpoint](#stream-summary-endpoint). |
+| `GET` | `/streams/:id` | A single stream by id. |
+| `GET` | `/metrics` | Prometheus metrics. |
 
 ### Pagination Parameters
 
@@ -176,10 +179,6 @@ The `GET /streams` endpoint supports pagination through the following query para
 | `includeTotal` | boolean | false | - | When `true`, includes the total count of matching streams |
 
 **Note:** When `cursor` is provided, `offset` is ignored and offset ceiling checks are skipped. Use cursor-based pagination for stable results under concurrent inserts.
-| `GET` | `/streams/summary` | Aggregate counts and exact total amounts per status (`pending`, `streaming`, `completed`, `cancelled`). Useful for dashboard overview displays without fetching individual streams. Response is cached for 30 seconds. |
-| `GET` | `/streams/:id` | A single stream by id. |
-| `GET` | `/metrics` | Prometheus metrics. |
-
 Each stream is returned with its stored fields plus derived `vested`,
 `withdrawable`, `locked`, `progress`, and `status` (`pending`, `streaming`,
 `completed`, or `cancelled`). `progress` is vesting progress in basis points
@@ -204,7 +203,7 @@ The `/streams/summary` endpoint returns aggregate counts and exact total amounts
 }
 ```
 
-All amounts are exact integer base units encoded as strings (not JSON numbers) to preserve full 128-bit precision. The response is held in-process for the window set by `STREAM_SUMMARY_CACHE_TTL_MS` (2 seconds by default, `0` to disable); `Cache-Control: public, max-age=N` reports the seconds left in that window, so `N` counts down as the cached entry ages — the full window immediately after a fresh computation, `0` at the end of it — and a client's copy never outlives the server's.
+All amounts are exact integer base units encoded as strings (not JSON numbers) to preserve full 128-bit precision. The response is held in-process for the window set by [`STREAM_SUMMARY_CACHE_TTL_MS`](#configuration) (2 seconds by default, `0` to disable); `Cache-Control: public, max-age=N` reports the seconds left in that window, so `N` counts down as the cached entry ages — the full window immediately after a fresh computation, `0` at the end of it — and a client's copy never outlives the server's.
 
 **Data Types and Precision**
 - **Amounts** (`totalAmount`, `withdrawn`, `vested`, `withdrawable`, `locked`) are returned as strings holding integer base units.
@@ -301,14 +300,14 @@ curl -s http://localhost:3000/streams/invalid | jq
 `/health` is a liveness probe: it returns 200 with the service version and
 performs no database read, so it stays green even when dependencies are down.
 
-`/ready` is a readiness probe and reflects whether the service has usable
-data, not merely whether dependencies answer. It verifies database
-connectivity and that the indexer has made progress — specifically, that
-`IndexerState.lastLedger` has advanced past its initial value, meaning at
-least one event has been applied to Postgres. A freshly started instance that
-has not yet indexed anything returns 503, so traffic is not routed to an
-instance that would serve an empty list. Liveness is unaffected: `/health`
-continues to return 200 regardless of indexer progress.
+`/ready` is a readiness probe. It verifies database connectivity and checks
+that `IndexerState.lastLedger > 0` via `hasIndexerProgress`. This is a stored
+ledger-position check, **not a check that any contract events have been
+applied**: when the indexer starts at the latest ledger, a successful poll on
+a quiet chain can provide a positive checkpoint with no stream events. Before
+that progress is stored, or if the database is unavailable, `/ready` returns
+503. Liveness is unaffected: `/health` continues to return 200 independently
+of indexer or database status.
 
 The service exposes two health endpoints that answer different questions. Wire them to separate probes in your orchestration platform.
 
@@ -336,7 +335,7 @@ The service exposes two health endpoints that answer different questions. Wire t
 
 **What it checks:**
 1. Database connectivity (can reach Postgres)
-2. Indexer lag (how far behind the chain)
+2. A positive stored indexer ledger position (`lastLedger > 0`). The route reports lag when ready but does not impose a lag threshold.
 
 **What it does NOT check:**
 - Chain connectivity
@@ -369,7 +368,7 @@ The service exposes two health endpoints that answer different questions. Wire t
 | Probe | Fires When | Action |
 |-------|------------|--------|
 | Liveness (`/health`) | Process is unresponsive | Restart container |
-| Readiness (`/ready`) | Database unreachable | Remove from rotation, do not restart |
+| Readiness (`/ready`) | Database unreachable or indexer checkpoint not yet positive | Remove from rotation, do not restart |
 
 ## Metrics
 
