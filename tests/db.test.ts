@@ -28,6 +28,7 @@ describe("checkHealth", () => {
     const result = await checkHealth();
     
     expect(result).toEqual({ status: "up" });
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("times out predictably", async () => {
@@ -39,6 +40,7 @@ describe("checkHealth", () => {
     
     const result = await promise;
     expect(result).toEqual({ status: "down", error: "timeout" });
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("normalizes errors without leaking credentials", async () => {
@@ -49,6 +51,7 @@ describe("checkHealth", () => {
     const result = await checkHealth();
     
     expect(result).toEqual({ status: "down", error: "database unavailable" });
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
 
