@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import { prisma } from "../src/db.js";
 import { buildServer } from "../src/server.js";
 
 // Integration-level smoke tests for the split server setup (#240).
@@ -15,6 +16,34 @@ describe("buildServer (split setup #240)", () => {
     const body = res.json<{ status: string; version: string }>();
     expect(body.status).toBe("ok");
     expect(typeof body.version).toBe("string");
+  });
+
+  it("keeps operational probes reachable after the API quota is exhausted", async () => {
+    const app = await buildServer({ rateLimitMax: 2, rateLimitWindowMs: 60000 });
+    app.get("/streams", async () => ({ ok: true }));
+    app.get("/metrics", async () => "metrics ok");
+
+    try {
+      const first = await app.inject({ method: "GET", url: "/streams" });
+      const second = await app.inject({ method: "GET", url: "/streams" });
+      const limited = await app.inject({ method: "GET", url: "/streams" });
+      expect([first.statusCode, second.statusCode, limited.statusCode]).toEqual([200, 200, 429]);
+      for (const route of ["/health", "/health?probe=1", "/metrics", "/metrics?probe=1"]) {
+        const res = await app.inject({ method: "GET", url: route });
+        expect(res.statusCode).toBe(200);
+      }
+      const query = vi.spyOn(prisma, "$queryRaw").mockRejectedValueOnce(new Error("database down"));
+      try {
+        const ready = await app.inject({ method: "GET", url: "/ready" });
+        expect(ready.statusCode).toBe(503); // dependency failure, not a rate-limit response
+      } finally {
+        query.mockRestore();
+      }
+      // A probe must not reset or consume the exhausted client-IP bucket.
+      expect((await app.inject({ method: "GET", url: "/streams" })).statusCode).toBe(429);
+    } finally {
+      await app.close();
+    }
   });
 
   it("attaches x-request-id header to every response", async () => {

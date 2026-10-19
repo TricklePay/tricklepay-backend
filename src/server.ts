@@ -100,6 +100,12 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
   const maxTrackedClients = 10_000;
 
   app.addHook("onRequest", async (request, reply) => {
+    // Operational probes must stay reachable when real API traffic exhausts
+    // the shared client-IP quota (for example behind a local sidecar).
+    const path = request.url.split("?", 1)[0];
+    if (path === "/health" || path === "/ready" || path === "/metrics") {
+      return;
+    }
     const now = Date.now();
     let window = clientWindows.get(request.ip);
 

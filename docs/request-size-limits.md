@@ -111,6 +111,8 @@ Each client IP is allowed `RATE_LIMIT_MAX` requests during a fixed window of `RA
 
 The in-memory limiter is local to one server process, so clients behind a load balancer may receive a separate allowance from each instance. Fastify uses the direct peer address unless the proxy is listed in `TRUSTED_PROXIES`; only configure trusted proxies when they overwrite forwarded client-IP headers.
 
+The `/health`, `/ready`, and `/metrics` operational endpoints are excluded from request rate limiting, including when query parameters are present. All other API routes, including `/streams`, still count toward the client-IP quota. Probe requests continue to obey the query-string and body limits.
+
 **Example:**
 ```
 http://localhost:3000/streams?limit=50&offset=100
