@@ -17,6 +17,26 @@ describe("buildServer (split setup #240)", () => {
     expect(typeof body.version).toBe("string");
   });
 
+  it("exposes response metadata headers to browser clients via CORS", async () => {
+    const app = await buildServer();
+    const res = await app.inject({
+      method: "GET",
+      url: "/health",
+      headers: { origin: "https://frontend.example" },
+    });
+    await app.close();
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["access-control-allow-origin"]).toBe("https://frontend.example");
+    const exposed = String(res.headers["access-control-expose-headers"])
+      .split(",")
+      .map((header) => header.trim().toLowerCase());
+    expect(exposed).toEqual(expect.arrayContaining([
+      "etag", "retry-after", "x-request-id", "link", "x-indexer-lag-ledgers",
+    ]));
+    expect(exposed).not.toContain("*");
+  });
+
   it("attaches x-request-id header to every response", async () => {
     const app = await buildServer();
     const res = await app.inject({ method: "GET", url: "/health" });
