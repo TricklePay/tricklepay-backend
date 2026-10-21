@@ -54,6 +54,15 @@ async function getHistory(id: string, query: string = "") {
 }
 
 describe("GET /streams/:id/events", () => {
+  it("rejects non-canonical stream IDs before hitting the database", async () => {
+    for (const invalidId of ["0042", "%2042", "42%20"]) {
+      const response = await getHistory(invalidId);
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toMatchObject({ code: "VALIDATION_ERROR", error: "invalid stream id" });
+    }
+    expect(streamsRepo.getStream).not.toHaveBeenCalled();
+  });
+
   it("returns an empty array for a valid stream without events", async () => {
     streamsRepo.getStream.mockResolvedValue(makeStream());
     indexedEventsRepo.listIndexedEvents.mockResolvedValue([]);

@@ -9,8 +9,10 @@ export const MAX_UINT64 = 18446744073709551615n;
 export function parseStreamId(raw: string | undefined): bigint | null {
   if (raw === undefined) return null;
 
-  const value = raw.trim();
-  if (value.length === 0 || !/^\d+$/.test(value)) return null;
+  // Canonical spelling is important for stable cache keys and ETags.
+  // Whitespace and leading zeros are not valid stream-id representations.
+  if (!/^(0|[1-9][0-9]*)$/.test(raw)) return null;
+  const value = raw;
 
   try {
     const parsed = BigInt(value);
