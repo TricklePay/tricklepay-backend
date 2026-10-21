@@ -658,42 +658,24 @@ describe("GET /streams offset ceiling", () => {
   });
 });
 
-describe("GET /streams invalid offset (#134)", () => {
-  it("treats a non-numeric offset as zero", async () => {
-    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
-    const response = await listRequest("/streams?offset=abc");
-    expect(response.statusCode).toBe(200);
-    expect(streamsRepo.listStreams).toHaveBeenCalledWith(
-      expect.objectContaining({ offset: 0 }),
-    );
-  });
+describe("GET /streams invalid pagination (#561)", () => {
+  it.each(["abc", "-5", "", "3.7", "0x10", "1e2", "01"])(
+    "returns 400 VALIDATION_ERROR for invalid offset %j", async (offset) => {
+      const response = await listRequest(`/streams?offset=${encodeURIComponent(offset)}`);
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toMatchObject({ code: "VALIDATION_ERROR", error: "invalid offset" });
+      expect(streamsRepo.listStreams).not.toHaveBeenCalled();
+    },
+  );
 
-  it("treats a negative offset as zero", async () => {
-    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
-    const response = await listRequest("/streams?offset=-5");
-    expect(response.statusCode).toBe(200);
-    expect(streamsRepo.listStreams).toHaveBeenCalledWith(
-      expect.objectContaining({ offset: 0 }),
-    );
-  });
-
-  it("treats an empty string offset as zero", async () => {
-    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
-    const response = await listRequest("/streams?offset=");
-    expect(response.statusCode).toBe(200);
-    expect(streamsRepo.listStreams).toHaveBeenCalledWith(
-      expect.objectContaining({ offset: 0 }),
-    );
-  });
-
-  it("treats a floating-point offset as truncated integer", async () => {
-    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
-    const response = await listRequest("/streams?offset=3.7");
-    expect(response.statusCode).toBe(200);
-    expect(streamsRepo.listStreams).toHaveBeenCalledWith(
-      expect.objectContaining({ offset: 3 }),
-    );
-  });
+  it.each(["abc", "-1", "", "0", "3.7", "0x10", "1e2", "01"])(
+    "returns 400 VALIDATION_ERROR for invalid limit %j", async (limit) => {
+      const response = await listRequest(`/streams?limit=${encodeURIComponent(limit)}`);
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toMatchObject({ code: "VALIDATION_ERROR", error: "invalid limit" });
+      expect(streamsRepo.listStreams).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("GET /streams includeTotal", () => {

@@ -10,7 +10,7 @@ import { StrKey } from "@stellar/stellar-sdk";
 import type { FastifyInstance } from "fastify";
 
 import { sendError, bigIntToStringNullable } from "../lib/response.js";
-import { parsePagination } from "../lib/pagination.js";
+import { InvalidPaginationParameter, parsePagination } from "../lib/pagination.js";
 import { mapStreamResponse } from "../lib/stream-view.js";
 import { MAX_UINT64, parseStreamId } from "../lib/stream-id.js";
 
@@ -330,7 +330,16 @@ export async function streamRoutes(
     async (request, reply) => {
       const query = request.query;
 
-      const { limit, offset } = parsePagination(query);
+      let limit: number;
+      let offset: number;
+      try {
+        ({ limit, offset } = parsePagination(query));
+      } catch (error) {
+        if (error instanceof InvalidPaginationParameter) {
+          return sendError(reply, request, 400, "VALIDATION_ERROR", error.message);
+        }
+        throw error;
+      }
 
       let cursor: bigint | undefined;
       if (query.cursor !== undefined) {
