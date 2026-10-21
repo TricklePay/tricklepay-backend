@@ -19,6 +19,7 @@ import {
 } from "../repositories/failed-events.js";
 
 import { applyEvent } from "./apply.js";
+import { isDirectEntry } from "./direct-entry.js";
 
 export interface ReplayFailedEventsOptions {
   limit?: number;
@@ -199,7 +200,7 @@ async function main(): Promise<void> {
   await prisma.$disconnect();
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isDirectEntry(import.meta.url)) {
   void main().catch((err) => {
     logger.error({ err }, "failed to replay failed events");
     process.exitCode = 1;
