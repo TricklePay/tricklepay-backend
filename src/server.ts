@@ -51,6 +51,47 @@ import { registerSecurityHeaders } from "./security-headers.js";
 // handlers in `./error-handlers.ts`, shared schemas in `./schema-registration.ts`, and
 // health routes in `./health-routes.ts` — all independently testable.
 
+function parseCorsOrigins(raw: string | undefined): boolean | string[] {
+  if (raw === undefined) return true;
+
+  const trimmed = raw.trim();
+  if (trimmed === "") return false;
+
+  const origins = trimmed
+    .split(",")
+    .map((entry) => entry.trim());
+
+  if (origins.some((origin) => origin === "")) {
+    throw new Error("CORS_ORIGIN must not contain an empty origin entry");
+  }
+
+  return origins.map((origin) => {
+    let parsed: URL;
+
+    try {
+      parsed = new URL(origin);
+    } catch {
+      throw new Error(
+        `CORS_ORIGIN entry "${origin}" is not a valid absolute origin without a path`,
+      );
+    }
+
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error(
+        `CORS_ORIGIN entry "${origin}" is not a valid HTTP(S) origin`,
+      );
+    }
+
+    if (parsed.pathname !== "/" || parsed.search !== "" || parsed.hash !== "") {
+      throw new Error(
+        `CORS_ORIGIN entry "${origin}" must not include a path, query string, or fragment`,
+      );
+    }
+
+    return parsed.origin;
+  });
+}
+
 // Builds the Fastify instance with the shared logger, CORS, the OpenAPI
 // plugin, and the routes that do not depend on external services. Route groups
 // that need the database are registered by the caller during bootstrap.
@@ -181,14 +222,19 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
   // every error response.
   registerErrorHandlers(app);
 
+  const corsOrigin = parseCorsOrigins(process.env.CORS_ORIGIN);
+
   // The web client fetches this API from the browser, so it is always a
   // cross-origin caller once the two run on separate ports or hosts. The data
   // served here is public and read-only, so any origin is reflected by
-  // default; set CORS_ORIGIN to pin deployments to a known frontend. Not
-  // awaited because Fastify defers plugin loading until ready/listen, which
-  // keeps this builder synchronous for its callers.
+  // default; set CORS_ORIGIN to pin deployments to a known frontend. A blank
+  // value disables browser access altogether, rather than passing an empty
+  // origin string through to the CORS plugin. Comma-separated values are
+  // accepted as an allowlist of exact origins, each validated without a path.
+  // Not awaited because Fastify defers plugin loading until ready/listen,
+  // which keeps this builder synchronous for its callers.
   void app.register(cors, {
-    origin: process.env.CORS_ORIGIN ?? true,
+    origin: corsOrigin,
   });
 
   // Compress responses at or above the configured threshold when the client

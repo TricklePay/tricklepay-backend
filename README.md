@@ -177,7 +177,8 @@ and why, see [docs/response-headers.md](docs/response-headers.md).
 | `GET` | `/streams` | List streams. Query params: `sender`, `recipient`, `token`, `limit`, `offset`, `includeTotal`, `cancelled`, `cursor`. Address filters accept lowercase and padded spellings and are normalized before matching. `total` is only included when `includeTotal=true`; `cancelled` filters by cancellation status when given, and is omitted to return both. Repeating a parameter is rejected with `400` — see [Query parameters](#query-parameters). |
 | `GET` | `/streams/summary` | Aggregate counts and exact total amounts per status (`pending`, `streaming`, `completed`, `cancelled`). Useful for dashboard overview displays without fetching individual streams. Response is cached for 30 seconds. |
 | `GET` | `/streams/:id` | A single stream by id. Also available as `HEAD`. |
-| `GET` | `/streams/:id/events` | A single stream's indexed event history, in ascending chain order. Optional `kind` filter (`created`, `withdrawn`, `cancelled`). |
+| `GET` | `/streams/:id/events` | The v1-compatible array response for a single stream's indexed event history, in ascending chain order. Optional `kind` filter (`created`, `withdrawn`, `cancelled`). |
+| `GET` | `/v2/streams/:id/events` | Paginated stream event history. Query params: `limit` (default 50, maximum 100), opaque `cursor`, and optional `kind`. Returns `{ events, limit, nextCursor? }`. |
 | `GET` | `/streams/:id/schedule` | Evenly spaced vesting curve points for charting, with the cliff instant included. Optional `points` query param (2–100, default 50). |
 | `GET` | `/accounts/:address/summary` | Incoming and outgoing stream counts and amount totals for a single Stellar address. |
 | `GET` | `/tokens` | Each distinct streamed token, with its stream count and total escrowed amount. |
@@ -332,7 +333,7 @@ curl -s http://localhost:3000/streams/42 | jq
 }
 ```
 
-**`GET /streams/:id/events`**
+**`GET /streams/:id/events`** (v1-compatible array response)
 ```bash
 curl -s http://localhost:3000/streams/42/events | jq
 ```
@@ -358,6 +359,41 @@ curl -s http://localhost:3000/streams/42/events | jq
   }
 ]
 ```
+
+**`GET /v2/streams/:id/events`**
+```bash
+curl -s "http://localhost:3000/v2/streams/42/events?limit=1" | jq
+```
+```json
+{
+  "events": [
+    {
+      "eventId": "0000000000000000000000000000000000000001-0000000000000001",
+      "kind": "created",
+      "streamId": "42",
+      "ledger": 123456,
+      "txHash": "66f7505577a417f4c1187fb8a8eeb6f3737f848d5f0b3b20c5a6c57ab7d659d1",
+      "sender": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+      "recipient": "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H",
+      "token": "CBFS2HT4TIHTMWA5ZND6FEC27BRRA4V6JWOD7JIIDZVSPVAM7EJ2LZS7",
+      "totalAmount": "100000000000000",
+      "amount": null,
+      "recipientAmount": null,
+      "senderRefund": null,
+      "startTime": "1735689600",
+      "endTime": "1767225600",
+      "cliffTime": "1740000000",
+      "closedAt": "1735689600"
+    }
+  ],
+  "limit": 1,
+  "nextCursor": "eyJldmVudElkIjoiLi4uIn0"
+}
+```
+Follow `nextCursor` by sending it as the `cursor` query parameter. Pages remain
+in ascending event-id order; `nextCursor` is omitted after the final page. The
+unversioned route retains the original unbounded array response for existing
+v1 clients.
 
 **`GET /streams/:id/schedule`**
 ```bash
@@ -1019,7 +1055,7 @@ current template — copy it and fill in the required values.
 | `SOROBAN_RPC_URL` | No | *network dependent* | Soroban RPC endpoint. Defaults to the public endpoint for the selected network. Plain `http://` is only accepted for `localhost`, `127.0.0.0/8`, or `::1`/`[::1]`; any other host must use `https://` or startup fails — see [Plain HTTP is only allowed for local RPC hosts](docs/local-network.md#plain-http-is-only-allowed-for-local-rpc-hosts). |
 | `PORT` | No | `3000` | HTTP server listen port. |
 | `HOST` | No | `0.0.0.0` | HTTP server bind address. |
-| `CORS_ORIGIN` | No | - | Allowed browser origin for the web client. |
+| `CORS_ORIGIN` | No | - | Comma-separated list of allowed browser origins for the web client. Each entry must be a valid HTTP(S) origin without a path, query string, or fragment. |
 | `PUBLIC_BASE_URL` | No | `http://<HOST>:<PORT>` | Base URL advertised in the generated OpenAPI document's `servers` entry. Defaults to a URL derived from `HOST` and `PORT`. |
 | `LOG_LEVEL` | No | `info` | Log verbosity (`trace`, `debug`, `info`, `warn`, `error`, `fatal`, `silent`). |
 | `LOG_PRETTY` | No | - | Set to `true` for human-readable development logs; requires the `pino-pretty` dev dependency. Output stays JSON when unset. |
@@ -1261,7 +1297,7 @@ a placeholder to replace, never as a literal to ship with:
 DATABASE_URL=postgresql://<user>:<password>@<host>:5432/<database>
 STREAM_CONTRACT_ID=<deployed-contract-id>
 NETWORK=mainnet
-CORS_ORIGIN=https://<frontend-host>
+CORS_ORIGIN=https://<frontend-host>,https://<staging-frontend-host>
 ```
 
 ### Concurrency
@@ -1669,4 +1705,3 @@ Comprehensive technical documentation is maintained under the [`docs/`](docs/) d
 ## License
 
 MIT. See [LICENSE](LICENSE).
-

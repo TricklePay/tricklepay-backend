@@ -11,6 +11,21 @@ The TricklePay API is a contract between the backend service, the web client (`t
 
 ---
 
+## Versioned Stream Event History
+
+`GET /streams/:id/events` is retained with its original unpaginated array
+response for v1 clients. The paginated response is available at
+`GET /v2/streams/:id/events`, returning an object with `events`, `limit`, and
+an optional `nextCursor`. Keeping the old route and response intact avoids a
+breaking change for existing clients while providing a versioned migration
+path.
+
+The v2 route accepts `limit` (default 50, capped at 100), an opaque event-id
+`cursor`, and the existing optional `kind` filter. Responses preserve ascending
+event order.
+
+---
+
 ## What Counts as a Breaking Change
 
 A change is considered **breaking** if it requires client authors to modify their integration code to avoid failure or incorrect behavior.

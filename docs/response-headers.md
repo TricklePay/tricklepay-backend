@@ -17,6 +17,7 @@ read back out of `src/routes/*.ts`, `src/health-routes.ts`, and
 | `GET /streams/summary` | `public, max-age=N` (variable, see below) | — | — | Always 200 |
 | `GET /streams/:id` (also `HEAD`) | `public, max-age=30` | `"<updatedLedger>"`, or `"<updatedLedger>-<at>"` with `?at=` | — | Yes — 400/404 carry neither |
 | `GET /streams/:id/events` | `public, max-age=30` | — | — | Yes — 400/404 carry neither |
+| `GET /v2/streams/:id/events` | `public, max-age=30` | — | — | Yes — 400/404 carry neither |
 | `GET /streams/:id/schedule` | `public, max-age=30` | `"<updatedLedger>-schedule-<points>"` | — | Yes — 400/404 carry neither |
 | `GET /accounts/:address/summary` | `public, max-age=30` | — | — | Yes — 400 carries neither |
 | `GET /tokens` | `public, max-age=30` | — | — | Always 200 |
@@ -51,6 +52,7 @@ honoured by browsers when the request is actually served over HTTPS.
 ## Why `Cache-Control` is set the way it is
 
 - **`public, max-age=30` on `/streams`, `/streams/:id`, `/streams/:id/events`,
+  `/v2/streams/:id/events`,
   `/streams/:id/schedule`, `/accounts/:address/summary`, and `/tokens`.**
   These all read current database state and can be requested repeatedly in a
   short window (a client polling a stream's page, a dashboard refreshing a
@@ -100,7 +102,8 @@ schedule). Both check the incoming `If-None-Match` against that same value
 and reply `304` with an empty body on a match, rather than recomputing and
 re-sending a response the client already has.
 
-No other endpoint sets `ETag`: `/streams`, `/streams/:id/events`, `/tokens`,
+No other endpoint sets `ETag`: `/streams`, `/streams/:id/events`,
+`/v2/streams/:id/events`, `/tokens`,
 and `/accounts/:address/summary` all return collections or aggregates that
 don't reduce to one stream's `updatedLedger`, so there is no single version
 token to compare against.

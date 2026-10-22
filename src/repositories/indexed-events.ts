@@ -10,6 +10,7 @@
 
 import type { Prisma } from "@prisma/client";
 import { prisma, withQueryTimeout } from "../db.js";
+import type { StreamEvent } from "../chain/events.js";
 
 export type IndexedEventKind = "created" | "withdrawn" | "cancelled";
 
@@ -32,6 +33,33 @@ export interface IndexedEventRecord {
   closedAt: bigint | null;
 }
 
+export interface IndexedEventPage {
+  events: IndexedEventRecord[];
+  hasMore: boolean;
+}
+
+export function encodeIndexedEventCursor(eventId: string): string {
+  return Buffer.from(JSON.stringify({ eventId }), "utf8").toString("base64url");
+}
+
+export function decodeIndexedEventCursor(raw: string): string | null {
+  try {
+    const decoded = Buffer.from(raw, "base64url").toString("utf8");
+    const parsed = JSON.parse(decoded);
+    if (
+      parsed &&
+      typeof parsed.eventId === "string" &&
+      parsed.eventId.length > 0 &&
+      encodeIndexedEventCursor(parsed.eventId) === raw
+    ) {
+      return parsed.eventId;
+    }
+  } catch {
+    // Invalid cursors are reported as request validation errors by the route.
+  }
+  return null;
+}
+
 export async function listIndexedEvents(
   streamId: bigint,
   kind?: IndexedEventKind,
@@ -51,7 +79,32 @@ export async function listIndexedEvents(
   return rows as IndexedEventRecord[];
 }
 
-import type { StreamEvent } from "../chain/events.js";
+export async function listIndexedEventsPage(
+  streamId: bigint,
+  limit: number,
+  cursorEventId?: string,
+  kind?: IndexedEventKind,
+): Promise<IndexedEventPage> {
+  const where: {
+    streamId: string;
+    kind?: IndexedEventKind;
+    eventId?: { gt: string };
+  } = {
+    streamId: streamId.toString(),
+  };
+  if (kind !== undefined) where.kind = kind;
+  if (cursorEventId !== undefined) where.eventId = { gt: cursorEventId };
+
+  const rows = await withQueryTimeout(
+    (prisma as any).indexedEvent.findMany({
+      where,
+      orderBy: { eventId: "asc" },
+      take: limit + 1,
+    }),
+  );
+  const events = rows.slice(0, limit) as IndexedEventRecord[];
+  return { events, hasMore: rows.length > limit };
+}
 
 export function indexedEventFromDecoded(event: StreamEvent): IndexedEventRecord {
   return {

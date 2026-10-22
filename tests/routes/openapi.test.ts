@@ -205,6 +205,30 @@ describe("GET /docs/json (OpenAPI spec)", () => {
     expect(listSchema?.required).not.toContain("total");
   });
 
+  it("documents the paginated v2 stream event route and response schema", async () => {
+    const spec = await getSpec();
+    const paths = spec.paths as Record<string, Record<string, unknown>>;
+    const route = paths["/v2/streams/{id}/events"]?.get as {
+      parameters?: Array<{ name: string }>;
+      responses?: Record<string, unknown>;
+    };
+    const schemas = (
+      spec.components as { schemas?: Record<string, unknown> }
+    )?.schemas ?? {};
+    const pageSchema = schemas["StreamEventPageResponse"] as {
+      properties?: Record<string, unknown>;
+      required?: string[];
+    };
+
+    expect(route).toBeDefined();
+    expect(route.parameters?.map((parameter) => parameter.name)).toEqual(
+      expect.arrayContaining(["limit", "cursor", "kind"]),
+    );
+    expect(pageSchema?.properties).toHaveProperty("events");
+    expect(pageSchema?.properties).toHaveProperty("nextCursor");
+    expect(pageSchema?.required).toContain("limit");
+  });
+
   it("documents the includeTotal query parameter on GET /streams", async () => {
     const spec = await getSpec();
     const paths = spec.paths as Record<string, Record<string, unknown>>;

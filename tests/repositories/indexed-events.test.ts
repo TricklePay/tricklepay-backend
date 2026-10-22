@@ -6,7 +6,10 @@ import { prisma } from "../../src/db.js";
 
 import {
   indexedEventFromDecoded,
+  decodeIndexedEventCursor,
+  encodeIndexedEventCursor,
   listIndexedEvents,
+  listIndexedEventsPage,
   recordIndexedEvent,
   type IndexedEventRecord,
 } from "../../src/repositories/indexed-events.js";
@@ -164,6 +167,39 @@ describe("listIndexedEvents", () => {
     vi.restoreAllMocks();
   });
 
+  describe("paginated indexed event history", () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("round-trips opaque cursors for event ids", () => {
+      const cursor = encodeIndexedEventCursor("0001-0002");
+
+      expect(decodeIndexedEventCursor(cursor)).toBe("0001-0002");
+      expect(decodeIndexedEventCursor("not-a-cursor")).toBeNull();
+    });
+
+    it("queries after the cursor and fetches one extra row to detect another page", async () => {
+      const events = [{ eventId: "event-1" }, { eventId: "event-2" }];
+      const findMany = vi
+        .spyOn((prisma as any).indexedEvent, "findMany")
+        .mockResolvedValue(events);
+
+      const page = await listIndexedEventsPage(42n, 1, "event-0", "withdrawn");
+
+      expect(findMany).toHaveBeenCalledWith({
+        where: {
+          streamId: "42",
+          kind: "withdrawn",
+          eventId: { gt: "event-0" },
+        },
+        orderBy: { eventId: "asc" },
+        take: 2,
+      });
+      expect(page).toEqual({ events: [events[0]], hasMore: true });
+    });
+  });
+
   it("queries by streamId without kind filter when kind is omitted", async () => {
     const findMany = vi
       .spyOn((prisma as any).indexedEvent, "findMany")
@@ -216,4 +252,3 @@ describe("listIndexedEvents", () => {
     });
   });
 });
-

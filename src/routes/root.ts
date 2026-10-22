@@ -28,6 +28,11 @@ export function rootRoutes(config: Config) {
             description: "List streams; filters: sender, recipient, token, limit, offset",
           },
           { method: "GET", path: "/streams/:id", description: "A single stream by id" },
+          {
+            method: "GET",
+            path: "/v2/streams/:id/events",
+            description: "Paginated event history for a stream",
+          },
         ],
       };
     });

@@ -20,6 +20,7 @@ export const STREAM_SUMMARY_RESPONSE_SCHEMA_ID = "StreamSummaryResponse";
 export const STREAM_SCHEDULE_RESPONSE_SCHEMA_ID = "StreamScheduleResponse";
 export const STREAM_EVENT_SCHEMA_ID = "StreamEvent";
 export const STREAM_EVENT_HISTORY_RESPONSE_SCHEMA_ID = "StreamEventHistoryResponse";
+export const STREAM_EVENT_PAGE_RESPONSE_SCHEMA_ID = "StreamEventPageResponse";
 export const INDEXER_STATUS_SCHEMA_ID = "IndexerStatus";
 export const ERROR_SCHEMA_ID = "ApiError";
 export const API_INDEX_SCHEMA_ID = "ApiIndex";
@@ -371,6 +372,29 @@ export const streamEventHistoryResponseSchema = {
   type: "array",
   description: "Indexed stream event history in ascending TOID order.",
   items: { $ref: STREAM_EVENT_SCHEMA_ID },
+} as const;
+
+export const streamEventPageResponseSchema = {
+  $id: STREAM_EVENT_PAGE_RESPONSE_SCHEMA_ID,
+  type: "object",
+  description: "A page of indexed stream events in ascending TOID order.",
+  required: ["events", "limit"],
+  properties: {
+    events: {
+      type: "array",
+      items: { $ref: STREAM_EVENT_SCHEMA_ID },
+      description: "Events on this page, in ascending TOID order.",
+    },
+    limit: {
+      type: "integer",
+      description: "Maximum number of events returned on this page.",
+      examples: [50],
+    },
+    nextCursor: {
+      type: "string",
+      description: "Opaque cursor for the next page. Omitted when no more events exist.",
+    },
+  },
 } as const;
 
 // ---------------------------------------------------------------------------

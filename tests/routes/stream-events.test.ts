@@ -9,6 +9,11 @@ const streamsRepo = vi.hoisted(() => ({
 
 const indexedEventsRepo = vi.hoisted(() => ({
   listIndexedEvents: vi.fn(),
+  listIndexedEventsPage: vi.fn(),
+  encodeIndexedEventCursor: vi.fn((eventId: string) => `cursor:${eventId}`),
+  decodeIndexedEventCursor: vi.fn((cursor: string) =>
+    cursor.startsWith("cursor:") ? cursor.slice("cursor:".length) : null,
+  ),
 }));
 
 vi.mock("../../src/repositories/streams.js", () => streamsRepo);
@@ -40,7 +45,7 @@ function makeStream() {
   };
 }
 
-async function getHistory(id: string, query: string = "") {
+async function getHistory(id: string, query: string = "", versioned = false) {
   const app = Fastify();
   // Mirror production wiring before the routes are registered: without the
   // app's error handlers, Fastify serializes a schema-validation failure
@@ -48,7 +53,8 @@ async function getHistory(id: string, query: string = "") {
   // error has no `requestId`.
   registerErrorHandlers(app);
   await app.register(streamRoutes);
-  const response = await app.inject({ method: "GET", url: `/streams/${id}/events${query}` });
+  const path = versioned ? `/v2/streams/${id}/events` : `/streams/${id}/events`;
+  const response = await app.inject({ method: "GET", url: `${path}${query}` });
   await app.close();
   return response;
 }
@@ -61,6 +67,93 @@ describe("GET /streams/:id/events", () => {
     const response = await getHistory("42");
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual([]);
+  });
+
+  it("returns a paginated object with a cursor on the versioned route", async () => {
+    streamsRepo.getStream.mockResolvedValue(makeStream());
+    indexedEventsRepo.listIndexedEventsPage.mockResolvedValue({
+      events: [
+        {
+          eventId: "event-1",
+          kind: "created",
+          streamId: "42",
+          ledger: 100,
+          txHash: "0xabc",
+          sender: "GA1sender",
+          recipient: "GB2recipient",
+          token: "CA3token",
+          totalAmount: null,
+          amount: null,
+          recipientAmount: null,
+          senderRefund: null,
+          startTime: null,
+          endTime: null,
+          cliffTime: null,
+          closedAt: null,
+        },
+      ],
+      hasMore: true,
+    });
+
+    const response = await getHistory("42", "?limit=1", true);
+
+    expect(response.statusCode).toBe(200);
+    expect(indexedEventsRepo.listIndexedEventsPage).toHaveBeenCalledWith(
+      42n,
+      1,
+      undefined,
+      undefined,
+    );
+    expect(response.json()).toMatchObject({
+      events: [expect.objectContaining({ eventId: "event-1" })],
+      limit: 1,
+      nextCursor: "cursor:event-1",
+    });
+  });
+
+  it("uses the default page size and rejects an invalid cursor", async () => {
+    streamsRepo.getStream.mockResolvedValue(makeStream());
+    indexedEventsRepo.listIndexedEventsPage.mockResolvedValue({
+      events: [],
+      hasMore: false,
+    });
+
+    const firstPage = await getHistory("42", "", true);
+    expect(firstPage.json()).toMatchObject({ events: [], limit: 50 });
+    expect(indexedEventsRepo.listIndexedEventsPage).toHaveBeenCalledWith(
+      42n,
+      50,
+      undefined,
+      undefined,
+    );
+
+    const invalidCursor = await getHistory("42", "?cursor=bad", true);
+    expect(invalidCursor.statusCode).toBe(400);
+    expect(indexedEventsRepo.listIndexedEventsPage).toHaveBeenCalledTimes(1);
+  });
+
+  it("caps the page size and applies an event-id cursor", async () => {
+    streamsRepo.getStream.mockResolvedValue(makeStream());
+    indexedEventsRepo.listIndexedEventsPage.mockResolvedValue({
+      events: [],
+      hasMore: false,
+    });
+
+    const response = await getHistory(
+      "42",
+      "?limit=200&cursor=cursor%3Aevent-1",
+      true,
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(indexedEventsRepo.listIndexedEventsPage).toHaveBeenCalledWith(
+      42n,
+      100,
+      "event-1",
+      undefined,
+    );
+    expect(response.json()).toMatchObject({ events: [], limit: 100 });
+    expect(response.json()).not.toHaveProperty("nextCursor");
   });
 
   it("returns events in eventId order and preserves decimal precision", async () => {

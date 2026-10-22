@@ -33,8 +33,10 @@ import {
   apiErrorSchema,
   ERROR_SCHEMA_ID,
   streamEventHistoryResponseSchema,
+  streamEventPageResponseSchema,
   streamEventSchema,
   STREAM_EVENT_HISTORY_RESPONSE_SCHEMA_ID,
+  STREAM_EVENT_PAGE_RESPONSE_SCHEMA_ID,
   STREAM_EVENT_SCHEMA_ID,
   streamListResponseSchema,
   STREAM_LIST_RESPONSE_SCHEMA_ID,
@@ -49,7 +51,14 @@ import {
   tokenListResponseSchema,
   tokenSummarySchema,
 } from "../schema.js";
-import { listIndexedEvents, type IndexedEventKind } from "../repositories/indexed-events.js";
+import {
+  decodeIndexedEventCursor,
+  encodeIndexedEventCursor,
+  listIndexedEvents,
+  listIndexedEventsPage,
+  type IndexedEventKind,
+  type IndexedEventRecord,
+} from "../repositories/indexed-events.js";
 import { normalizeAddress } from "../lib/address.js";
 import { nowSeconds } from "../lib/time.js";
 import { vestedAmount, withdrawableAmount } from "../lib/vesting.js";
@@ -156,6 +165,27 @@ function parseCancelled(raw: string | undefined): boolean | undefined {
   return undefined;
 }
 
+function mapIndexedEventResponse(event: IndexedEventRecord) {
+  return {
+    eventId: event.eventId,
+    kind: event.kind,
+    streamId: event.streamId,
+    ledger: event.ledger,
+    txHash: event.txHash,
+    sender: event.sender ?? null,
+    recipient: event.recipient ?? null,
+    token: event.token ?? null,
+    totalAmount: bigIntToStringNullable(event.totalAmount),
+    amount: bigIntToStringNullable(event.amount),
+    recipientAmount: bigIntToStringNullable(event.recipientAmount),
+    senderRefund: bigIntToStringNullable(event.senderRefund),
+    startTime: bigIntToStringNullable(event.startTime),
+    endTime: bigIntToStringNullable(event.endTime),
+    cliffTime: bigIntToStringNullable(event.cliffTime),
+    closedAt: bigIntToStringNullable(event.closedAt),
+  };
+}
+
 const SUMMARY_STATUSES = ["pending", "streaming", "completed", "cancelled"] as const;
 
 type SummaryEntry = { count: number; totalAmount: string; withdrawn: string };
@@ -232,6 +262,9 @@ export async function streamRoutes(
   if (!app.getSchema(STREAM_EVENT_SCHEMA_ID)) app.addSchema(streamEventSchema);
   if (!app.getSchema(STREAM_EVENT_HISTORY_RESPONSE_SCHEMA_ID)) {
     app.addSchema(streamEventHistoryResponseSchema);
+  }
+  if (!app.getSchema(STREAM_EVENT_PAGE_RESPONSE_SCHEMA_ID)) {
+    app.addSchema(streamEventPageResponseSchema);
   }
   if (!app.getSchema(TOKEN_SUMMARY_SCHEMA_ID)) {
     app.addSchema(tokenSummarySchema);
@@ -533,24 +566,105 @@ export async function streamRoutes(
 
       const events = await listIndexedEvents(streamId, kind as IndexedEventKind | undefined);
       reply.header("Cache-Control", "public, max-age=30");
-      return events.map((event) => ({
-        eventId: event.eventId,
-        kind: event.kind,
-        streamId: event.streamId,
-        ledger: event.ledger,
-        txHash: event.txHash,
-        sender: event.sender ?? null,
-        recipient: event.recipient ?? null,
-        token: event.token ?? null,
-        totalAmount: bigIntToStringNullable(event.totalAmount),
-        amount: bigIntToStringNullable(event.amount),
-        recipientAmount: bigIntToStringNullable(event.recipientAmount),
-        senderRefund: bigIntToStringNullable(event.senderRefund),
-        startTime: bigIntToStringNullable(event.startTime),
-        endTime: bigIntToStringNullable(event.endTime),
-        cliffTime: bigIntToStringNullable(event.cliffTime),
-        closedAt: bigIntToStringNullable(event.closedAt),
-      }));
+      return events.map(mapIndexedEventResponse);
+    },
+  );
+
+  app.get(
+    "/v2/streams/:id/events",
+    {
+      schema: {
+        summary: "Get a page of stream event history",
+        description:
+          "Returns a page of indexed events in ascending chain order. " +
+          "Use the opaque event-id cursor to retrieve subsequent pages. " +
+          "The unversioned route remains available with its original array response.",
+        tags: ["streams"],
+        params: {
+          type: "object",
+          required: ["id"],
+          properties: {
+            id: {
+              type: "string",
+              description: "Stream id (uint64, decimal string).",
+              examples: ["42"],
+            },
+          },
+        },
+        querystring: {
+          type: "object",
+          properties: {
+            kind: {
+              type: "string",
+              enum: ["created", "withdrawn", "cancelled"],
+              description: "Filter events by kind (created, withdrawn, or cancelled).",
+            },
+            limit: {
+              type: "string",
+              description: "Maximum events to return. Defaults to 50 and is capped at 100.",
+              examples: ["50"],
+            },
+            cursor: {
+              type: "string",
+              description: "Opaque event-id cursor returned by the previous page.",
+            },
+          },
+          additionalProperties: false,
+        },
+        response: {
+          200: { $ref: STREAM_EVENT_PAGE_RESPONSE_SCHEMA_ID },
+          400: { $ref: ERROR_SCHEMA_ID },
+          404: { $ref: ERROR_SCHEMA_ID },
+        },
+      },
+    },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const { kind, limit: rawLimit, cursor: rawCursor } = (request.query as {
+        kind?: string;
+        limit?: string;
+        cursor?: string;
+      }) ?? {};
+      const streamId = parseStreamId(id);
+      if (streamId === null) {
+        return sendError(reply, request, 400, "VALIDATION_ERROR", "invalid stream id");
+      }
+
+      const validKinds: readonly string[] = ["created", "withdrawn", "cancelled"];
+      if (kind !== undefined && !validKinds.includes(kind)) {
+        return sendError(reply, request, 400, "VALIDATION_ERROR", "invalid event kind");
+      }
+
+      const cursorEventId =
+        rawCursor === undefined ? undefined : decodeIndexedEventCursor(rawCursor);
+      if (rawCursor !== undefined && cursorEventId === null) {
+        return sendError(reply, request, 400, "VALIDATION_ERROR", "invalid cursor");
+      }
+
+      const stream = await getStream({ streamId });
+      if (!stream) {
+        return sendError(reply, request, 404, "NOT_FOUND", "stream not found");
+      }
+
+      const { limit } = parsePagination({ limit: rawLimit });
+      const page = await listIndexedEventsPage(
+        streamId,
+        limit,
+        cursorEventId,
+        kind as IndexedEventKind | undefined,
+      );
+      reply.header("Cache-Control", "public, max-age=30");
+      return {
+        events: page.events.map(mapIndexedEventResponse),
+        limit,
+        ...(page.hasMore && page.events.length > 0
+          ? {
+              nextCursor: encodeIndexedEventCursor(
+                page.events[page.events.length - 1]!.eventId,
+              ),
+            }
+          : {}),
+      };
     },
   );
 
