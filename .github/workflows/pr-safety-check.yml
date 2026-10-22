@@ -47,6 +47,11 @@ jobs:
               if (!seen.has(key)) { seen.add(key); findings.push({ where, why, level }); }
             };
 
+            // Container config is judged directive by directive rather than by file name; see
+            // CONTAINER_FILE and scanContainer below for what actually blocks.
+            const COMPOSE_FILE = /(^|\/)docker-compose[^/]*\.ya?ml$/;
+            const CONTAINER_FILE = /(^|\/)(Dockerfile|docker-compose[^/]*\.ya?ml)$/;
+            const COMMENT = /^\s*#/;
             const RISKY_PATHS = [
               [/^\.github\//, 'changes repository automation (.github/)'],
               [/(^|\/)\.vscode\//, 'changes editor config, which can run tasks when the folder is opened (.vscode/)'],
@@ -57,7 +62,7 @@ jobs:
               [/(^|\/)\.git(ignore|attributes|modules)$/, 'changes git config that can hide or redirect files'],
               [/(^|\/)\.(npmrc|yarnrc|yarnrc\.yml|pnpmrc)$/, 'changes package manager config'],
               [/(^|\/)build\.rs$/, 'changes a Rust build script, which runs on every build'],
-              [/(^|\/)(Dockerfile|docker-compose[^/]*\.ya?ml)$/, 'changes container build config'],
+              [CONTAINER_FILE, 'changes container build config', 'note'],
               [/(^|\/)\.claude\//, 'changes Claude Code settings or hooks, which can run commands'],
               [/(^|\/)\.cursor\//, 'changes Cursor settings or rules'],
               [/(^|\/)\.(cursorrules|windsurfrules|clinerules|roorules|aider[^/]*)$/, 'changes AI coding tool instructions'],
@@ -79,6 +84,49 @@ jobs:
               [/(^|\/)temp_[a-z_]*push[a-z_]*\.(bat|cmd|sh|ps1)$/i, 'adds a file name used by a known malware campaign (temp push script)'],
               [/(^|\/)\.env(\.(?!example$|sample$|template$).+)?$/, 'adds an environment file, which may hold secrets'],
             ];
+
+            // Container build config is risky in the ways running code is risky: it decides what the build
+            // executes, what the container starts with, and how much of the host it can reach. Blocking the
+            // whole file name would stop every container chore the project asks for, so the risk is read
+            // out of the diff instead. A Dockerfile is judged on both sides, because deleting a line
+            // (USER node) changes behaviour as much as adding one; a compose file only on what it gains.
+            const DOCKERFILE_ADDED = [
+              [/^\s*FROM\b/i, 'changes the base image the build runs from'],
+              [/^\s*RUN\b/i, 'adds a build-time command (RUN)'],
+              [/^\s*(CMD|ENTRYPOINT|SHELL)\b/i, 'changes the command or shell the container starts with'],
+              [/^\s*ADD\b/i, 'uses ADD, which can fetch a URL or unpack an archive during the build'],
+              [/^\s*ONBUILD\b/i, 'adds an ONBUILD trigger, which runs inside every child image'],
+              [/^\s*USER\s+(root|0)\b/i, 'runs the container as root'],
+              [/^\s*COPY\b[^\n]*--from=(?:"?[^"\s]*[.:][^\s]*)/i, 'copies files from an image outside this build'],
+              [/^\s*ENV\b[^\n]*\b(PATH|NODE_OPTIONS|NODE_PATH|LD_PRELOAD|LD_LIBRARY_PATH|PYTHONPATH|PERL5OPT|RUBYOPT|CLASSPATH|NPM_CONFIG\w+|PIP\w+)\b/i, 'sets an environment variable that decides which code the runtime loads'],
+            ];
+            const DOCKERFILE_REMOVED = [
+              [/^\s*USER\s+(?!root\b|0\b)\S/i, 'removes the USER line, leaving the container running as root'],
+            ];
+            const COMPOSE_ADDED = [
+              [/^\s*-?\s*privileged\s*:\s*(?!["']?false)\S/i, 'runs a container in privileged mode'],
+              [/^\s*-?\s*(cap_add|security_opt|devices)\b/i, 'grants a container extra capabilities or host devices'],
+              [/^\s*network_mode\s*:\s*["']?host/i, 'puts a container on the host network'],
+              [/^\s*pid\s*:\s*["']?host/i, 'shares the host process namespace with a container'],
+              [/^\s*(entrypoint|command)\s*:/i, 'changes the command a container starts with'],
+              [/docker\.sock/i, 'exposes the Docker socket to a container'],
+              [/^\s*-\s*["']?(?:\.{0,2}\/|~\/)[^\s"']*:[^\s"']+/, 'mounts a host path into a container'],
+            ];
+            const scanContainer = (path, patch) => {
+              const lines = (patch || '').split('\n');
+              // Strips the diff marker, then drops the +++/--- headers and comments.
+              const visible = (marker) => lines
+                .filter(l => l.startsWith(marker) && !l.startsWith(marker + marker + marker))
+                .map(l => l.slice(1))
+                .filter(l => !COMMENT.test(l));
+              const out = [];
+              const collect = (ls, rules) => { for (const l of ls) for (const [re, why] of rules) if (re.test(l)) out.push(why); };
+              if (COMPOSE_FILE.test(path)) { collect(visible('+'), COMPOSE_ADDED); return out; }
+              collect(visible('+'), DOCKERFILE_ADDED);
+              collect(visible('-'), DOCKERFILE_REMOVED);
+              return out;
+            };
+
             const BINARY = /\.(woff2?|ttf|otf|eot|llf|exe|dll|so|dylib|bin|jar|class|zip|tar|gz|tgz|7z|rar|bat|cmd|ps1|vbs|scr|msi|deb|rpm|apk|node|pyc)$/i;
             const IMAGE = /\.(png|jpe?g|gif|webp|ico|avif|bmp)$/i;
             const CODE = /\.(js|jsx|mjs|cjs|ts|tsx|mts|cts|rs|sh|bash|py|rb|go|java|kt|swift|php|pl|ps1)$/i;
@@ -139,6 +187,10 @@ jobs:
                 continue;
               }
               for (const [re, why, level] of RISKY_PATHS) if (paths.some(p => re.test(p))) flag(path, why, level);
+              if (CONTAINER_FILE.test(path)) {
+                if (!f.patch && f.changes > 0) flag(path, 'changes container build config, and the diff is too large to read directive by directive');
+                for (const why of scanContainer(path, f.patch)) flag(path, why);
+              }
               if (f.status === 'added' && /^[^\/]+\.(js|cjs|mjs)$/.test(path) && !/\.config\.(js|cjs|mjs)$/.test(path)) flag(path, 'adds a new JavaScript file at the repository root');
               const mode = headModes.get(path);
               if (mode === '120000') flag(path, 'is a symbolic link, which can point outside the repository');
