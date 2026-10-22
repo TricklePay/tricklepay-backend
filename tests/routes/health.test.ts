@@ -176,3 +176,73 @@ describe("readiness reflects indexer progress (#391)", () => {
     expect(response.json().status).toBe("ok");
   });
 });
+
+describe("not-ready /ready responses advertise Retry-After", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it("sets Retry-After when the database is down", async () => {
+    db.checkHealth.mockResolvedValue({ status: "down", error: "database unavailable" });
+    indexerState.getIndexerPosition.mockResolvedValue(null);
+
+    const app = await buildServer();
+    const response = await app.inject({ method: "GET", url: "/ready" });
+    await app.close();
+
+    expect(response.statusCode).toBe(503);
+    expect(response.headers["retry-after"]).toBe("5");
+  });
+
+  it("sets Retry-After when the indexer has made no progress", async () => {
+    db.checkHealth.mockResolvedValue({ status: "up" });
+    indexerState.getIndexerPosition.mockResolvedValue(null);
+    indexerState.hasIndexerProgress.mockReturnValue(false);
+
+    const app = await buildServer();
+    const response = await app.inject({ method: "GET", url: "/ready" });
+    await app.close();
+
+    expect(response.statusCode).toBe(503);
+    expect(response.headers["retry-after"]).toBe("5");
+  });
+
+  it("honours a configured Retry-After value", async () => {
+    db.checkHealth.mockResolvedValue({ status: "down", error: "database unavailable" });
+    indexerState.getIndexerPosition.mockResolvedValue(null);
+
+    const app = await buildServer({ readinessRetryAfterSeconds: 30 });
+    const response = await app.inject({ method: "GET", url: "/ready" });
+    await app.close();
+
+    expect(response.statusCode).toBe(503);
+    expect(response.headers["retry-after"]).toBe("30");
+  });
+
+  it("omits Retry-After when the instance is ready", async () => {
+    db.checkHealth.mockResolvedValue({ status: "up" });
+    indexerState.getIndexerPosition.mockResolvedValue({
+      lastLedger: 50,
+      chainLedger: 100,
+      cursor: "cursor",
+      updatedAt: new Date(),
+    });
+    indexerState.hasIndexerProgress.mockReturnValue(true);
+
+    const app = await buildServer();
+    const response = await app.inject({ method: "GET", url: "/ready" });
+    await app.close();
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["retry-after"]).toBeUndefined();
+  });
+
+  it("omits Retry-After on liveness responses", async () => {
+    const app = await buildServer();
+    const response = await app.inject({ method: "GET", url: "/health" });
+    await app.close();
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["retry-after"]).toBeUndefined();
+  });
+});

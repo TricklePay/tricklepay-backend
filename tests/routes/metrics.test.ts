@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
 // presence of expected lines rather than exact values, which keeps the tests
 // independent of execution order.
 
-const { metricsRoutes } = await import("../../src/routes/metrics.js");
+const { metricsRoutes, tokenMatches } = await import("../../src/routes/metrics.js");
 
 async function getMetrics() {
   const app = Fastify({ logger: false });
@@ -150,5 +150,90 @@ describe("GET /metrics", () => {
     
     // Ensure raw paths do not leak into the metric labels
     expect(response.body).not.toContain("distinct-id");
+  });
+});
+
+describe("Metrics bearer token (#522)", () => {
+  const TOKEN = "test-metrics-token-123";
+
+  async function requestMetrics(
+    headers: Record<string, string> = {},
+    token?: string,
+  ) {
+    const app = Fastify({ logger: false });
+    await app.register(metricsRoutes, { token });
+    const response = await app.inject({ method: "GET", url: "/metrics", headers });
+    await app.close();
+    return response;
+  }
+
+  it("keeps the endpoint unauthenticated when no token is configured", async () => {
+    const response = await requestMetrics();
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["content-type"]).toContain("text/plain");
+  });
+
+  it("returns 401 when a token is configured and no Authorization header is sent", async () => {
+    const response = await requestMetrics({}, TOKEN);
+    expect(response.statusCode).toBe(401);
+    expect(response.headers["www-authenticate"]).toContain("Bearer");
+    expect(response.json()).toMatchObject({
+      code: "REQUEST_ERROR",
+      error: "unauthorized",
+    });
+  });
+
+  it("returns 401 for a wrong token of the same length", async () => {
+    const response = await requestMetrics(
+      { authorization: `Bearer ${"x".repeat(TOKEN.length)}` },
+      TOKEN,
+    );
+    expect(response.statusCode).toBe(401);
+  });
+
+  it("returns 401 for a wrong token of a different length", async () => {
+    const response = await requestMetrics({ authorization: "Bearer short" }, TOKEN);
+    expect(response.statusCode).toBe(401);
+  });
+
+  it("accepts the configured token", async () => {
+    const response = await requestMetrics(
+      { authorization: `Bearer ${TOKEN}` },
+      TOKEN,
+    );
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain("# HELP tricklepay_indexer_lag_ledgers");
+  });
+
+  it("accepts the bearer scheme case-insensitively", async () => {
+    const response = await requestMetrics(
+      { authorization: `bearer ${TOKEN}` },
+      TOKEN,
+    );
+    expect(response.statusCode).toBe(200);
+  });
+
+  it("never echoes the secret in a rejection", async () => {
+    const response = await requestMetrics({ authorization: "Bearer nope" }, TOKEN);
+    expect(response.body).not.toContain(TOKEN);
+  });
+});
+
+describe("tokenMatches (#522)", () => {
+  it("matches identical secrets", () => {
+    expect(tokenMatches("s3cret", "s3cret")).toBe(true);
+  });
+
+  it("rejects a different secret of equal length", () => {
+    expect(tokenMatches("s3cret", "s3cr3t")).toBe(false);
+  });
+
+  it("rejects a prefix of the expected secret", () => {
+    expect(tokenMatches("s3c", "s3cret")).toBe(false);
+  });
+
+  it("handles empty inputs without throwing", () => {
+    expect(tokenMatches("", "")).toBe(true);
+    expect(tokenMatches("", "s3cret")).toBe(false);
   });
 });

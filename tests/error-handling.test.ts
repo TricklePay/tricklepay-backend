@@ -63,6 +63,22 @@ describe("request rate limiting (#381)", () => {
   });
 });
 
+describe("unmatched routes (404)", () => {
+  it("returns the documented error shape, not Fastify's default 404 body", async () => {
+    const app = await buildServer();
+    const response = await app.inject({ method: "GET", url: "/this-route-does-not-exist" });
+    await app.close();
+
+    expect(response.statusCode).toBe(404);
+    expect(response.headers["x-request-id"]).toBeTruthy();
+    expect(response.json()).toEqual({
+      code: "NOT_FOUND",
+      error: "Route GET /this-route-does-not-exist not found",
+      requestId: response.headers["x-request-id"],
+    });
+  });
+});
+
 describe("redactErrorMessage (#74)", () => {
   it("redacts credentials and collapses multi-line errors in responses (#215)", async () => {
     const app = await buildServer();

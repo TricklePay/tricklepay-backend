@@ -5,6 +5,8 @@ import {
   DEFAULT_MAX_PAGES_PER_TICK,
   DEFAULT_RATE_LIMIT_MAX,
   DEFAULT_RATE_LIMIT_WINDOW_MS,
+  DEFAULT_READINESS_RETRY_AFTER_SECONDS,
+  DEFAULT_COMPRESSION_THRESHOLD_BYTES,
   DEFAULT_STREAM_SUMMARY_CACHE_TTL_MS,
   MIN_POLL_INTERVAL_MS,
   isLocalUrl,
@@ -106,6 +108,9 @@ describe("loadConfig — default values for unset optional settings", () => {
         INDEXER_MAX_PAGES_PER_TICK: undefined,
         STREAM_SUMMARY_CACHE_TTL_MS: undefined,
         TRUSTED_PROXIES: undefined,
+        READINESS_RETRY_AFTER_SECONDS: undefined,
+        PUBLIC_BASE_URL: undefined,
+        COMPRESSION_THRESHOLD_BYTES: undefined,
       },
       () => {
         expect(loadConfig()).toMatchObject({
@@ -113,6 +118,7 @@ describe("loadConfig — default values for unset optional settings", () => {
           rpcUrl: "https://soroban-testnet.stellar.org",
           port: 3000,
           host: "0.0.0.0",
+          publicBaseUrl: "http://localhost:3000",
           pollIntervalMs: 5000,
           startLedger: 0,
           maxBackoffMs: DEFAULT_MAX_BACKOFF_MS,
@@ -120,9 +126,11 @@ describe("loadConfig — default values for unset optional settings", () => {
           summaryCacheTtlMs: DEFAULT_STREAM_SUMMARY_CACHE_TTL_MS,
           bodyLimit: 1048576,
           queryStringLimit: 2048,
+          compressionThresholdBytes: DEFAULT_COMPRESSION_THRESHOLD_BYTES,
           trustedProxies: [],
           rateLimitMax: DEFAULT_RATE_LIMIT_MAX,
           rateLimitWindowMs: DEFAULT_RATE_LIMIT_WINDOW_MS,
+          readinessRetryAfterSeconds: DEFAULT_READINESS_RETRY_AFTER_SECONDS,
         });
       },
     );
@@ -131,6 +139,30 @@ describe("loadConfig — default values for unset optional settings", () => {
   it("loads custom request rate limits", () => {
     withEnv({ RATE_LIMIT_MAX: "25", RATE_LIMIT_WINDOW_MS: "30000" }, () => {
       expect(loadConfig()).toMatchObject({ rateLimitMax: 25, rateLimitWindowMs: 30000 });
+    });
+  });
+
+  it("loads a custom readiness Retry-After value", () => {
+    withEnv({ READINESS_RETRY_AFTER_SECONDS: "30" }, () => {
+      expect(loadConfig().readinessRetryAfterSeconds).toBe(30);
+    });
+  });
+
+  it("loads an explicit public base URL", () => {
+    withEnv({ PUBLIC_BASE_URL: "https://api.tricklepay.example" }, () => {
+      expect(loadConfig().publicBaseUrl).toBe("https://api.tricklepay.example");
+    });
+  });
+
+  it("derives the public base URL from the configured host and port", () => {
+    withEnv({ HOST: "api.internal", PORT: "8080", PUBLIC_BASE_URL: undefined }, () => {
+      expect(loadConfig().publicBaseUrl).toBe("http://api.internal:8080");
+    });
+  });
+
+  it("loads a custom compression threshold", () => {
+    withEnv({ COMPRESSION_THRESHOLD_BYTES: "4096" }, () => {
+      expect(loadConfig().compressionThresholdBytes).toBe(4096);
     });
   });
 
@@ -466,6 +498,58 @@ describe("loadConfig — readonly configuration (#369)", () => {
       config.trustedProxies.push("192.168.1.1");
     };
     expect(mutate).toBeDefined();
+  });
+});
+
+describe("loadConfig — ENABLE_DOCS_UI", () => {
+  it("enables the interactive docs by default", () => {
+    withEnv({ ENABLE_DOCS_UI: undefined }, () => {
+      expect(loadConfig().enableDocsUi).toBe(true);
+    });
+    withEnv({ ENABLE_DOCS_UI: "   " }, () => {
+      expect(loadConfig().enableDocsUi).toBe(true);
+    });
+  });
+
+  it("disables the UI for false spellings", () => {
+    for (const value of ["false", "0", "no", "off", "FALSE"]) {
+      withEnv({ ENABLE_DOCS_UI: value }, () => {
+        expect(loadConfig().enableDocsUi).toBe(false);
+      });
+    }
+  });
+
+  it("keeps the UI for true spellings", () => {
+    for (const value of ["true", "1", "yes", "on"]) {
+      withEnv({ ENABLE_DOCS_UI: value }, () => {
+        expect(loadConfig().enableDocsUi).toBe(true);
+      });
+    }
+  });
+
+  it("rejects an unrecognised value instead of guessing", () => {
+    withEnv({ ENABLE_DOCS_UI: "flase" }, () => {
+      expect(() => loadConfig()).toThrow(
+        'Environment variable ENABLE_DOCS_UI must be "true" or "false"',
+      );
+    });
+  });
+});
+
+describe("loadConfig — METRICS_TOKEN", () => {
+  it("leaves the endpoint unauthenticated when unset or blank", () => {
+    withEnv({ METRICS_TOKEN: undefined }, () => {
+      expect(loadConfig().metricsToken).toBeUndefined();
+    });
+    withEnv({ METRICS_TOKEN: "   " }, () => {
+      expect(loadConfig().metricsToken).toBeUndefined();
+    });
+  });
+
+  it("keeps a configured token, trimmed", () => {
+    withEnv({ METRICS_TOKEN: "  s3cret  " }, () => {
+      expect(loadConfig().metricsToken).toBe("s3cret");
+    });
   });
 });
 

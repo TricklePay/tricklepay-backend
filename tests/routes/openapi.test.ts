@@ -47,6 +47,42 @@ describe("GET /docs/json (OpenAPI spec)", () => {
     expect(info.version).toBeTruthy();
   });
 
+  it("includes a contact entry so readers can reach the maintainers", async () => {
+    const spec = await getSpec();
+    const info = spec.info as { contact?: Record<string, unknown> };
+    expect(info.contact).toBeDefined();
+    expect(info.contact).toHaveProperty("name");
+    expect(info.contact).toHaveProperty("url");
+  });
+
+  it("includes a servers entry built from configuration", async () => {
+    const app = await buildServer({ publicBaseUrl: "https://api.tricklepay.example" });
+    await app.register(streamRoutes);
+    await app.register(statusRoutes);
+    await app.ready();
+
+    const response = await app.inject({ method: "GET", url: "/docs/json" });
+    await app.close();
+
+    const spec = response.json() as { servers?: Array<{ url: string }> };
+    expect(spec.servers).toBeDefined();
+    expect(spec.servers?.length).toBeGreaterThan(0);
+    expect(spec.servers?.[0]?.url).toBe("https://api.tricklepay.example");
+  });
+
+  it("defaults the server URL to the configured host and port", async () => {
+    const app = await buildServer({ host: "0.0.0.0", port: 4321 });
+    await app.register(streamRoutes);
+    await app.register(statusRoutes);
+    await app.ready();
+
+    const response = await app.inject({ method: "GET", url: "/docs/json" });
+    await app.close();
+
+    const spec = response.json() as { servers?: Array<{ url: string }> };
+    expect(spec.servers?.[0]?.url).toBe("http://localhost:4321");
+  });
+
   it("documents the GET /streams path", async () => {
     const spec = await getSpec();
     const paths = spec.paths as Record<string, unknown>;

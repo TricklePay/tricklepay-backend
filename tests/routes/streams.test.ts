@@ -71,10 +71,13 @@ async function getStreamSchedule(id: string, query = "") {
   return response;
 }
 
-async function listRequest(url: string, options: { summaryCacheTtlMs?: number } = {}) {
+async function listRequest(
+  url: string,
+  options: { summaryCacheTtlMs?: number; headers?: Record<string, string> } = {},
+) {
   const app = Fastify();
   await app.register(streamRoutes, options);
-  const response = await app.inject({ method: "GET", url });
+  const response = await app.inject({ method: "GET", url, headers: options.headers });
   await app.close();
   return response;
 }
@@ -345,6 +348,61 @@ describe("GET /streams", () => {
     streamsRepo.countStreams.mockResolvedValue(0);
     const response = await listRequest("/streams");
     expect(response.headers["cache-control"]).toBe("public, max-age=30");
+  });
+
+  it("returns a weak ETag derived from the response body", async () => {
+    streamsRepo.listStreams.mockResolvedValue({ streams: [makeStream()] });
+    const response = await listRequest("/streams");
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["etag"]).toMatch(/^W\/"[0-9a-f]{64}"$/);
+  });
+
+  it("returns the same ETag for identical bodies", async () => {
+    streamsRepo.listStreams.mockResolvedValue({ streams: [makeStream()] });
+    const first = await listRequest("/streams");
+    streamsRepo.listStreams.mockResolvedValue({ streams: [makeStream()] });
+    const second = await listRequest("/streams");
+    expect(second.headers["etag"]).toBe(first.headers["etag"]);
+  });
+
+  it("returns a different ETag when the body changes", async () => {
+    streamsRepo.listStreams.mockResolvedValue({ streams: [makeStream()] });
+    const first = await listRequest("/streams");
+    streamsRepo.listStreams.mockResolvedValue({
+      streams: [makeStream({ updatedLedger: 999 })],
+    });
+    const second = await listRequest("/streams");
+    expect(second.headers["etag"]).not.toBe(first.headers["etag"]);
+  });
+
+  it("returns 304 with no body when If-None-Match matches", async () => {
+    streamsRepo.listStreams.mockResolvedValue({ streams: [makeStream()] });
+    const initial = await listRequest("/streams");
+
+    streamsRepo.listStreams.mockResolvedValue({ streams: [makeStream()] });
+    const revalidated = await listRequest("/streams", {
+      headers: { "if-none-match": initial.headers["etag"] as string },
+    });
+
+    expect(revalidated.statusCode).toBe(304);
+    expect(revalidated.body).toBe("");
+  });
+
+  it("returns the full body when If-None-Match does not match", async () => {
+    streamsRepo.listStreams.mockResolvedValue({ streams: [makeStream()] });
+    const response = await listRequest("/streams", {
+      headers: { "if-none-match": 'W/"does-not-match"' },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toHaveProperty("streams");
+  });
+
+  it("returns the full body with a malformed If-None-Match header", async () => {
+    streamsRepo.listStreams.mockResolvedValue({ streams: [makeStream()] });
+    const response = await listRequest("/streams", {
+      headers: { "if-none-match": "not-a-valid-etag" },
+    });
+    expect(response.statusCode).toBe(200);
   });
 
   it("uses the documented default pagination when no params are supplied", async () => {

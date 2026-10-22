@@ -10,6 +10,7 @@ import { type Config, describeConfig, redactDatabaseUrl } from "../src/config.js
 const CONFIG: Config = {
   port: 3000,
   host: "0.0.0.0",
+  publicBaseUrl: "https://api.tricklepay.example",
   databaseUrl: "postgresql://indexer:s3cr3t@db.internal:5432/tricklepay?schema=public",
   network: "testnet",
   networkPassphrase: "Test SDF Network ; September 2015",
@@ -22,9 +23,12 @@ const CONFIG: Config = {
   summaryCacheTtlMs: 2000,
   bodyLimit: 1048576,
   queryStringLimit: 2048,
+  compressionThresholdBytes: 1024,
   trustedProxies: ["10.0.0.0/8"],
   rateLimitMax: 100,
   rateLimitWindowMs: 60000,
+  readinessRetryAfterSeconds: 5,
+  enableDocsUi: true,
 };
 
 // Kept as a literal rather than derived from `describeConfig`, so that adding a
@@ -32,18 +36,23 @@ const CONFIG: Config = {
 // the type checker.
 const EXPECTED_FIELDS = [
   "bodyLimit",
+  "compressionThresholdBytes",
   "contractId",
   "databaseUrl",
+  "enableDocsUi",
   "host",
   "maxBackoffMs",
   "maxPagesPerTick",
+  "metricsToken",
   "network",
   "networkPassphrase",
   "pollIntervalMs",
   "port",
+  "publicBaseUrl",
   "queryStringLimit",
   "rateLimitMax",
   "rateLimitWindowMs",
+  "readinessRetryAfterSeconds",
   "rpcUrl",
   "startLedger",
   "summaryCacheTtlMs",
@@ -122,5 +131,12 @@ describe("describeConfig", () => {
 
   it("carries no credentials anywhere in the logged object", () => {
     expect(JSON.stringify(describeConfig(CONFIG))).not.toContain("s3cr3t");
+  });
+
+  it("redacts a configured metrics token rather than logging it", () => {
+    const described = describeConfig({ ...CONFIG, metricsToken: "top-s3cret" });
+
+    expect(described.metricsToken).toBe("[redacted]");
+    expect(JSON.stringify(described)).not.toContain("top-s3cret");
   });
 });

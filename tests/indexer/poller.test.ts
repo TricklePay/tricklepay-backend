@@ -64,6 +64,7 @@ const CURSOR = "0241763773516349440-0000000001";
 const config: Config = {
   port: 3000,
   host: "0.0.0.0",
+  publicBaseUrl: "http://localhost:3000",
   databaseUrl: "postgresql://localhost/test",
   network: "testnet",
   networkPassphrase: "Test SDF Network ; September 2015",
@@ -76,8 +77,11 @@ const config: Config = {
   maxPagesPerTick: 1000,
   bodyLimit: 1048576,
   queryStringLimit: 2048,
+  compressionThresholdBytes: 1024,
   trustedProxies: [],
   summaryCacheTtlMs: 2000,
+  readinessRetryAfterSeconds: 5,
+  enableDocsUi: true,
 };
 
 const log = pino({ level: "silent" });

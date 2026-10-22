@@ -3,7 +3,9 @@
 The root `Dockerfile` builds the backend in two stages:
 
 1. The `node:22-alpine` build stage installs the locked dependencies, generates
-   the Prisma client, and compiles the TypeScript sources into `dist/`.
+   the Prisma client, and compiles the TypeScript sources into `dist/`. This is
+   newer than the minimum Node version the service supports — see
+   [node-version-policy.md](node-version-policy.md) for why the two differ.
 2. The runtime stage contains the production `node_modules`, compiled `dist/`,
    the Prisma schema and migrations, and `package.json`.
 

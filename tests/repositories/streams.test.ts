@@ -15,6 +15,7 @@ import {
   getStream,
   listStreams,
   orderByFromFilter,
+  statusWhere,
   upsertStream,
   type StreamFilter,
   type UpsertStreamInput,
@@ -424,6 +425,36 @@ describe("streams repository ordering", () => {
     expect(orderByFromFilter({ sender: "GA..." })).toEqual([{ sender: "asc" }, { streamId: "desc" }]);
     expect(orderByFromFilter({ recipient: "GB..." })).toEqual([{ recipient: "asc" }, { streamId: "desc" }]);
     expect(orderByFromFilter({ token: "CB..." })).toEqual([{ token: "asc" }, { streamId: "desc" }]);
+  });
+});
+
+describe("statusWhere", () => {
+  const now = 1_000n;
+
+  it("matches cancelled streams regardless of the clock", () => {
+    expect(statusWhere("cancelled", now)).toEqual({ cancelled: true });
+  });
+
+  it("matches pending streams: not cancelled and not yet started", () => {
+    expect(statusWhere("pending", now)).toEqual({
+      cancelled: false,
+      startTime: { gt: now },
+    });
+  });
+
+  it("matches streaming streams: not cancelled, started, not yet ended", () => {
+    expect(statusWhere("streaming", now)).toEqual({
+      cancelled: false,
+      startTime: { lte: now },
+      endTime: { gt: now },
+    });
+  });
+
+  it("matches completed streams: not cancelled and past the end time", () => {
+    expect(statusWhere("completed", now)).toEqual({
+      cancelled: false,
+      endTime: { lte: now },
+    });
   });
 });
 

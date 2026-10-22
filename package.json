@@ -24,7 +24,9 @@
     "prisma:migrate": "prisma migrate dev"
   },
   "dependencies": {
+    "@fastify/compress": "^9.2.2",
     "@fastify/cors": "^11.3.0",
+    "@fastify/helmet": "^13.2.0",
     "@fastify/swagger": "^9.8.1",
     "@fastify/swagger-ui": "^6.1.1",
     "@prisma/client": "6.19.3",

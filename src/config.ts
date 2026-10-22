@@ -45,6 +45,18 @@ function integer(name: string, fallback: number): number {
   return parsed;
 }
 
+// Parses a boolean flag. Only explicit true/false spellings are accepted so a
+// typo fails at startup instead of silently flipping a security-relevant
+// setting, such as whether the interactive docs are served.
+function boolean(name: string, fallback: boolean): boolean {
+  const raw = process.env[name];
+  if (!raw || raw.trim() === "") return fallback;
+  const value = raw.trim().toLowerCase();
+  if (["true", "1", "yes", "on"].includes(value)) return true;
+  if (["false", "0", "no", "off"].includes(value)) return false;
+  throw new Error(`Environment variable ${name} must be "true" or "false"`);
+}
+
 // Floor for the poll interval. Anything smaller makes the indexer spin on the
 // RPC between ledgers, so values below it are rejected rather than trusted.
 export const MIN_POLL_INTERVAL_MS = 1000;
@@ -68,6 +80,18 @@ export const DEFAULT_STREAM_SUMMARY_CACHE_TTL_MS = 2_000;
 // by server.ts when registering the rate-limit plugin.
 export const DEFAULT_RATE_LIMIT_MAX = 100;
 export const DEFAULT_RATE_LIMIT_WINDOW_MS = 60_000;
+
+// Default Retry-After, in seconds, advertised on a not-ready `/ready`
+// response. It tells orchestrators and load balancers how long to wait before
+// probing again, which is useful while a long backfill is still in progress.
+export const DEFAULT_READINESS_RETRY_AFTER_SECONDS = 5;
+
+// Responses at or above this many bytes are compressed when the client accepts
+// gzip or brotli. List responses with many streams are large and highly
+// repetitive, so compressing them cuts transfer size substantially; smaller
+// responses are left alone, since the encoding overhead would outweigh the
+// saving. Used by server.ts when registering @fastify/compress.
+export const DEFAULT_COMPRESSION_THRESHOLD_BYTES = 1024;
 
 function positiveInteger(name: string, fallback: number, min: number): number {
   const raw = process.env[name];
@@ -147,9 +171,22 @@ export function validateStartLedger(startLedger: number, chainHead: number): voi
   }
 }
 
+// Builds the base URL a client generator should use when the OpenAPI document
+// does not carry an explicit one. The configured bind address is often a
+// wildcard (`0.0.0.0` or `::`) that a client cannot dial, so it is replaced
+// with `localhost` for the default; deployments that sit behind a hostname or
+// proxy set PUBLIC_BASE_URL explicitly.
+export function defaultPublicBaseUrl(host: string, port: number): string {
+  const dialableHost = host === "0.0.0.0" || host === "::" ? "localhost" : host;
+  // An IPv6 literal must be bracketed to parse as a URL authority.
+  const authority = dialableHost.includes(":") ? `[${dialableHost}]` : dialableHost;
+  return `http://${authority}:${port}`;
+}
+
 export interface Config {
   readonly port: number;
   readonly host: string;
+  readonly publicBaseUrl: string;
   readonly databaseUrl: string;
   readonly network: string;
   readonly networkPassphrase: string;
@@ -162,9 +199,17 @@ export interface Config {
   readonly summaryCacheTtlMs: number;
   readonly bodyLimit: number;
   readonly queryStringLimit: number;
+  readonly compressionThresholdBytes: number;
   readonly trustedProxies: readonly string[];
   readonly rateLimitMax?: number;
   readonly rateLimitWindowMs?: number;
+  readonly readinessRetryAfterSeconds: number;
+  // Optional bearer token for the metrics endpoint. When set, /metrics requires
+  // a matching Bearer token; when unset it is unauthenticated.
+  readonly metricsToken?: string;
+  // Whether to serve the interactive Swagger UI at /docs. When false, only
+  // /docs/json and /docs/yaml are available. Default: true.
+  readonly enableDocsUi: boolean;
 }
 
 export function loadConfig(): Config {
@@ -188,10 +233,18 @@ export function loadConfig(): Config {
   if (rateLimitWindowMs === 0) {
     throw new Error("RATE_LIMIT_WINDOW_MS must be greater than zero");
   }
+  const readinessRetryAfterSeconds = integer(
+    "READINESS_RETRY_AFTER_SECONDS",
+    DEFAULT_READINESS_RETRY_AFTER_SECONDS,
+  );
+
+  const port = integer("PORT", 3000);
+  const host = optional("HOST", "0.0.0.0");
 
   return {
-    port: integer("PORT", 3000),
-    host: optional("HOST", "0.0.0.0"),
+    port,
+    host,
+    publicBaseUrl: optional("PUBLIC_BASE_URL", defaultPublicBaseUrl(host, port)),
     databaseUrl: required("DATABASE_URL"),
     network,
     networkPassphrase,
@@ -215,10 +268,19 @@ export function loadConfig(): Config {
     ),
     bodyLimit: integer("BODY_LIMIT", 1048576), // 1MB default
     queryStringLimit: integer("QUERY_STRING_LIMIT", 2048), // 2KB default
+    compressionThresholdBytes: integer(
+      "COMPRESSION_THRESHOLD_BYTES",
+      DEFAULT_COMPRESSION_THRESHOLD_BYTES,
+    ),
     // Forwarded headers are honored only for these direct peers (#75).
     trustedProxies: parseTrustedProxies(process.env.TRUSTED_PROXIES),
     rateLimitMax,
     rateLimitWindowMs,
+    readinessRetryAfterSeconds,
+    // An empty value means "no token", preserving the unauthenticated default.
+    metricsToken: process.env.METRICS_TOKEN?.trim() || undefined,
+    // The UI is on by default; ENABLE_DOCS_UI=false serves only the spec.
+    enableDocsUi: boolean("ENABLE_DOCS_UI", true),
   };
 }
 
@@ -278,6 +340,7 @@ export function describeConfig(config: Config): LoggedConfig {
   return {
     port: config.port,
     host: config.host,
+    publicBaseUrl: config.publicBaseUrl,
     // The only field carrying a secret.
     databaseUrl: redactDatabaseUrl(config.databaseUrl),
     network: config.network,
@@ -291,9 +354,14 @@ export function describeConfig(config: Config): LoggedConfig {
     summaryCacheTtlMs: config.summaryCacheTtlMs,
     bodyLimit: config.bodyLimit,
     queryStringLimit: config.queryStringLimit,
+    compressionThresholdBytes: config.compressionThresholdBytes,
     trustedProxies: config.trustedProxies,
     // Undefined when rate limiting is not configured; pino omits the field.
     rateLimitMax: config.rateLimitMax,
     rateLimitWindowMs: config.rateLimitWindowMs,
+    // Never log the secret itself, only whether one is configured.
+    metricsToken: config.metricsToken ? "[redacted]" : undefined,
+    enableDocsUi: config.enableDocsUi,
+    readinessRetryAfterSeconds: config.readinessRetryAfterSeconds,
   };
 }

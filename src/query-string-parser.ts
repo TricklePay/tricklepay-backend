@@ -9,8 +9,10 @@
 
 /**
  * Parses a raw query string (without the leading `?`) into a plain record.
- * Duplicate keys are last-write-wins, matching the behaviour of the inline
- * parser that was previously defined inside `buildServer`.
+ *
+ * Parsing alone is last-write-wins, but the server rejects a repeated parameter
+ * before any handler runs (#519): a silent last-wins rule hides client mistakes
+ * and is a parameter-pollution footgun. See `docs/query-parameters.md`.
  */
 export function parseQueryString(str: string): Record<string, string> {
   const params = new URLSearchParams(str);

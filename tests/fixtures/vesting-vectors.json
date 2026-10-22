@@ -1,0 +1,242 @@
+[
+  {
+    "id": "one_second_before_start",
+    "note": "before the start time, nothing has vested",
+    "totalAmount": "1000",
+    "startTime": "100",
+    "endTime": "1100",
+    "cliffTime": "100",
+    "now": "99",
+    "vested": "0"
+  },
+  {
+    "id": "at_start_instant_no_cliff",
+    "note": "at the exact start instant, elapsed time is zero",
+    "totalAmount": "1000",
+    "startTime": "100",
+    "endTime": "1100",
+    "cliffTime": "100",
+    "now": "100",
+    "vested": "0"
+  },
+  {
+    "id": "one_second_after_start",
+    "note": "the first unit of linear accrual after start",
+    "totalAmount": "1000",
+    "startTime": "100",
+    "endTime": "1100",
+    "cliffTime": "100",
+    "now": "101",
+    "vested": "1"
+  },
+  {
+    "id": "quarter_point",
+    "note": "one quarter of the duration elapsed",
+    "totalAmount": "1000",
+    "startTime": "100",
+    "endTime": "1100",
+    "cliffTime": "100",
+    "now": "350",
+    "vested": "250"
+  },
+  {
+    "id": "midpoint",
+    "note": "exactly half the duration elapsed",
+    "totalAmount": "1000",
+    "startTime": "100",
+    "endTime": "1100",
+    "cliffTime": "100",
+    "now": "600",
+    "vested": "500"
+  },
+  {
+    "id": "three_quarter_point",
+    "note": "three quarters of the duration elapsed",
+    "totalAmount": "1000",
+    "startTime": "100",
+    "endTime": "1100",
+    "cliffTime": "100",
+    "now": "850",
+    "vested": "750"
+  },
+  {
+    "id": "one_second_before_end",
+    "note": "one second short of full vesting",
+    "totalAmount": "1000",
+    "startTime": "100",
+    "endTime": "1100",
+    "cliffTime": "100",
+    "now": "1099",
+    "vested": "999"
+  },
+  {
+    "id": "at_end_instant",
+    "note": "at the exact end instant, the full amount vests",
+    "totalAmount": "1000",
+    "startTime": "100",
+    "endTime": "1100",
+    "cliffTime": "100",
+    "now": "1100",
+    "vested": "1000"
+  },
+  {
+    "id": "long_after_end",
+    "note": "well past the end time, still capped at the total",
+    "totalAmount": "1000",
+    "startTime": "100",
+    "endTime": "1100",
+    "cliffTime": "100",
+    "now": "5000",
+    "vested": "1000"
+  },
+  {
+    "id": "cliff_after_start_before_cliff",
+    "note": "past start but before a cliff set at the midpoint",
+    "totalAmount": "1000",
+    "startTime": "100",
+    "endTime": "1100",
+    "cliffTime": "600",
+    "now": "599",
+    "vested": "0"
+  },
+  {
+    "id": "cliff_after_start_at_cliff_instant",
+    "note": "at the cliff instant, the full accrued-since-start amount releases at once",
+    "totalAmount": "1000",
+    "startTime": "100",
+    "endTime": "1100",
+    "cliffTime": "600",
+    "now": "600",
+    "vested": "500"
+  },
+  {
+    "id": "cliff_after_start_one_after_cliff",
+    "note": "one second after the cliff, linear accrual continues from the jump",
+    "totalAmount": "1000",
+    "startTime": "100",
+    "endTime": "1100",
+    "cliffTime": "600",
+    "now": "601",
+    "vested": "501"
+  },
+  {
+    "id": "cliff_beyond_end_before_cliff",
+    "note": "past the end time but still before an unreachable cliff",
+    "totalAmount": "1000",
+    "startTime": "100",
+    "endTime": "1100",
+    "cliffTime": "2000",
+    "now": "1500",
+    "vested": "0"
+  },
+  {
+    "id": "cliff_beyond_end_at_cliff_instant",
+    "note": "at a cliff set beyond the end time, the end-time shortcut wins",
+    "totalAmount": "1000",
+    "startTime": "100",
+    "endTime": "1100",
+    "cliffTime": "2000",
+    "now": "2000",
+    "vested": "1000"
+  },
+  {
+    "id": "zero_total",
+    "note": "a zero-amount stream never vests anything",
+    "totalAmount": "0",
+    "startTime": "100",
+    "endTime": "1100",
+    "cliffTime": "100",
+    "now": "600",
+    "vested": "0"
+  },
+  {
+    "id": "zero_length_stream_at_instant",
+    "note": "start == end == cliff; at that instant the whole amount vests",
+    "totalAmount": "1000",
+    "startTime": "500",
+    "endTime": "500",
+    "cliffTime": "500",
+    "now": "500",
+    "vested": "1000"
+  },
+  {
+    "id": "zero_length_stream_before_instant",
+    "note": "start == end == cliff; one second before, nothing has vested",
+    "totalAmount": "1000",
+    "startTime": "500",
+    "endTime": "500",
+    "cliffTime": "500",
+    "now": "499",
+    "vested": "0"
+  },
+  {
+    "id": "truncating_division_one_third",
+    "note": "non-divisible duration truncates down instead of rounding",
+    "totalAmount": "10",
+    "startTime": "0",
+    "endTime": "3",
+    "cliffTime": "0",
+    "now": "1",
+    "vested": "3"
+  },
+  {
+    "id": "truncating_division_two_thirds",
+    "note": "non-divisible duration truncates down instead of rounding",
+    "totalAmount": "10",
+    "startTime": "0",
+    "endTime": "3",
+    "cliffTime": "0",
+    "now": "2",
+    "vested": "6"
+  },
+  {
+    "id": "max_i128_total_at_midpoint",
+    "note": "the largest i128 total the contract could store, at the midpoint",
+    "totalAmount": "170141183460469231731687303715884105727",
+    "startTime": "0",
+    "endTime": "2",
+    "cliffTime": "0",
+    "now": "1",
+    "vested": "85070591730234615865843651857942052863"
+  },
+  {
+    "id": "max_i128_total_at_end",
+    "note": "the largest i128 total the contract could store, fully vested",
+    "totalAmount": "170141183460469231731687303715884105727",
+    "startTime": "0",
+    "endTime": "2",
+    "cliffTime": "0",
+    "now": "2",
+    "vested": "170141183460469231731687303715884105727"
+  },
+  {
+    "id": "max_i128_total_before_start",
+    "note": "the largest i128 total the contract could store, before the start time",
+    "totalAmount": "170141183460469231731687303715884105727",
+    "startTime": "1000",
+    "endTime": "2000",
+    "cliffTime": "1000",
+    "now": "999",
+    "vested": "0"
+  },
+  {
+    "id": "frozen_cancelled_stream",
+    "note": "a cancelled stream's total is rewritten to the amount vested at cancellation and its end time to the cancellation moment; the same formula returns that frozen balance long after",
+    "totalAmount": "500",
+    "startTime": "100",
+    "endTime": "600",
+    "cliffTime": "100",
+    "now": "5000",
+    "vested": "500"
+  },
+  {
+    "id": "realistic_30_day_stream_at_half",
+    "note": "a 5000-unit stream over a realistic 30-day window, no cliff, sampled at the 15-day mark",
+    "totalAmount": "5000000000",
+    "startTime": "1700000000",
+    "endTime": "1702592000",
+    "cliffTime": "1700000000",
+    "now": "1701296000",
+    "vested": "2500000000"
+  }
+]

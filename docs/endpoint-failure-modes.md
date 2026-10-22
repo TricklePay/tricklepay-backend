@@ -28,6 +28,7 @@ All error responses (4xx and 5xx) adhere to a consistent JSON format defined in 
 ### 1. `GET /ready` (Readiness Probe)
 - **Failure Condition**: PostgreSQL database connection is down or unreachable.
 - **HTTP Status**: `503 Service Unavailable`
+- **Retry-After**: The response includes a `Retry-After` header with the number of seconds to wait before probing again. The value defaults to `5` and is configurable with `READINESS_RETRY_AFTER_SECONDS`; a ready (`200`) response does not include it.
 - **Response Format**:
   ```json
   {

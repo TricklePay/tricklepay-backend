@@ -36,7 +36,7 @@ async function main(): Promise<void> {
   await app.register(rootRoutes(config));
   await app.register(streamRoutes, { summaryCacheTtlMs: config.summaryCacheTtlMs });
   await app.register(statusRoutes, { startLedger: config.startLedger });
-  await app.register(metricsRoutes);
+  await app.register(metricsRoutes, { token: config.metricsToken });
 
   const poller = new Poller(rpcServer, config, logger);
   // Transient errors after the startup check are retried in the background.

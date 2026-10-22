@@ -17,6 +17,7 @@ This directory contains technical documentation and operational guides for the T
 ## Documents in this directory
 
 - [api-error-codes.md](api-error-codes.md): Reference for the stable, machine-readable error codes returned in API failures, their response shape, and the log redaction behaviour that prevents sensitive information from reaching clients.
+- [debugging-a-stream.md](debugging-a-stream.md): Queries to list a stream's event history, compare it against its stored row, and spot a gap or an over-counted balance.
 - [backfill-duration.md](backfill-duration.md): Explains what determines how long an indexer backfill takes, how to estimate remaining progress, and the metric that shows it.
 - [database-schema.md](database-schema.md): PostgreSQL schema reference covering models (`Stream`, `IndexedEvent`, `FailedEvent`, `IndexerState`), field definitions, types, indexes, and persistence logic.
 - [database-outage-runbook.md](database-outage-runbook.md): Operator checklist for database outage symptoms, relevant metrics, automatic recovery behavior, and actions for unresolved event failures.
@@ -28,8 +29,12 @@ This directory contains technical documentation and operational guides for the T
 - [indexer-retry-backoff.md](indexer-retry-backoff.md): Describes poll retry timing, exponential backoff, configuration bounds, and the distinction between startup failures and poll-loop retries.
 - [indexer-start-ledger.md](indexer-start-ledger.md): Guide for choosing the `INDEXER_START_LEDGER` configuration value for new deployments, explaining the trade-offs between backfill duration and historical data completeness.
 - [indexer-stalled-runbook.md](indexer-stalled-runbook.md): Operator checklist for diagnosing a stalled indexer using `/status`, `/metrics`, and application logs, followed by ordered recovery steps.
+- [node-version-policy.md](node-version-policy.md): States the minimum supported, CI-tested, and production Node versions, and why `.nvmrc` deliberately pins the floor rather than matching the Dockerfile.
+- [openapi-client-generation.md](openapi-client-generation.md): Guide for generating a typed TypeScript client from the `/docs/json` OpenAPI document, and why amount and time fields are decimal strings rather than numbers.
+- [poll-tick-sequence.md](poll-tick-sequence.md): Mermaid sequence diagram of a single poll tick, from fetching a page of events through decoding, applying, recording failures, and saving the new position.
 - [resource-footprint.md](resource-footprint.md): Indicative deployment sizing, per-process Prisma connection usage, and how retained event volume affects PostgreSQL storage growth.
 - [request-ids.md](request-ids.md): Documentation on Request ID behavior, client-supplied header validation (`x-request-id`), and traceability in responses and logs.
+- [response-headers.md](response-headers.md): Table of which `Cache-Control`, `ETag`, and other headers each endpoint sets, and why, matched against the route code.
 - [request-size-limits.md](request-size-limits.md): Documentation on request body and query string size limits, including defaults, configuration, and rejection behavior.
 
 ## When to add a new document here

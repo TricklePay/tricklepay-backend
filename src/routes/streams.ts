@@ -1,6 +1,8 @@
 // Registers the GET /streams, GET /streams/summary, GET /tokens, GET /streams/:id/events, and GET /streams/:id endpoints.
 // These routes read stream records, historical events, and aggregations from the database.
 
+import { createHash } from "node:crypto";
+
 import { Prisma, type Stream } from "@prisma/client";
 
 import { StrKey } from "@stellar/stellar-sdk";
@@ -10,6 +12,7 @@ import type { FastifyInstance } from "fastify";
 import { sendError, bigIntToStringNullable } from "../lib/response.js";
 import { parsePagination } from "../lib/pagination.js";
 import { mapStreamResponse } from "../lib/stream-view.js";
+import { MAX_UINT64, parseStreamId } from "../lib/stream-id.js";
 
 import {
   aggregateStreams,
@@ -19,6 +22,7 @@ import {
   getStream,
   listStreams,
   listTokens,
+  statusWhere,
 } from "../repositories/streams.js";
 
 import {
@@ -46,7 +50,7 @@ import {
   tokenSummarySchema,
 } from "../schema.js";
 import { listIndexedEvents, type IndexedEventKind } from "../repositories/indexed-events.js";
-import { vestedAmount } from "../lib/vesting.js";
+import { normalizeAddress } from "../lib/address.js";
 import { nowSeconds } from "../lib/time.js";
 import { vestedAmount, withdrawableAmount } from "../lib/vesting.js";
 import { DEFAULT_STREAM_SUMMARY_CACHE_TTL_MS } from "../config.js";
@@ -55,27 +59,20 @@ import { DEFAULT_STREAM_SUMMARY_CACHE_TTL_MS } from "../config.js";
 // through results in order or narrow them with filters instead.
 const MAX_OFFSET = 10000;
 
+// Weak ETag for list responses, derived from the serialized body so it changes
+// whenever any returned field changes (streams, total, nextCursor, pagination).
+// "Weak" (W/) is correct here: the body is byte-identical between revalidations
+// for the same data, but we only guarantee semantic equivalence, matching the
+// detail route's revalidation model without a per-row version column.
+function weakEtagFromBody(body: unknown): string {
+  const digest = createHash("sha256").update(JSON.stringify(body)).digest("hex");
+  return `W/"${digest}"`;
+}
+
 type StreamStatus = "pending" | "streaming" | "completed" | "cancelled";
 
 function parseIncludeTotal(raw: string | undefined): boolean {
   return raw === "true";
-}
-
-const MAX_UINT64 = 18446744073709551615n;
-
-function parseStreamId(raw: string | undefined): bigint | null {
-  if (raw === undefined) return null;
-
-  const value = raw.trim();
-  if (value.length === 0 || !/^\d+$/.test(value)) return null;
-
-  try {
-    const parsed = BigInt(value);
-    if (parsed < 0n || parsed > MAX_UINT64) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
 }
 
 function parseAtTimestamp(raw: string | undefined): bigint | null {
@@ -159,33 +156,6 @@ function parseCancelled(raw: string | undefined): boolean | undefined {
   return undefined;
 }
 
-// Parses a Unix timestamp in seconds. Returns null if invalid, negative, or non-numeric.
-function parseUnixSeconds(raw: string | undefined): bigint | null {
-  if (raw === undefined) return null;
-  const value = raw.trim();
-  if (value.length === 0 || !/^\d+$/.test(value)) return null;
-  try {
-    const parsed = BigInt(value);
-    if (parsed < 0n) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-// Stellar addresses are canonical uppercase base32 strkeys, but callers
-// sometimes send lowercase or whitespace-padded spellings. Normalize those
-// before matching so every rendering of one address filters identically, and
-// reject values that are neither a valid account nor a valid contract address.
-// Returns null when the input cannot be normalized safely.
-function normalizeAddress(raw: string): string | null {
-  const candidate = raw.trim().toUpperCase();
-  if (StrKey.isValidEd25519PublicKey(candidate) || StrKey.isValidContract(candidate)) {
-    return candidate;
-  }
-  return null;
-}
-
 const SUMMARY_STATUSES = ["pending", "streaming", "completed", "cancelled"] as const;
 
 type SummaryEntry = { count: number; totalAmount: string; withdrawn: string };
@@ -229,19 +199,18 @@ export type StreamRoutesOptions = {
   summaryCacheTtlMs?: number;
 };
 
-// The database-side predicate for each lifecycle status, mirroring `statusOf`:
-// cancelled wins first, then the start/end time windows against the clock.
-function statusWhere(status: StreamStatus, now: bigint): Prisma.StreamWhereInput {
-  switch (status) {
-    case "cancelled":
-      return { cancelled: true };
-    case "pending":
-      return { cancelled: false, startTime: { gt: now } };
-    case "completed":
-      return { cancelled: false, endTime: { lte: now } };
-    case "streaming":
-      return { cancelled: false, startTime: { lte: now }, endTime: { gt: now } };
-  }
+// Mirrors the `querystring` JSON schema on GET /streams below field for
+// field, so a parameter renamed in one place without the other is a compile
+// error instead of a silently-undefined value at runtime.
+interface ListStreamsQuery {
+  sender?: string;
+  recipient?: string;
+  token?: string;
+  limit?: string;
+  offset?: string;
+  includeTotal?: string;
+  cancelled?: string;
+  cursor?: string;
 }
 
 export async function streamRoutes(
@@ -275,12 +244,13 @@ export async function streamRoutes(
   }
   if (!app.getSchema(ACCOUNT_SUMMARY_RESPONSE_SCHEMA_ID)) {
     app.addSchema(accountSummaryResponseSchema);
+  }
   if (!app.getSchema(STREAM_SCHEDULE_RESPONSE_SCHEMA_ID)) {
     app.addSchema(streamScheduleResponseSchema);
   }
   if (!app.getSchema(ERROR_SCHEMA_ID)) app.addSchema(apiErrorSchema);
 
-  app.get(
+  app.get<{ Querystring: ListStreamsQuery }>(
     "/streams",
     {
       schema: {
@@ -293,7 +263,8 @@ export async function streamRoutes(
           "Results are returned in a stable deterministic order: when filtering by sender, recipient, or token, " +
           "results are ordered by that address ascending, then by stream id descending to break ties. " +
           "Unfiltered queries (or queries filtered only by cancellation status) are ordered by stream id descending. " +
-          "Stream id is the final tie-breaker in all cases so pagination is cacheable and repeatable.",
+          "Stream id is the final tie-breaker in all cases so pagination is cacheable and repeatable. " +
+          "Responses carry a weak ETag derived from the body; send it back as If-None-Match to get a 304 with no body when nothing changed.",
         tags: ["streams"],
         querystring: {
           type: "object",
@@ -371,25 +342,13 @@ export async function streamRoutes(
         },
         response: {
           200: { $ref: STREAM_LIST_RESPONSE_SCHEMA_ID },
+          304: { type: "null" },
           400: { $ref: ERROR_SCHEMA_ID },
         },
       },
     },
     async (request, reply) => {
-      const query = request.query as {
-        sender?: string;
-        recipient?: string;
-        token?: string;
-        limit?: string;
-        offset?: string;
-        includeTotal?: string;
-        cancelled?: string;
-        cursor?: string;
-        startAfter?: string;
-        startBefore?: string;
-        endAfter?: string;
-        endBefore?: string;
-      };
+      const query = request.query;
 
       const { limit, offset } = parsePagination(query);
 
@@ -472,13 +431,25 @@ export async function streamRoutes(
       ]);
 
       reply.header("Cache-Control", "public, max-age=30");
-      return {
+
+      // Built once and reused for both the ETag and the returned body so the
+      // digest is derived from exactly the bytes the client would receive.
+      const body = {
         streams: listResult.streams.map((s) => mapStreamResponse(s)),
         ...(total === undefined ? {} : { total }),
         ...(listResult.nextCursor === undefined ? {} : { nextCursor: listResult.nextCursor }),
         limit,
         offset: usingCursor ? 0 : offset,
       };
+
+      const etag = weakEtagFromBody(body);
+      reply.header("ETag", etag);
+
+      if (request.headers["if-none-match"] === etag) {
+        return reply.code(304).send();
+      }
+
+      return body;
     },
   );
 

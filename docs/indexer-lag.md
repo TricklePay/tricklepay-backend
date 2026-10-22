@@ -102,7 +102,7 @@ If `updatedAt` has not changed in several minutes, the indexer process may have 
 
 ## Readiness signal
 
-The `GET /ready` readiness probe reflects whether the indexer has made progress, not merely whether dependencies answer. A freshly started instance that has not yet completed a indexer poll reports not ready, even if the database and Soroban RPC are reachable.
+The `GET /ready` readiness probe reflects whether the indexer has made progress, not merely whether dependencies answer. A freshly started instance that has not yet completed a indexer poll reports not ready, even if the database and Soroban RPC are reachable. A not-ready response includes a `Retry-After` header (in seconds, default `5`, configurable via `READINESS_RETRY_AFTER_SECONDS`) so orchestrators and load balancers can pace their probes; a ready response does not.
 
 Readiness is determined by the presence of an `IndexerState` position with a non-null `indexer.updatedAt`. Once the indexer has written its first position, the service is considered ready. This is intentionally independent of lag: a backfilling indexer with a large `lagLedgers` is still ready, because it has usable data and is making progress.
 

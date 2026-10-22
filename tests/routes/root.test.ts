@@ -11,6 +11,7 @@ const mockConfig = {
   network: "testnet",
   port: 3000,
   host: "0.0.0.0",
+  publicBaseUrl: "http://localhost:3000",
   databaseUrl: "postgres://test",
   networkPassphrase: "Test DF Network ; September 2015",
   rpcUrl: "https://soroban-testnet.stellar.org",
@@ -21,8 +22,11 @@ const mockConfig = {
   maxPagesPerTick: 1000,
   bodyLimit: 1048576,
   queryStringLimit: 2048,
+  compressionThresholdBytes: 1024,
   trustedProxies: [],
   summaryCacheTtlMs: 2000,
+  readinessRetryAfterSeconds: 5,
+  enableDocsUi: true,
 };
 
 async function getRoot() {
