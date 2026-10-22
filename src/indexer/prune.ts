@@ -1,4 +1,5 @@
 import { prisma } from "../db.js";
+import { parseCliArgs, wantsJsonOutput } from "../lib/cli-args.js";
 import { logger } from "../logger.js";
 import { pruneFailedEvents, type PruneFailedEventsResult } from "../repositories/failed-events.js";
 
@@ -45,31 +46,14 @@ export async function runPrune(options: PruneCommandOptions): Promise<PruneFaile
 }
 
 async function main(): Promise<void> {
-  const args = new Map<string, string | boolean>();
-  const argv = process.argv.slice(2);
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    if (arg.startsWith("--")) {
-      if (arg.includes("=")) {
-        const [key, value] = arg.split("=");
-        args.set(key, value);
-      } else {
-        const nextArg = argv[i + 1];
-        if (nextArg && !nextArg.startsWith("--")) {
-          args.set(arg, nextArg);
-          i++;
-        } else {
-          args.set(arg, true);
-        }
-      }
-    }
-  }
+  const args = parseCliArgs();
 
   const dryRun = args.get("--dry-run") === true || args.get("--dryRun") === true;
+  const jsonOutput = wantsJsonOutput(args);
   const rawOlderThan = args.get("--older-than") ?? args.get("--olderThan");
 
   if (!rawOlderThan || typeof rawOlderThan !== "string") {
-    console.error("Usage: tsx src/indexer/prune.ts --older-than=<age> [--dry-run]");
+    console.error("Usage: tsx src/indexer/prune.ts --older-than=<age> [--dry-run] [--json]");
     console.error("Example: tsx src/indexer/prune.ts --older-than=30d --dry-run");
     process.exitCode = 1;
     return;
@@ -77,7 +61,15 @@ async function main(): Promise<void> {
 
   const result = await runPrune({ olderThan: rawOlderThan, dryRun });
 
-  if (result.dryRun) {
+  if (jsonOutput) {
+    process.stdout.write(
+      JSON.stringify({
+        deletedCount: result.deletedCount,
+        cutoff: result.cutoff.toISOString(),
+        dryRun: result.dryRun,
+      }) + "\n",
+    );
+  } else if (result.dryRun) {
     logger.info(
       { deletedCount: result.deletedCount, cutoff: result.cutoff.toISOString(), dryRun: true },
       `dry-run: ${result.deletedCount} failed event(s) older than ${result.cutoff.toISOString()} would be pruned`,

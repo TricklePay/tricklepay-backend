@@ -35,10 +35,12 @@ async function main(): Promise<void> {
   const app = await buildServer(config);
   await app.register(rootRoutes(config));
   await app.register(streamRoutes, { summaryCacheTtlMs: config.summaryCacheTtlMs });
-  await app.register(statusRoutes, { startLedger: config.startLedger });
-  await app.register(metricsRoutes, { token: config.metricsToken });
 
   const poller = new Poller(rpcServer, config, logger);
+
+  await app.register(statusRoutes, { startLedger: config.startLedger, poller });
+  await app.register(metricsRoutes, { token: config.metricsToken });
+
   // Transient errors after the startup check are retried in the background.
   poller.start().catch((err) => logger.error({ err }, "indexer stopped"));
 

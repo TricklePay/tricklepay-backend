@@ -324,6 +324,18 @@ export const failedEventBacklog = new Gauge(
   "Number of failed indexer events awaiting recovery.",
 );
 
+/** Number of consecutive poll iterations that have failed since the last success. */
+export const indexerConsecutiveFailures = new Gauge(
+  "tricklepay_indexer_consecutive_failures",
+  "Number of consecutive poll iterations that have failed since the last success. Resets to 0 after a successful tick.",
+);
+
+/** Unix timestamp (seconds) of the next scheduled poll attempt. 0 before the first failure. */
+export const indexerNextPollAt = new Gauge(
+  "tricklepay_indexer_next_poll_timestamp_seconds",
+  "Unix timestamp in seconds of the next scheduled poll attempt. 0 when no backoff is active.",
+);
+
 // Database -----------------------------------------------------------------
 
 /** Database query execution durations in milliseconds. */

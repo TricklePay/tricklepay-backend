@@ -62,6 +62,63 @@ beforeEach(() => {
   streamsRepo.countStreams.mockResolvedValue(SEEDED.length);
 });
 
+describe("GET /streams ids filter", () => {
+  it("passes parsed, deduplicated ids to list and count queries", async () => {
+    streamsRepo.listStreams.mockResolvedValue({ streams: [SEEDED[2], SEEDED[4]] });
+    streamsRepo.countStreams.mockResolvedValue(2);
+    const response = await get("/streams?ids=1,3,1,999&includeTotal=true");
+    expect(response.statusCode).toBe(200);
+    expect(response.json().streams.map((stream: { id: string }) => stream.id)).toEqual(["3", "1"]);
+    expect(response.json().total).toBe(2);
+    expect(streamsRepo.listStreams).toHaveBeenCalledWith(expect.objectContaining({ ids: [1n, 3n, 999n] }));
+    expect(streamsRepo.countStreams).toHaveBeenCalledWith(expect.objectContaining({ ids: [1n, 3n, 999n] }));
+  });
+
+  it.each(["", ",", "1,", ",1", "1,,2", "-1", "1.5", "abc", "1e3", "18446744073709551616"])(
+    "rejects invalid ids %j before querying",
+    async (ids) => {
+      const response = await get(`/streams?ids=${encodeURIComponent(ids)}`);
+      expect(response.statusCode).toBe(400);
+      expect(response.json().code).toBe("VALIDATION_ERROR");
+      expect(streamsRepo.listStreams).not.toHaveBeenCalled();
+      expect(streamsRepo.countStreams).not.toHaveBeenCalled();
+    },
+  );
+
+  it("accepts exactly 100 ids", async () => {
+    const ids = Array.from({ length: 100 }, (_, index) => index + 1).join(",");
+    const response = await get(`/streams?ids=${ids}&limit=100`);
+    expect(response.statusCode).toBe(200);
+    expect(streamsRepo.listStreams.mock.calls[0][0].ids).toHaveLength(100);
+  });
+
+  it("rejects more than 100 entries even when they are duplicates", async () => {
+    const response = await get(`/streams?ids=${Array(101).fill("1").join(",")}`);
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toContain("at most 100");
+    expect(streamsRepo.listStreams).not.toHaveBeenCalled();
+  });
+
+  it("combines ids with existing filters and pagination", async () => {
+    const cursor = encodeCursor(5n);
+    const response = await get(`/streams?ids=1,2&cancelled=false&limit=1&cursor=${cursor}`);
+    expect(response.statusCode).toBe(200);
+    expect(streamsRepo.listStreams).toHaveBeenCalledWith(expect.objectContaining({
+      ids: [1n, 2n], cancelled: false, limit: 1, cursor: 5n,
+    }));
+  });
+
+  it("passes ids and lifecycle status to list and count with the same timestamp", async () => {
+    const response = await get("/streams?ids=1,3&status=streaming&includeTotal=true");
+    expect(response.statusCode).toBe(200);
+    const now = streamsRepo.listStreams.mock.calls[0][1];
+    expect(typeof now).toBe("bigint");
+    const filter = expect.objectContaining({ ids: [1n, 3n], status: "streaming" });
+    expect(streamsRepo.listStreams).toHaveBeenCalledWith(filter, now);
+    expect(streamsRepo.countStreams).toHaveBeenCalledWith(filter, now);
+  });
+});
+
 describe("GET /streams unknown query parameters", () => {
   it("rejects a misspelt parameter with a 400", async () => {
     const response = await get("/streams?limt=5");

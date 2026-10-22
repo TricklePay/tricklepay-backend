@@ -96,6 +96,17 @@ describe("GET /docs/json (OpenAPI spec)", () => {
     expect(paths).toHaveProperty("/streams/{id}");
   });
 
+  it("documents the ids query filter and its limit", async () => {
+    const spec = await getSpec();
+    const paths = spec.paths as Record<string, {
+      get: { parameters: { name: string; in: string; schema: { type: string }; description?: string }[] };
+    }>;
+    const ids = paths["/streams"].get.parameters.find((parameter) => parameter.name === "ids");
+    expect(ids).toMatchObject({ name: "ids", in: "query", schema: { type: "string" } });
+    expect(ids?.description).toContain("100");
+    expect(ids?.description).toContain("Unknown ids are omitted");
+  });
+
   it("documents the GET /streams/summary path", async () => {
     const spec = await getSpec();
     const paths = spec.paths as Record<string, unknown>;
@@ -321,5 +332,23 @@ describe("GET /docs/yaml (OpenAPI spec — YAML)", () => {
     // A minimal sanity check: the body starts with the openapi version line.
     expect(response.body).toContain("openapi:");
     expect(response.body).toContain("TricklePay API");
+  });
+});
+
+
+describe("README endpoint table", () => {
+  it("contains every generated OpenAPI route except documentation endpoints", async () => {
+    const spec = await getSpec();
+    const paths = spec.paths as Record<string, Record<string, unknown>>;
+    const expected = new Set<string>();
+    for (const [path, methods] of Object.entries(paths)) {
+      if (path.startsWith("/docs")) continue;
+      for (const method of Object.keys(methods)) if (["get","post","put","patch","delete","head"].includes(method)) expected.add(`${method.toUpperCase()} ${path}`);
+    }
+    const readme = (await import("node:fs/promises")).readFile(new URL("../../README.md", import.meta.url), "utf8");
+    const actual = new Set<string>();
+    for (const line of (await readme).split("\n")) { const m=line.match(/^\| `?(GET|POST|PUT|PATCH|DELETE|HEAD)`? \| `([^`]+)` \|/); if (m) actual.add(`${m[1]} ${m[2]}`); }
+    expect([...expected].filter((x) => !actual.has(x))).toEqual([]);
+    expect([...actual].filter((x) => !expected.has(x))).toEqual([]);
   });
 });

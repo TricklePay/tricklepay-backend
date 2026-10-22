@@ -483,7 +483,7 @@ export const indexerStatusSchema = {
   properties: {
     indexer: {
       type: "object",
-      required: ["initialized", "startLedger", "lastLedger", "cursor", "updatedAt"],
+      required: ["initialized", "startLedger", "lastLedger", "cursor", "updatedAt", "consecutiveFailures", "nextPollAt"],
       properties: {
         initialized: {
           type: "boolean",
@@ -508,6 +508,22 @@ export const indexerStatusSchema = {
           type: ["string", "null"],
           format: "date-time",
           description: "When the position was last written, or null before the first poll.",
+        },
+        consecutiveFailures: {
+          type: "integer",
+          description:
+            "Number of consecutive poll iterations that have failed since the last success. " +
+            "Resets to 0 after a successful tick. Use alongside nextPollAt to understand backoff state.",
+          minimum: 0,
+          examples: [0, 3],
+        },
+        nextPollAt: {
+          type: ["string", "null"],
+          format: "date-time",
+          description:
+            "ISO 8601 timestamp of the next scheduled poll attempt. " +
+            "Non-null only while the poller is in backoff after one or more failures; null during normal polling.",
+          examples: [null, "2026-10-19T12:05:30.000Z"],
         },
       },
     },
@@ -552,6 +568,7 @@ export const apiErrorSchema = {
       enum: [
         "VALIDATION_ERROR",
         "NOT_FOUND",
+        "RATE_LIMITED",
         "REQUEST_ERROR",
         "INTERNAL_SERVER_ERROR",
       ],

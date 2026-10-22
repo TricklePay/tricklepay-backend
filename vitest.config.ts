@@ -13,6 +13,7 @@ export default defineConfig({
       {
         test: {
           name: "unit",
+          env: { LOG_LEVEL: "silent" },
           include: ["tests/**/*.test.ts"],
           exclude: ["tests/integration/**"],
         },

@@ -59,7 +59,7 @@ describe("errorCodeForStatus", () => {
   });
 
   it("maps other 4xx codes to REQUEST_ERROR", () => {
-    expect(errorCodeForStatus(429)).toBe<ApiErrorCode>("REQUEST_ERROR");
+    expect(errorCodeForStatus(429)).toBe<ApiErrorCode>("RATE_LIMITED");
     expect(errorCodeForStatus(401)).toBe<ApiErrorCode>("REQUEST_ERROR");
   });
 });

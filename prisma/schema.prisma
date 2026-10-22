@@ -101,6 +101,8 @@ model FailedEvent {
   streamId      String?
   // Ledger sequence number in which the failed event occurred on-chain.
   ledger        Int
+  // Hex-encoded transaction hash; null for older rows or when unavailable.
+  txHash        String?
   // Most recent error message.
   error         String
   // How many times this event has failed.

@@ -15,7 +15,9 @@ import type { Logger } from "../logger.js";
 import {
   eventsApplied,
   eventsFailed,
+  indexerConsecutiveFailures,
   indexerLagLedgers,
+  indexerNextPollAt,
   indexerPollLastSuccess,
   indexerPollSuccess,
   pagesFetched,
@@ -73,6 +75,9 @@ export class Poller {
   // events is not yet usable. Once true it stays true for the lifetime of the
   // process, so readiness is not flipped back by a transient poll failure.
   private hasProgressed = false;
+  // Unix timestamp (ms) of when the next poll will fire. Set just before each
+  // sleep so /status and metrics can report it to operators during backoff.
+  private nextPollAtMs = 0;
   private readonly log: Logger;
 
   constructor(
@@ -87,6 +92,16 @@ export class Poller {
   // decide whether the service has usable data. Liveness is unaffected.
   isReady(): boolean {
     return this.hasProgressed;
+  }
+
+  /** Number of poll iterations that have failed consecutively since the last success. */
+  getConsecutiveFailures(): number {
+    return this.consecutiveFailures;
+  }
+
+  /** Unix timestamp in seconds of the next scheduled poll, or 0 when no backoff is active. */
+  getNextPollAt(): number {
+    return this.nextPollAtMs > 0 ? Math.floor(this.nextPollAtMs / 1000) : 0;
   }
 
   async start(): Promise<void> {
@@ -105,17 +120,26 @@ export class Poller {
         // A successful iteration breaks the streak — back off returns to the
         // normal interval so a recovered RPC is not punished for past failures.
         this.consecutiveFailures = 0;
+        indexerConsecutiveFailures.set(0);
       } catch (err) {
         this.log.error({ err }, "poll iteration failed");
         pollErrors.inc();
         this.consecutiveFailures += 1;
+        indexerConsecutiveFailures.set(this.consecutiveFailures);
       }
       // Checked before sleeping, so a stop does not have to wait out an
       // interval that exists only to pace an idle indexer.
       if (!this.running) break;
       // Delay grows with consecutive failures (2×, 4×, …) up to the ceiling,
       // so a struggling RPC is not hammered on a tight fixed schedule.
-      await sleep(this.backoffDelay());
+      const delay = this.backoffDelay();
+      this.nextPollAtMs = Date.now() + delay;
+      indexerNextPollAt.set(Math.floor(this.nextPollAtMs / 1000));
+      await sleep(delay);
+      // After waking, clear the next-poll timestamp so it is only set during
+      // active backoff rather than lingering after the poll fires.
+      this.nextPollAtMs = 0;
+      indexerNextPollAt.set(0);
     }
   }
 
@@ -266,6 +290,7 @@ export class Poller {
               kind: "malformed",
               streamId: "0",
               ledger: raw.ledger ?? 0,
+              txHash: raw.txHash ?? null,
               error: err.message,
             });
           } catch (recordErr) {
@@ -297,7 +322,7 @@ export class Poller {
           return res;
         });
       } catch (err) {
-// Log the failure and record it in the database so an operator can
+        // Log the failure and record it in the database so an operator can
         // find it without tailing logs. The event is then skipped so the rest
         // of the page — and the cursor — are not held hostage by one bad event.
         this.log.error(

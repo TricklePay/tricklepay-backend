@@ -12,6 +12,19 @@ curl -sS https://<service>/status
 
 Compare `indexer.updatedAt`, `indexer.cursor`, `chain.latestLedger`, `indexer.lastLedger`, and `lagLedgers` between responses. `updatedAt` should advance after successful polls and the cursor should normally move when events are available. A large `lagLedgers` value by itself does not prove a stall: `lastLedger` advances only when an event is applied, so a quiet contract can leave it unchanged while polling continues. See [Understanding the Indexer Lag Figure](indexer-lag.md).
 
+If `indexer.consecutiveFailures` is greater than zero, the poller is in backoff. The `indexer.nextPollAt` field shows the ISO 8601 timestamp of the next retry so you can tell how long to wait before the next attempt fires. For example:
+
+```json
+{
+  "indexer": {
+    "consecutiveFailures": 4,
+    "nextPollAt": "2026-10-19T12:05:30.000Z"
+  }
+}
+```
+
+A `consecutiveFailures` of 4 means the retry delay is currently `min(pollInterval × 2^4, maxBackoffMs)` — up to 60 seconds with defaults. Watch the value between scrapes: if it keeps climbing, the underlying failure has not resolved.
+
 Check `GET /health` and `GET /ready` as well. `/health` confirms the HTTP process is alive; it does not check the database or indexer. `/ready` checks database connectivity and reports the latest recorded lag, but a successful response does not prove that polls are continuing.
 
 ## 2. Check metrics
@@ -23,6 +36,8 @@ Scrape `GET /metrics` and compare samples across scrapes. The relevant metrics a
 | `tricklepay_indexer_poll_last_success_timestamp_seconds` | Unix time of the last successful poll. If it remains unchanged while time advances, the poller is not completing ticks. A zero means no poll has completed successfully yet. |
 | `tricklepay_indexer_poll_success_total` | Successful poll count. It should increase as ticks complete. |
 | `tricklepay_indexer_poll_errors_total` | Unhandled poll failures. An increasing value means poll iterations are failing. |
+| `tricklepay_indexer_consecutive_failures` | Current consecutive failure streak. Zero during normal operation; rises with each failure and resets on success. Use with `tricklepay_indexer_next_poll_timestamp_seconds` to understand the active backoff. |
+| `tricklepay_indexer_next_poll_timestamp_seconds` | Unix timestamp of the next scheduled retry. Non-zero only while the poller is in backoff. Alert if this is far in the future combined with a high failure count. |
 | `tricklepay_indexer_lag_ledgers` | Ledger gap at the last processed page. Interpret alongside the successful-poll timestamp; a large value can be normal during backfill or a quiet period. |
 | `tricklepay_rpc_errors_total{operation="getContractEvents"}` | Failures fetching event pages from Soroban RPC. An increasing value points to RPC connectivity or availability. |
 | `tricklepay_indexer_pages_fetched_total` | Successfully fetched event pages. It should increase when the RPC returns pages. |
@@ -32,6 +47,13 @@ For example, alert on a successful poll timestamp older than five minutes (adjus
 
 ```promql
 time() - tricklepay_indexer_poll_last_success_timestamp_seconds > 300
+```
+
+Alert on an active backoff that is more than 30 seconds away from its next retry:
+
+```promql
+tricklepay_indexer_next_poll_timestamp_seconds > 0
+  and (tricklepay_indexer_next_poll_timestamp_seconds - time()) > 30
 ```
 
 Metrics are in-memory and reset when the process restarts. Compare their timestamps and counters only across scrapes from the same process instance.

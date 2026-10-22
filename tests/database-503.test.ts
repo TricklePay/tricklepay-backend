@@ -21,7 +21,7 @@ describe("Database 503 error handling", () => {
 
     expect(response.statusCode).toBe(503);
     expect(response.headers["retry-after"]).toBe("30");
-    
+
     const body = JSON.parse(response.body);
     expect(body.code).toBe("SERVICE_UNAVAILABLE");
     expect(body.error).toBe("internal server error");

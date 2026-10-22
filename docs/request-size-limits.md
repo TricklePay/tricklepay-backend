@@ -20,6 +20,7 @@ Both limits are configurable via environment variables and have sensible default
 | `QUERY_STRING_LIMIT` | `2048` (2 KB) | Maximum URL query string length in bytes |
 | `RATE_LIMIT_MAX` | `100` | Maximum requests per client IP per rate-limit window |
 | `RATE_LIMIT_WINDOW_MS` | `60000` (1 minute) | Duration of the fixed request rate-limit window in milliseconds |
+| `RATE_LIMIT_ALLOWLIST` | _(empty)_ | Comma-separated IPs or IPv4 CIDR blocks that bypass the rate limiter |
 | `COMPRESSION_THRESHOLD_BYTES` | `1024` (1 KB) | Minimum response size in bytes before it is compressed for clients that accept `gzip` or `br` |
 
 ### Setting Custom Limits
@@ -37,6 +38,8 @@ QUERY_STRING_LIMIT=4096
 RATE_LIMIT_MAX=100
 RATE_LIMIT_WINDOW_MS=60000
 
+# Exempt monitoring and SSR servers from rate limiting
+RATE_LIMIT_ALLOWLIST=10.0.0.5,10.0.1.0/24
 # Compress responses of 1KB or larger
 COMPRESSION_THRESHOLD_BYTES=1024
 ```
@@ -114,6 +117,16 @@ Only the query string itself is measured — the characters after the `?` in the
 Each client IP is allowed `RATE_LIMIT_MAX` requests during a fixed window of `RATE_LIMIT_WINDOW_MS`. The default is 100 requests per minute. When the limit is exceeded, the server returns HTTP 429 with a `Retry-After` header containing the remaining window duration in seconds, rounded up to the next whole second.
 
 The in-memory limiter is local to one server process, so clients behind a load balancer may receive a separate allowance from each instance. Fastify uses the direct peer address unless the proxy is listed in `TRUSTED_PROXIES`; only configure trusted proxies when they overwrite forwarded client-IP headers.
+
+### Rate Limit Allowlist
+
+Monitoring systems, server-side rendering hosts, and load testers often call the API at a high rate from known addresses. Set `RATE_LIMIT_ALLOWLIST` to a comma-separated list of IP addresses or IPv4 CIDR blocks to exempt those callers from counting and limiting entirely:
+
+```bash
+RATE_LIMIT_ALLOWLIST=10.0.0.5,10.0.1.0/24,127.0.0.1
+```
+
+Allowlisted addresses are validated at startup with the same rules as `TRUSTED_PROXIES` (plain IPv4/IPv6 addresses and IPv4 CIDR blocks). An invalid entry throws at config-load time so a typo never silently broadens or disables exemptions. The effective allowlist is shown in `print-config` output and the startup log line.
 
 **Example:**
 ```

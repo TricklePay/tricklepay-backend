@@ -35,6 +35,15 @@ Process the default batch of 20 failed events:
 npm run replay-failed-events
 ```
 
+### Machine-Readable Output
+
+Pass `--json` to receive a single JSON line on stdout instead of pino log output. Useful for cron jobs and CI scripts:
+
+```bash
+npm run replay-failed-events -- --json
+# => {"attempted":5,"succeeded":5,"failed":0,"dryRun":false}
+```
+
 ### Dry-Run Mode
 
 Simulate event refetching and application without modifying the database or removing failure records:
@@ -62,6 +71,38 @@ npm run replay-failed-events -- --dry-run --limit=50
 ```bash
 npx tsx src/indexer/replay.ts --dry-run --limit=20
 ```
+
+### Replay a Single Event by ID
+
+When you have diagnosed and fixed the cause for one specific failed event, you can replay just that event by its on-chain `eventId`:
+
+```bash
+npm run replay-failed-events -- --event-id=0241383411213664256-0000000001
+```
+
+With dry-run to preview the outcome first:
+
+```bash
+npm run replay-failed-events -- --event-id=0241383411213664256-0000000001 --dry-run
+```
+
+With machine-readable output:
+
+```bash
+npm run replay-failed-events -- --event-id=0241383411213664256-0000000001 --json
+```
+
+If the id is not present in the `FailedEvent` table, the command exits with a non-zero exit code and prints a clear error message:
+
+```
+event 0241383411213664256-0000000001 not found in failed events table
+```
+
+The `outcome` field in the JSON output will be one of:
+- `succeeded` — the event was found and applied (or would be in dry-run mode).
+- `not-found-in-db` — no row with that id exists; exits non-zero.
+- `not-found-on-chain` — the row exists but the event could not be fetched from the RPC; exits non-zero.
+- `failed` — the event was found on chain but could not be applied; exits non-zero.
 
 ## What Happens to the Failure Record Afterward
 

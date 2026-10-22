@@ -37,6 +37,7 @@ export function redactErrorMessage(message: string): string {
 export type ApiErrorCode =
   | "VALIDATION_ERROR"
   | "NOT_FOUND"
+  | "RATE_LIMITED"
   | "REQUEST_ERROR"
   | "INTERNAL_SERVER_ERROR";
 
@@ -47,6 +48,7 @@ export type ApiErrorCode =
 export function errorCodeForStatus(statusCode: number): ApiErrorCode {
   if (statusCode === 400) return "VALIDATION_ERROR";
   if (statusCode === 404) return "NOT_FOUND";
+  if (statusCode === 429) return "RATE_LIMITED";
   if (statusCode >= 500) return "INTERNAL_SERVER_ERROR";
   return "REQUEST_ERROR";
 }

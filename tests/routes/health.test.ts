@@ -139,7 +139,7 @@ describe("readiness reflects indexer progress (#391)", () => {
     expect(response.json()).toEqual({
       status: "ready",
       database: "up",
-      indexer: { lagLedgers: 50 },
+      indexer: { lagLedgers: 50, stalenessMs: expect.any(Number) },
     });
   });
 
@@ -160,7 +160,7 @@ describe("readiness reflects indexer progress (#391)", () => {
     expect(response.json()).toEqual({
       status: "ready",
       database: "up",
-      indexer: { lagLedgers: 0 },
+      indexer: { lagLedgers: 0, stalenessMs: expect.any(Number) },
     });
   });
 
@@ -244,5 +244,78 @@ describe("not-ready /ready responses advertise Retry-After", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.headers["retry-after"]).toBeUndefined();
+  });
+});
+
+describe("readiness staleness check (#READY_MAX_STALENESS_MS)", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    db.checkHealth.mockResolvedValue({ status: "up" });
+  });
+
+  it("returns 200 with stalenessMs when staleness check is disabled (default)", async () => {
+    const updatedAt = new Date(Date.now() - 999_999);
+    indexerState.getIndexerPosition.mockResolvedValue({
+      lastLedger: 100,
+      chainLedger: 100,
+      cursor: "cursor",
+      updatedAt,
+    });
+    indexerState.hasIndexerProgress.mockReturnValue(true);
+
+    const app = await buildServer();
+    const response = await app.inject({ method: "GET", url: "/ready" });
+    await app.close();
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.status).toBe("ready");
+    expect(typeof body.indexer.stalenessMs).toBe("number");
+    expect(body.indexer.stalenessMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("returns 200 when position is within the staleness threshold", async () => {
+    const updatedAt = new Date(Date.now() - 1_000); // 1 second ago
+    indexerState.getIndexerPosition.mockResolvedValue({
+      lastLedger: 100,
+      chainLedger: 100,
+      cursor: "cursor",
+      updatedAt,
+    });
+    indexerState.hasIndexerProgress.mockReturnValue(true);
+
+    const app = await buildServer({ readyMaxStalenessMs: 60_000 });
+    const response = await app.inject({ method: "GET", url: "/ready" });
+    await app.close();
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().status).toBe("ready");
+    expect(response.headers["retry-after"]).toBeUndefined();
+  });
+
+  it("returns 503 when position is older than the staleness threshold", async () => {
+    const updatedAt = new Date(Date.now() - 120_000); // 2 minutes ago
+    indexerState.getIndexerPosition.mockResolvedValue({
+      lastLedger: 100,
+      chainLedger: 100,
+      cursor: "cursor",
+      updatedAt,
+    });
+    indexerState.hasIndexerProgress.mockReturnValue(true);
+
+    const app = await buildServer({
+      readyMaxStalenessMs: 60_000,
+      readinessRetryAfterSeconds: 30,
+    });
+    const response = await app.inject({ method: "GET", url: "/ready" });
+    await app.close();
+
+    expect(response.statusCode).toBe(503);
+    expect(response.headers["retry-after"]).toBe("30");
+    expect(response.json()).toEqual({
+      status: "not_ready",
+      database: "up",
+      error: "indexer position is stale",
+    });
   });
 });

@@ -102,6 +102,7 @@ Records contract events that the indexer failed to process or apply to PostgreSQ
   * `kind` (`String`): Event type (`Created`, `Withdrawn`, `Cancelled`, or `"unknown"`).
   * `streamId` (`String?`): Associated stream identifier if decodable.
   * `ledger` (`Int`): Ledger height of the failing event.
+  * `txHash` (`String?`): Transaction hash when available; null for older rows or unavailable hashes.
   * `error` (`String`): Error description / exception message from the last failed attempt.
   * `failureCount` (`Int`): Number of times processing this event has been attempted and failed.
   * `firstFailedAt` (`DateTime`): Timestamp when the first failure occurred.
@@ -111,12 +112,12 @@ Records contract events that the indexer failed to process or apply to PostgreSQ
 
 #### What gets recorded on a failed apply
 
-A failed event is written as a single `FailedEvent` row as soon as the poller catches an exception while decoding or applying the event. The row includes the event identifier, ledger, decoded kind, stream id when it could be recovered, and the most recent failure message. If the same event fails again, the row is updated in place to increment `failureCount` and refresh `error`, rather than creating a duplicate record. When the event later applies successfully, the replay flow clears the row.
+A failed event is written as a single `FailedEvent` row as soon as the poller catches an exception while decoding or applying the event. The row includes the event identifier, ledger, transaction hash when available, decoded kind, stream id when it could be recovered, and the most recent failure message. If the same event fails again, the row is updated in place to increment `failureCount`, refresh `error`, and save any available transaction hash, rather than creating a duplicate record. A retry without a hash preserves the stored hash. When the event later applies successfully, the replay flow clears the row.
 
 #### How to inspect failed events
 
 ```sql
-SELECT "eventId", "kind", "streamId", "ledger", "failureCount", "error"
+SELECT "eventId", "kind", "streamId", "ledger", "txHash", "failureCount", "error"
 FROM "FailedEvent"
 ORDER BY "ledger" ASC, "eventId" ASC
 LIMIT 20;

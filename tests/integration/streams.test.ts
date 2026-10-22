@@ -6,6 +6,8 @@ import {
   listStreams,
   orderByFromFilter,
 } from "../../src/repositories/streams.js";
+import { streamRoutes } from "../../src/routes/streams.js";
+import { buildServer } from "../../src/server.js";
 
 // Opt-in integration suite: exercises Prisma migrations, decimal fields, and
 // core repository queries against a real Postgres instance.  Skipped when
@@ -66,6 +68,37 @@ describe("stream repository integration", () => {
     expect(found!.recipient).toBe(streamData.recipient);
     expect(found!.token).toBe(streamData.token);
     expect(found!.cancelled).toBe(false);
+  });
+
+  it("GET /streams ids returns matching views and omits unknown ids", async () => {
+    if (!enabled) return;
+    const ids = [800_001n, 800_002n];
+    const app = await buildServer();
+    try {
+      await prisma.stream.createMany({
+        data: ids.map((streamId) => ({ ...streamData, streamId })),
+      });
+      await app.register(streamRoutes);
+      const response = await app.inject({
+        method: "GET",
+        url: `/streams?ids=${ids.join(",")},800003&includeTotal=true`,
+      });
+      expect(response.statusCode).toBe(200);
+      const body = response.json();
+      expect(body.total).toBe(2);
+      expect(body.streams.map((stream: { id: string }) => stream.id))
+        .toEqual(["800002", "800001"]);
+      const single = await app.inject({ method: "GET", url: "/streams/800002" });
+      expect(single.statusCode).toBe(200);
+      expect(body.streams[0]).toEqual(single.json());
+
+      const unknown = await app.inject({ method: "GET", url: "/streams?ids=800003" });
+      expect(unknown.statusCode).toBe(200);
+      expect(unknown.json().streams).toEqual([]);
+    } finally {
+      await app.close();
+      await prisma.stream.deleteMany({ where: { streamId: { in: ids } } });
+    }
   });
 
   it("stores decimal fields with full precision", async () => {

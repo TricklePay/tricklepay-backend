@@ -7,6 +7,8 @@ import { countFailedEvents } from "../repositories/failed-events.js";
 
 import { getIndexerPosition } from "../repositories/indexer-state.js";
 
+import type { Poller } from "../indexer/poller.js";
+
 import { INDEXER_STATUS_SCHEMA_ID, indexerStatusSchema } from "../schema.js";
 
 // The default TTL for the server-side status cache. Kept short (2 s) so
@@ -23,6 +25,8 @@ type StatusPayload = {
     lastLedger: number;
     cursor: string | null;
     updatedAt: string | null;
+    consecutiveFailures: number;
+    nextPollAt: string | null;
   };
   chain: { latestLedger: number };
   lagLedgers: number | null;
@@ -52,6 +56,8 @@ export type StatusRoutesOptions = {
   cacheTtlMs?: number;
   /** Configured ledger from which indexing begins when there is no saved cursor. */
   startLedger?: number;
+  /** Live poller instance so /status can report in-process failure counts and backoff state. */
+  poller?: Poller;
 };
 
 // Reports how far the indexer has progressed, so an operator or monitor can see
@@ -73,6 +79,7 @@ export async function statusRoutes(
 ): Promise<void> {
   const ttlMs = opts.cacheTtlMs ?? STATUS_CACHE_TTL_MS;
   const startLedger = opts.startLedger ?? 0;
+  const poller = opts.poller;
   const cache = makeStatusCache(ttlMs);
 
   if (!app.getSchema(INDEXER_STATUS_SCHEMA_ID)) app.addSchema(indexerStatusSchema);
@@ -89,7 +96,7 @@ export async function statusRoutes(
           200: { $ref: INDEXER_STATUS_SCHEMA_ID },
         },
       },
-},
+    },
     async (_request, reply) => {
       const now = Date.now();
       const hit = cache.get(now);
@@ -101,6 +108,9 @@ export async function statusRoutes(
       const position = await getIndexerPosition();
       const failedEventCount = await countFailedEvents();
 
+      const consecutiveFailures = poller?.getConsecutiveFailures() ?? 0;
+      const nextPollAtSeconds = poller?.getNextPollAt() ?? 0;
+
       const payload: StatusPayload = {
         indexer: {
           initialized: position !== null,
@@ -108,6 +118,9 @@ export async function statusRoutes(
           lastLedger: position?.lastLedger ?? 0,
           cursor: position?.cursor ?? null,
           updatedAt: position?.updatedAt.toISOString() ?? null,
+          consecutiveFailures,
+          nextPollAt:
+            nextPollAtSeconds > 0 ? new Date(nextPollAtSeconds * 1000).toISOString() : null,
         },
         chain: {
           latestLedger: position?.chainLedger ?? 0,

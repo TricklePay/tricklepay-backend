@@ -50,6 +50,25 @@ function withEnv(overrides: Record<string, string | undefined>, fn: () => void) 
   }
 }
 
+describe("loadConfig network passphrases", () => {
+  it.each([
+    ["testnet", "Test SDF Network ; September 2015"],
+    ["mainnet", "Public Global Stellar Network ; September 2015"],
+  ])("uses the exact Stellar passphrase for %s", (network, passphrase) => {
+    withEnv({ NETWORK: network, SOROBAN_RPC_URL: undefined }, () => {
+      expect(loadConfig().networkPassphrase).toBe(passphrase);
+    });
+  });
+
+  it("rejects an unknown network with the existing error", () => {
+    withEnv({ NETWORK: "unknown", SOROBAN_RPC_URL: undefined }, () => {
+      expect(() => loadConfig()).toThrow(
+        'Unknown NETWORK "unknown"; expected "testnet" or "mainnet"',
+      );
+    });
+  });
+});
+
 describe("isLocalUrl", () => {
   it("accepts localhost", () => {
     expect(isLocalUrl("http://localhost:8000")).toBe(true);

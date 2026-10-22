@@ -29,7 +29,7 @@ describe("errorCodeForStatus (#73)", () => {
   });
 
   it("falls back to REQUEST_ERROR for other client errors", () => {
-    expect(errorCodeForStatus(429)).toBe("REQUEST_ERROR");
+    expect(errorCodeForStatus(429)).toBe("RATE_LIMITED");
   });
 });
 
@@ -47,7 +47,7 @@ describe("request rate limiting (#381)", () => {
       const limited = await app.inject({ method: "GET", url: "/rate-limited" });
       expect(limited.statusCode).toBe(429);
       expect(limited.headers["retry-after"]).toBe("3");
-      expect(limited.json()).toMatchObject({ code: "REQUEST_ERROR", error: "rate limit exceeded" });
+      expect(limited.json()).toMatchObject({ code: "RATE_LIMITED", error: "rate limit exceeded" });
 
       now.mockReturnValue(14_100);
       const nearlyExpired = await app.inject({ method: "GET", url: "/rate-limited" });
@@ -61,6 +61,20 @@ describe("request rate limiting (#381)", () => {
       now.mockRestore();
     }
   });
+  it("evicts the oldest tracked client when the named limit is reached", async () => {
+    const app = await buildServer({ rateLimitMax: 1, maxTrackedRateLimitClients: 2 });
+    app.get("/rate-limited-eviction", async () => ({ status: "ok" }));
+    try {
+      const a = await app.inject({ method: "GET", url: "/rate-limited-eviction", remoteAddress: "10.0.0.1" });
+      const b = await app.inject({ method: "GET", url: "/rate-limited-eviction", remoteAddress: "10.0.0.2" });
+      expect(a.statusCode).toBe(200); expect(b.statusCode).toBe(200);
+      const c = await app.inject({ method: "GET", url: "/rate-limited-eviction", remoteAddress: "10.0.0.3" });
+      expect(c.statusCode).toBe(200);
+      const aAgain = await app.inject({ method: "GET", url: "/rate-limited-eviction", remoteAddress: "10.0.0.1" });
+      expect(aAgain.statusCode).toBe(200);
+    } finally { await app.close(); }
+  });
+
 });
 
 describe("unmatched routes (404)", () => {

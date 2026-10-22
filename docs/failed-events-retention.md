@@ -28,6 +28,16 @@ npm run prune-failed-events -- --older-than=30d
 
 ## Manual Cleanup Instructions
 
+Inspect the failures before deleting them. The nullable `txHash` identifies the
+transaction to investigate; older records or events without a hash contain null.
+
+```sql
+SELECT "eventId", "kind", "streamId", "ledger", "txHash", "error"
+FROM "FailedEvent"
+WHERE "firstFailedAt" < NOW() - INTERVAL '30 days'
+ORDER BY "ledger" ASC, "eventId" ASC;
+```
+
 When cleaning up failed events manually via SQL, ensure you only delete records from the `FailedEvent` table and do not interfere with active stream state in the `Stream` table.
 
 You can safely run the following cleanup query via your PostgreSQL client to delete failed events older than 30 days:

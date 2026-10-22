@@ -68,6 +68,8 @@ describe("GET /status", () => {
     expect(await getStatus(55999500)).toEqual({
       indexer: {
         initialized: true,
+        consecutiveFailures: 0,
+        nextPollAt: null,
         startLedger: 55999500,
         lastLedger: 56290013,
         cursor: CURSOR,
@@ -118,6 +120,8 @@ describe("GET /status", () => {
     expect(await getStatus()).toEqual({
       indexer: {
         initialized: false,
+        consecutiveFailures: 0,
+        nextPollAt: null,
         startLedger: 0,
         lastLedger: 0,
         cursor: null,

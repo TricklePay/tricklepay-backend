@@ -55,6 +55,7 @@ describe("failed events repository", () => {
       kind: "withdrawn",
       streamId: 99n,
       ledger: 321,
+      txHash: "0xabc",
     } as any;
 
     await recordFailedEvent(
@@ -66,8 +67,10 @@ describe("failed events repository", () => {
         where: { eventId: event.id },
         create: expect.objectContaining({
           eventId: event.id,
+          txHash: "0xabc",
           error: "insufficient balance",
         }),
+        update: expect.objectContaining({ txHash: "0xabc" }),
       }),
     );
   });
@@ -90,10 +93,12 @@ describe("failed events repository", () => {
         kind: "created",
         streamId: "7",
         ledger: 123,
+        txHash: null,
         error: "stream missing",
         failureCount: 1,
       },
       update: {
+        txHash: undefined,
         error: "stream missing",
         failureCount: { increment: 1 },
       },
@@ -125,6 +130,7 @@ describe("failed events repository", () => {
       kind: "withdrawn",
       streamId: "99",
       ledger: 321,
+      txHash: "0xabc",
       error: "insufficient balance",
     });
   });

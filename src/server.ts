@@ -17,7 +17,11 @@ import { buildSwaggerConfig, swaggerUiConfig } from "./api-spec.js";
 
 import {
   DEFAULT_RATE_LIMIT_MAX,
+  DEFAULT_CONNECTION_TIMEOUT_MS,
+  DEFAULT_KEEP_ALIVE_TIMEOUT_MS,
+  DEFAULT_REQUEST_TIMEOUT_MS,
   DEFAULT_RATE_LIMIT_WINDOW_MS,
+  DEFAULT_READY_MAX_STALENESS_MS,
   DEFAULT_READINESS_RETRY_AFTER_SECONDS,
   DEFAULT_COMPRESSION_THRESHOLD_BYTES,
   defaultPublicBaseUrl,
@@ -30,11 +34,13 @@ import { registerErrorHandlers } from "./error-handlers.js";
 
 import { registerHealthRoutes } from "./health-routes.js";
 
+import { registerIndexerLagHook } from "./indexer-lag-hook.js";
+
 import { logger } from "./logger.js";
 
 import { registerMetricsPlugin } from "./metrics-plugin.js";
 
-import { isTrustedProxyAddress } from "./proxy.js";
+import { isTrustedProxyAddress, isAllowlistedAddress } from "./proxy.js";
 
 import { parseQueryString } from "./query-string-parser.js";
 
@@ -63,6 +69,7 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
   const trustedProxies = config?.trustedProxies ?? [];
   const rateLimitMax = config?.rateLimitMax ?? DEFAULT_RATE_LIMIT_MAX;
   const rateLimitWindowMs = config?.rateLimitWindowMs ?? DEFAULT_RATE_LIMIT_WINDOW_MS;
+  const rateLimitAllowlist = config?.rateLimitAllowlist ?? [];
   const readinessRetryAfterSeconds =
     config?.readinessRetryAfterSeconds ?? DEFAULT_READINESS_RETRY_AFTER_SECONDS;
   const publicBaseUrl =
@@ -75,6 +82,9 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
     // satisfies that interface at runtime.
     loggerInstance: logger as FastifyBaseLogger,
     bodyLimit: config?.bodyLimit,
+    connectionTimeout: config?.connectionTimeoutMs ?? DEFAULT_CONNECTION_TIMEOUT_MS,
+    keepAliveTimeout: config?.keepAliveTimeoutMs ?? DEFAULT_KEEP_ALIVE_TIMEOUT_MS,
+    requestTimeout: config?.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
     // Forwarded headers (X-Forwarded-For, X-Forwarded-Proto) are honored only
     // when the direct connection peer is an explicitly trusted proxy (#75).
     // Without configuration the socket address is used as-is, so a direct
@@ -132,10 +142,16 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
   });
 
   const clientWindows = new Map<string, { requests: number; resetAt: number }>();
-  const maxTrackedClients = 10_000;
+  const maxTrackedClients = config?.maxTrackedRateLimitClients ?? 10_000;
 
   app.addHook("onRequest", async (request, reply) => {
     const now = Date.now();
+
+    // Allowlisted addresses are never counted or limited.
+    if (rateLimitAllowlist.length > 0 && isAllowlistedAddress(request.ip, rateLimitAllowlist)) {
+      return;
+    }
+
     let window = clientWindows.get(request.ip);
 
     if (!window || window.resetAt <= now) {
@@ -174,6 +190,9 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
   // Echo the request id header on every response.
   registerRequestIdHook(app);
 
+  // Add X-Indexer-Lag-Ledgers header to read responses.
+  registerIndexerLagHook(app);
+
   // Record every response against the Prometheus counters and histograms.
   await registerMetricsPlugin(app);
 
@@ -181,14 +200,24 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
   // every error response.
   registerErrorHandlers(app);
 
+  const configuredCorsOrigin = process.env.CORS_ORIGIN?.trim();
+  const corsOrigin =
+    configuredCorsOrigin === undefined
+      ? true
+      : configuredCorsOrigin === ""
+        ? false
+        : configuredCorsOrigin;
+
   // The web client fetches this API from the browser, so it is always a
   // cross-origin caller once the two run on separate ports or hosts. The data
   // served here is public and read-only, so any origin is reflected by
-  // default; set CORS_ORIGIN to pin deployments to a known frontend. Not
-  // awaited because Fastify defers plugin loading until ready/listen, which
-  // keeps this builder synchronous for its callers.
+  // default; set CORS_ORIGIN to pin deployments to a known frontend. A blank
+  // value disables browser access altogether, rather than passing an empty
+  // origin string through to the CORS plugin. Not awaited because Fastify
+  // defers plugin loading until ready/listen, which keeps this builder
+  // synchronous for its callers.
   void app.register(cors, {
-    origin: process.env.CORS_ORIGIN ?? true,
+    origin: corsOrigin,
   });
 
   // Compress responses at or above the configured threshold when the client
@@ -236,7 +265,11 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
   }
 
   // Liveness and readiness probes.
-  registerHealthRoutes(app, readinessRetryAfterSeconds);
+  registerHealthRoutes(
+    app,
+    readinessRetryAfterSeconds,
+    config?.readyMaxStalenessMs ?? DEFAULT_READY_MAX_STALENESS_MS,
+  );
 
   return app;
 }

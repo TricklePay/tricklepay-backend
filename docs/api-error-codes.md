@@ -86,7 +86,9 @@ The backend defines and returns the following error codes based on the HTTP stat
   - **Returned When:** The request is invalid or malformed (HTTP status `400`). This could be due to missing required fields, invalid parameters, or malformed request bodies.
 - `NOT_FOUND`
   - **Returned When:** The requested resource or route cannot be found (HTTP status `404`).
+- `RATE_LIMITED`
+  - **Returned When:** The client has exceeded the configured request rate limit (HTTP status `429`). The response includes a `Retry-After` header with the number of seconds until the window resets. Clients should back off and retry after that interval rather than branching on the HTTP status code alone.
 - `REQUEST_ERROR`
-  - **Returned When:** The request fails with any other 4xx client error (e.g., HTTP statuses `401`, `403`, `409`, etc.) that is not explicitly a `VALIDATION_ERROR` or `NOT_FOUND`.
+  - **Returned When:** The request fails with any other 4xx client error (e.g., HTTP statuses `401`, `403`, `409`, etc.) that is not explicitly a `VALIDATION_ERROR`, `NOT_FOUND`, or `RATE_LIMITED`.
 - `INTERNAL_SERVER_ERROR`
   - **Returned When:** An unexpected server-side error occurs (HTTP status `500` and above). The original error message is logged internally with the request ID, but the client receives a safe, redacted message.
