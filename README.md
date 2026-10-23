@@ -28,6 +28,7 @@ For guides and technical documentation, see the [Documentation Index](docs/READM
 - [Running locally](#running-locally)
 - [Testing](#testing)
 - [Configuration](#configuration)
+  - [CORS origin](#cors-origin)
 - [Deployment](#deployment)
 - [Contributing](#contributing)
 - [Project structure](#project-structure)
@@ -1015,7 +1016,7 @@ current template — copy it and fill in the required values.
 | `SOROBAN_RPC_URL` | No | *network dependent* | Soroban RPC endpoint. Defaults to the public endpoint for the selected network. Plain `http://` is only accepted for `localhost`, `127.0.0.0/8`, or `::1`/`[::1]`; any other host must use `https://` or startup fails — see [Plain HTTP is only allowed for local RPC hosts](docs/local-network.md#plain-http-is-only-allowed-for-local-rpc-hosts). |
 | `PORT` | No | `3000` | HTTP server listen port. |
 | `HOST` | No | `0.0.0.0` | HTTP server bind address. |
-| `CORS_ORIGIN` | No | - | Allowed browser origin for the web client. |
+| `CORS_ORIGIN` | No | - | Allowed browser origin for the web client. Unset reflects any request origin (development default). Set to a single `https://` origin to pin the API to one frontend. Empty string disables browser access entirely. Only one origin is supported — see [CORS origin](#cors-origin). |
 | `PUBLIC_BASE_URL` | No | `http://<HOST>:<PORT>` | Base URL advertised in the generated OpenAPI document's `servers` entry. Defaults to a URL derived from `HOST` and `PORT`. |
 | `LOG_LEVEL` | No | `info` | Log verbosity (`trace`, `debug`, `info`, `warn`, `error`, `fatal`, `silent`). |
 | `LOG_PRETTY` | No | - | Set to `true` for human-readable development logs; requires the `pino-pretty` dev dependency. Output stays JSON when unset. |
@@ -1133,6 +1134,35 @@ address. A direct client therefore cannot spoof the address recorded in logs
 and request metadata. Behind a load balancer or ingress that terminates
 connections, set this to that proxy's address so the original client address
 is preserved.
+
+### CORS origin
+
+`CORS_ORIGIN` controls the `Access-Control-Allow-Origin` header returned to browsers. The service uses `@fastify/cors` and interprets the value as follows:
+
+| `CORS_ORIGIN` value | Behaviour |
+|---------------------|-----------|
+| Unset (variable absent) | Reflects the request's `Origin` back — any origin is allowed. Safe for local development; not recommended for production because any website can call the API from a browser. |
+| Empty string (`""`) | Disables CORS entirely: no `Access-Control-Allow-Origin` header is set, so browsers block every cross-origin request. Use this when the API should not be callable from a browser at all. |
+| A URL string (e.g. `https://app.example.com`) | Only requests from that exact origin are allowed. All other origins receive no `Access-Control-Allow-Origin` header, which browsers treat as a refusal. |
+
+**Accepted format:** a single `https://` URL with no trailing slash, exactly as a browser sends in the `Origin` header. The match is case-sensitive and exact — `https://app.example.com` does not match `https://app.example.com/` (trailing slash) or `https://App.Example.Com` (different casing).
+
+**One origin only:** the setting does not accept a comma-separated list, a wildcard, or a regular expression. If you need to allow several origins, put a reverse proxy in front of the service and handle the CORS logic there.
+
+**What browsers can read:** when an origin is allowed, `@fastify/cors` sets `Access-Control-Allow-Origin` to the matched origin. No additional headers are explicitly exposed, so browsers can access only the [CORS-safelisted response headers](https://developer.mozilla.org/en-US/docs/Glossary/CORS-safelisted_response_header) (`Cache-Control`, `Content-Language`, `Content-Length`, `Content-Type`, `Expires`, `Last-Modified`, `Pragma`). Custom headers such as `ETag`, `x-request-id`, and `X-Indexer-Lag-Ledgers` are **not** exposed by default and cannot be read from browser JavaScript.
+
+**Preflight requests:** browsers send an `OPTIONS` preflight before cross-origin requests that use non-simple methods or headers. The plugin answers these with `204 No Content` and the appropriate `Access-Control-Allow-Methods` and `Access-Control-Allow-Headers` headers.
+
+```
+# Development — any origin (unset, leave this line absent or commented out)
+# CORS_ORIGIN=
+
+# Production — pin to the deployed frontend
+CORS_ORIGIN=https://app.example.com
+
+# No browser access allowed
+CORS_ORIGIN=
+```
 
 ### Logging
 
