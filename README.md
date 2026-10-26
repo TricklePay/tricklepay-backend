@@ -1062,9 +1062,17 @@ it can never collide with or be mistaken for the development database:
 docker compose --profile test up -d postgres-test
 DATABASE_URL=postgresql://tricklepay_test:tricklepay_test@localhost:5433/tricklepay_test \
   npx prisma migrate deploy
+docker compose exec postgres-test createdb -U tricklepay_test tricklepay_shadow
 DATABASE_URL=postgresql://tricklepay_test:tricklepay_test@localhost:5433/tricklepay_test \
+SHADOW_DATABASE_URL=postgresql://tricklepay_test:tricklepay_test@localhost:5433/tricklepay_shadow \
   npx vitest run --project integration
 ```
+
+The integration project also checks that every migration produces the current
+`prisma/schema.prisma` model. `SHADOW_DATABASE_URL` must name a separate,
+disposable Postgres database because Prisma resets it while applying the
+migration history; never point it at the integration or development database.
+If the check finds drift, the failure includes Prisma's generated SQL.
 
 Stop it independently of the development database with:
 
