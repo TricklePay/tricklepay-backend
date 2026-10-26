@@ -147,6 +147,13 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
   app.addHook("onRequest", async (request, reply) => {
     const now = Date.now();
 
+    // Liveness, readiness, and Prometheus scrape traffic must remain available
+    // when application traffic from the same peer exhausts its rate limit.
+    const pathname = request.raw.url?.split("?")[0];
+    if (pathname === "/health" || pathname === "/ready" || pathname === "/metrics") {
+      return;
+    }
+
     // Allowlisted addresses are never counted or limited.
     if (rateLimitAllowlist.length > 0 && isAllowlistedAddress(request.ip, rateLimitAllowlist)) {
       return;

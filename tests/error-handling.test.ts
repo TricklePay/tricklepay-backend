@@ -34,6 +34,27 @@ describe("errorCodeForStatus (#73)", () => {
 });
 
 describe("request rate limiting (#381)", () => {
+  it("does not rate limit /health after /streams exhausts the client limit", async () => {
+    const app = await buildServer({ rateLimitMax: 3, rateLimitWindowMs: 5000 });
+    app.get("/streams", async () => ({ streams: [] }));
+
+    try {
+      for (let request = 0; request < 3; request += 1) {
+        const response = await app.inject({ method: "GET", url: "/streams" });
+        expect(response.statusCode).toBe(200);
+      }
+
+      const limited = await app.inject({ method: "GET", url: "/streams" });
+      expect(limited.statusCode).toBe(429);
+
+      const health = await app.inject({ method: "GET", url: "/health" });
+      expect(health.statusCode).toBe(200);
+      expect(health.json()).toMatchObject({ status: "ok" });
+    } finally {
+      await app.close();
+    }
+  });
+
   it("returns Retry-After for the remaining fixed-window duration", async () => {
     const now = vi.spyOn(Date, "now").mockReturnValue(10_000);
     const app = await buildServer({ rateLimitMax: 1, rateLimitWindowMs: 5000 });

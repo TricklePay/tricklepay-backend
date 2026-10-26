@@ -340,25 +340,15 @@ export async function streamRoutes(
                 "Opaque cursor returned by a previous list response. Use this to fetch the next page " +
                 "with stable ordering under concurrent inserts. Takes precedence over offset when both are provided.",
             },
-            startAfter: {
+            minAmount: {
               type: "string",
-              description: "Filter streams starting after this Unix timestamp (seconds).",
-              examples: ["1735689600"],
+              description: "Filter streams with total amount greater than or equal to this value (non-negative integer string).",
+              examples: ["1000000"],
             },
-            startBefore: {
+            maxAmount: {
               type: "string",
-              description: "Filter streams starting before this Unix timestamp (seconds).",
-              examples: ["1735689600"],
-            },
-            endAfter: {
-              type: "string",
-              description: "Filter streams ending after this Unix timestamp (seconds).",
-              examples: ["1735689600"],
-            },
-            endBefore: {
-              type: "string",
-              description: "Filter streams ending before this Unix timestamp (seconds).",
-              examples: ["1735689600"],
+              description: "Filter streams with total amount less than or equal to this value (non-negative integer string).",
+              examples: ["10000000"],
             },
           },
           additionalProperties: false,
@@ -404,10 +394,8 @@ export async function streamRoutes(
         cancelled?: boolean;
         status?: "pending" | "streaming" | "completed" | "cancelled";
         cursor?: bigint;
-        startAfter?: bigint;
-        startBefore?: bigint;
-        endAfter?: bigint;
-        endBefore?: bigint;
+        minAmount?: bigint;
+        maxAmount?: bigint;
       } = {};
       if (query.ids !== undefined) {
         const parts = query.ids.split(",");
@@ -447,30 +435,18 @@ export async function streamRoutes(
 
       filter.cursor = cursor;
       
-      // Parse schedule range filters
-      const startAfter = parseUnixSeconds(query.startAfter);
-      if (query.startAfter !== undefined && startAfter === null) {
-        return sendError(reply, request, 400, "VALIDATION_ERROR", "invalid startAfter timestamp");
+      // Parse amount filters
+      const minAmount = parseAmount(query.minAmount);
+      if (query.minAmount !== undefined && minAmount === null) {
+        return sendError(reply, request, 400, "VALIDATION_ERROR", "invalid minAmount (must be non-negative integer)");
       }
-      filter.startAfter = startAfter ?? undefined;
+      filter.minAmount = minAmount ?? undefined;
       
-      const startBefore = parseUnixSeconds(query.startBefore);
-      if (query.startBefore !== undefined && startBefore === null) {
-        return sendError(reply, request, 400, "VALIDATION_ERROR", "invalid startBefore timestamp");
+      const maxAmount = parseAmount(query.maxAmount);
+      if (query.maxAmount !== undefined && maxAmount === null) {
+        return sendError(reply, request, 400, "VALIDATION_ERROR", "invalid maxAmount (must be non-negative integer)");
       }
-      filter.startBefore = startBefore ?? undefined;
-      
-      const endAfter = parseUnixSeconds(query.endAfter);
-      if (query.endAfter !== undefined && endAfter === null) {
-        return sendError(reply, request, 400, "VALIDATION_ERROR", "invalid endAfter timestamp");
-      }
-      filter.endAfter = endAfter ?? undefined;
-      
-      const endBefore = parseUnixSeconds(query.endBefore);
-      if (query.endBefore !== undefined && endBefore === null) {
-        return sendError(reply, request, 400, "VALIDATION_ERROR", "invalid endBefore timestamp");
-      }
-      filter.endBefore = endBefore ?? undefined;
+      filter.maxAmount = maxAmount ?? undefined;
 
       const includeTotal = parseIncludeTotal(query.includeTotal);
 

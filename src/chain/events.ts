@@ -8,7 +8,7 @@ import { toUnixSeconds } from "../lib/time.js";
 // `#[contractevent]` struct: the first topic is the event name, the remaining
 // topics are the indexed fields, and the value is a map of the rest.
 
-interface BaseEvent {
+export interface BaseEvent {
   // The RPC's globally unique event id, `TOID-index`. Both halves are zero
   // padded to a fixed width, so comparing ids as strings orders them the way
   // the chain emitted them. Recording the last id applied to a stream is what
@@ -70,6 +70,9 @@ const MAX_UINT128 = (1n << 128n) - 1n;
  * @throws {InvalidEventError} When `value` is negative or exceeds the uint128 maximum.
  */
 function validateAmount(value: bigint, field: string): void {
+  if (typeof value !== "bigint") {
+    throw new InvalidEventError(`amount field "${field}" is missing or invalid`);
+  }
   if (value < 0n || value > MAX_UINT128) {
     throw new InvalidEventError(`amount field "${field}" out of uint128 range: ${value}`);
   }
@@ -80,6 +83,29 @@ export class InvalidEventError extends Error {
     super(message);
     this.name = "InvalidEventError";
   }
+}
+
+function requireTopic(topics: unknown[], index: number, field: string): unknown {
+  if (!Array.isArray(topics) || topics[index] === undefined || topics[index] === null) {
+    throw new InvalidEventError(`topic field "${field}" is missing`);
+  }
+  return topics[index];
+}
+
+function requireBigInt(data: Record<string, unknown>, field: string): bigint {
+  const value = data[field];
+  if (typeof value !== "bigint") {
+    throw new InvalidEventError(`field "${field}" is missing or invalid`);
+  }
+  return value;
+}
+
+function requireString(data: Record<string, unknown>, field: string): string {
+  const value = data[field];
+  if (typeof value !== "string") {
+    throw new InvalidEventError(`field "${field}" is missing or invalid`);
+  }
+  return value;
 }
 
 /**
@@ -104,74 +130,115 @@ export class InvalidEventError extends Error {
  *   the valid uint128 range.
  */
 export function decodeEvent(event: rpc.Api.EventResponse): StreamEvent | null {
-  const topics = event.topic;
-  if (topics.length === 0) return null;
+  try {
+    const topics = event.topic;
+    if (!Array.isArray(topics) || topics.length === 0) return null;
 
-  // Validate metadata before decoding the payload.
-  if (!event.id || event.id.trim().length === 0) {
-    throw new InvalidEventError("event id is empty");
-  }
-  if (event.ledger <= 0) {
-    throw new InvalidEventError(`event ledger must be positive, got ${event.ledger}`);
-  }
-
-  const closedAt = toUnixSeconds(event.ledgerClosedAt);
-  if (typeof closedAt === "number" && Number.isNaN(closedAt)) {
-    throw new InvalidEventError(`event ledgerClosedAt is not parseable: ${event.ledgerClosedAt}`);
-  }
-
-  const name = scValToNative(topics[0]) as string;
-  const data = scValToNative(event.value) as Record<string, bigint | string>;
-  const base: BaseEvent = {
-    id: event.id,
-    ledger: event.ledger,
-    closedAt: closedAt as bigint,
-    txHash: event.txHash,
-  };
-
-  switch (name) {
-    case "created": {
-      const totalAmount = data.total_amount as bigint;
-      validateAmount(totalAmount, "total_amount");
-      return {
-        kind: "created",
-        ...base,
-        sender: scValToNative(topics[1]) as string,
-        recipient: scValToNative(topics[2]) as string,
-        streamId: data.id as bigint,
-        token: data.token as string,
-        totalAmount,
-        startTime: data.start_time as bigint,
-        endTime: data.end_time as bigint,
-        cliffTime: data.cliff_time as bigint,
-      };
+    // Validate metadata before decoding the payload.
+    if (!event.id || typeof event.id !== "string" || event.id.trim().length === 0) {
+      throw new InvalidEventError("event id is empty");
     }
-    case "withdrawn": {
-      const amount = data.amount as bigint;
-      validateAmount(amount, "amount");
-      return {
-        kind: "withdrawn",
-        ...base,
-        recipient: scValToNative(topics[1]) as string,
-        streamId: data.id as bigint,
-        amount,
-      };
+    if (typeof event.ledger !== "number" || event.ledger <= 0) {
+      throw new InvalidEventError(`event ledger must be positive, got ${event.ledger}`);
     }
-    case "cancelled": {
-      const recipientAmount = data.recipient_amount as bigint;
-      const senderRefund = data.sender_refund as bigint;
-      validateAmount(recipientAmount, "recipient_amount");
-      validateAmount(senderRefund, "sender_refund");
-      return {
-        kind: "cancelled",
-        ...base,
-        sender: scValToNative(topics[1]) as string,
-        streamId: data.id as bigint,
-        recipientAmount,
-        senderRefund,
-      };
+
+    const closedAt = toUnixSeconds(event.ledgerClosedAt);
+    if (typeof closedAt === "number" && Number.isNaN(closedAt)) {
+      throw new InvalidEventError(`event ledgerClosedAt is not parseable: ${event.ledgerClosedAt}`);
     }
-    default:
-      return null;
+
+    const name = scValToNative(topics[0]) as string;
+    const rawData = scValToNative(event.value);
+    if (rawData === null || rawData === undefined || typeof rawData !== "object" || Array.isArray(rawData)) {
+      throw new InvalidEventError("event data is missing or invalid");
+    }
+    const data = rawData as Record<string, unknown>;
+    const base: BaseEvent = {
+      id: event.id,
+      ledger: event.ledger,
+      closedAt: closedAt as bigint,
+      txHash: event.txHash,
+    };
+
+    switch (name) {
+      case "created": {
+        requireTopic(topics, 1, "sender");
+        requireTopic(topics, 2, "recipient");
+        const totalAmount = requireBigInt(data, "total_amount");
+        validateAmount(totalAmount, "total_amount");
+        const sender = scValToNative(topics[1]);
+        const recipient = scValToNative(topics[2]);
+        if (typeof sender !== "string") {
+          throw new InvalidEventError("topic field \"sender\" is missing or invalid");
+        }
+        if (typeof recipient !== "string") {
+          throw new InvalidEventError("topic field \"recipient\" is missing or invalid");
+        }
+        const streamId = requireBigInt(data, "id");
+        const token = requireString(data, "token");
+        const startTime = requireBigInt(data, "start_time");
+        const endTime = requireBigInt(data, "end_time");
+        const cliffTime = requireBigInt(data, "cliff_time");
+        return {
+          kind: "created",
+          ...base,
+          sender,
+          recipient,
+          streamId,
+          token,
+          totalAmount,
+          startTime,
+          endTime,
+          cliffTime,
+        };
+      }
+      case "withdrawn": {
+        requireTopic(topics, 1, "recipient");
+        const amount = requireBigInt(data, "amount");
+        validateAmount(amount, "amount");
+        const recipient = scValToNative(topics[1]);
+        if (typeof recipient !== "string") {
+          throw new InvalidEventError("topic field \"recipient\" is missing or invalid");
+        }
+        const streamId = requireBigInt(data, "id");
+        return {
+          kind: "withdrawn",
+          ...base,
+          recipient,
+          streamId,
+          amount,
+        };
+      }
+      case "cancelled": {
+        requireTopic(topics, 1, "sender");
+        const recipientAmount = requireBigInt(data, "recipient_amount");
+        const senderRefund = requireBigInt(data, "sender_refund");
+        validateAmount(recipientAmount, "recipient_amount");
+        validateAmount(senderRefund, "sender_refund");
+        const sender = scValToNative(topics[1]);
+        if (typeof sender !== "string") {
+          throw new InvalidEventError("topic field \"sender\" is missing or invalid");
+        }
+        const streamId = requireBigInt(data, "id");
+        return {
+          kind: "cancelled",
+          ...base,
+          sender,
+          streamId,
+          recipientAmount,
+          senderRefund,
+        };
+      }
+      default:
+        return null;
+    }
+  } catch (err) {
+    if (err instanceof InvalidEventError) {
+      throw err;
+    }
+    if (err instanceof Error) {
+      throw new InvalidEventError(err.message);
+    }
+    throw new InvalidEventError(String(err));
   }
 }

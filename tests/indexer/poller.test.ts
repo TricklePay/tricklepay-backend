@@ -658,5 +658,63 @@ describe("Poller", () => {
         expect.objectContaining({ lastLedger: configuredStart - 1 }),
       );
     });
+
+
+  it("records malformed events and continues through applyPage for empty data maps", async () => {
+    const base = captured.events[0];
+    const malformedEmptyMap = {
+      ...base,
+      id: "malformed-1",
+      topic: base.topic.slice(),
+      value: rpc.xdr.ScVal.scvMap([]).toXDR("base64"),
+    } as unknown as rpc.Api.EventResponse;
+
+    chain.getContractEvents.mockResolvedValue(pageOf([malformedEmptyMap, base]));
+    indexer.applyEvent.mockResolvedValue("applied");
+
+    await pollOnce({ startLedger: 56000000 });
+
+    expect(indexer.applyEvent).toHaveBeenCalled();
+    expect(failedEvents.recordFailedEvent).toHaveBeenCalled();
+    expect(indexerState.saveIndexerPosition).toHaveBeenCalled();
   });
+
+  it("records malformed events and continues through applyPage for void data", async () => {
+    const base = captured.events[0];
+    const malformedVoid = {
+      ...base,
+      id: "malformed-2",
+      topic: base.topic.slice(),
+      value: rpc.xdr.ScVal.scvVoid().toXDR("base64"),
+    } as unknown as rpc.Api.EventResponse;
+
+    chain.getContractEvents.mockResolvedValue(pageOf([malformedVoid, base]));
+    indexer.applyEvent.mockResolvedValue("applied");
+
+    await pollOnce({ startLedger: 56000000 });
+
+    expect(indexer.applyEvent).toHaveBeenCalled();
+    expect(failedEvents.recordFailedEvent).toHaveBeenCalled();
+    expect(indexerState.saveIndexerPosition).toHaveBeenCalled();
+  });
+
+  it("records malformed events and continues through applyPage for missing recipient topic", async () => {
+    const base = captured.events[0]; // created event
+    const malformedTopic = {
+      ...base,
+      id: "malformed-3",
+      topic: base.topic.slice(0, 1),
+      value: base.value,
+    } as unknown as rpc.Api.EventResponse;
+
+    chain.getContractEvents.mockResolvedValue(pageOf([malformedTopic, base]));
+    indexer.applyEvent.mockResolvedValue("applied");
+
+    await pollOnce({ startLedger: 56000000 });
+
+    expect(indexer.applyEvent).toHaveBeenCalled();
+    expect(failedEvents.recordFailedEvent).toHaveBeenCalled();
+    expect(indexerState.saveIndexerPosition).toHaveBeenCalled();
+  });
+
 });
