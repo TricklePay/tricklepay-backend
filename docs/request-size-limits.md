@@ -1,23 +1,23 @@
 # Request Limits
 
-The TricklePay backend enforces configurable limits on incoming HTTP requests to protect against resource exhaustion and malformed payloads. This document describes the limits, their defaults, and the behavior when they are exceeded.
+The TricklePay backend enforces configurable request-body, query-string, and per-IP rate limits to protect against resource exhaustion and malformed requests. Response compression is configured separately.
 
 ## Overview
 
-Three separate limits are enforced:
+Three request limits are enforced:
 
-1. **Body size limit**: Maximum size of the request body (POST/PUT payloads).
-2. **Query string limit**: Maximum length of the URL query string portion.
+1. **Body size limit**: Maximum request-body size in bytes.
+2. **Query string limit**: Maximum number of characters in the URL query string.
 3. **Request rate limit**: Maximum requests from one client IP in a fixed time window.
 
-Both limits are configurable via environment variables and have sensible defaults for typical API usage.
+All three request limits are configurable via environment variables and have sensible defaults for typical API usage.
 
 ## Configuration
 
 | Variable                      | Default            | Description                                                                                   |
 | ----------------------------- | ------------------ | --------------------------------------------------------------------------------------------- |
 | `BODY_LIMIT`                  | `1048576` (1 MB)   | Maximum request body size in bytes                                                            |
-| `QUERY_STRING_LIMIT`          | `2048` (2 KB)      | Maximum URL query string length in bytes                                                      |
+| `QUERY_STRING_LIMIT`          | `2048` characters  | Maximum URL query string length (JavaScript string characters, after URL encoding)            |
 | `RATE_LIMIT_MAX`              | `100`              | Maximum requests per client IP per rate-limit window                                          |
 | `RATE_LIMIT_WINDOW_MS`        | `60000` (1 minute) | Duration of the fixed request rate-limit window in milliseconds                               |
 | `RATE_LIMIT_ALLOWLIST`        | _(empty)_          | Comma-separated IPs or IPv4 CIDR blocks that bypass the rate limiter                          |
@@ -31,7 +31,7 @@ Add the variables to your `.env` file or export them in your environment:
 # Allow up to 2MB request bodies
 BODY_LIMIT=2097152
 
-# Allow up to 4KB query strings
+# Allow query strings up to 4,096 characters
 QUERY_STRING_LIMIT=4096
 
 # Allow 100 requests per client IP per minute
@@ -44,14 +44,14 @@ RATE_LIMIT_ALLOWLIST=10.0.0.5,10.0.1.0/24
 COMPRESSION_THRESHOLD_BYTES=1024
 ```
 
-**Note:** Values are in bytes. Common conversions:
+**Note:** `BODY_LIMIT` and `COMPRESSION_THRESHOLD_BYTES` are measured in bytes. Common conversions:
 
 - 1 KB = 1024 bytes
 - 1 MB = 1048576 bytes
 
 ## Body Size Limit
 
-The body limit applies to the entire request payload for POST, PUT, and PATCH requests. This includes JSON payloads, form data, and file uploads.
+The backend currently exposes GET routes only, so no route consumes a request body today. Fastify's configured body limit will apply when a body-bearing route is added; it is not currently an upload limit for an available endpoint.
 
 ### When the Limit is Exceeded
 
@@ -69,21 +69,11 @@ The body limit applies to the entire request payload for POST, PUT, and PATCH re
 
 **Behavior:** The request is rejected before the full body is read. The connection is closed and no application logic runs.
 
-### Example
-
-```bash
-# Generate a 2MB payload (exceeds default 1MB limit)
-dd if=/dev/zero bs=1M count=2 | curl -X POST \
-  -H "Content-Type: application/octet-stream" \
-  --data-binary @- \
-  http://localhost:3000/some-endpoint
-
-# Response: 413 Payload Too Large
-```
+When a route accepts a body, Fastify rejects payloads above `BODY_LIMIT` with `413 Payload Too Large` before that route's handler runs. There is no current route on which to demonstrate this behavior.
 
 ## Query String Limit
 
-The query string limit applies to the portion of the URL after the `?` character, including all parameters and their values.
+The query-string limit applies to the encoded portion of the URL after `?`, including parameter names, separators, and values. The server compares JavaScript string length (characters), not UTF-8 bytes. URL-encoded non-ASCII values are represented by ASCII percent-escape characters before this check.
 
 ### When the Limit is Exceeded
 
@@ -104,8 +94,9 @@ The query string limit applies to the portion of the URL after the `?` character
 ### Example
 
 ```bash
-# Generate a query string exceeding 2KB
-curl "http://localhost:3000/streams?$(python3 -c 'print("x" * 3000)')"
+# Build 100 valid uint64 stream IDs; the comma-separated value exceeds 2,048 characters.
+ids=$(python3 -c 'print(",".join(["18446744073709551615"] * 100))')
+curl --get --data-urlencode "ids=$ids" "http://localhost:3000/streams"
 
 # Response: 400 Bad Request
 # {"code":"VALIDATION_ERROR","error":"query string too long","requestId":"..."}
@@ -113,7 +104,7 @@ curl "http://localhost:3000/streams?$(python3 -c 'print("x" * 3000)')"
 
 ### What Counts Toward the Limit
 
-Only the query string itself is measured — the characters after the `?` in the URL. The path, hostname, and protocol are not included.
+Only the encoded query string itself is measured — the characters after `?`. The path, hostname, and protocol are not included.
 
 ## Request Rate Limit
 
@@ -138,7 +129,7 @@ Allowlisted addresses are validated at startup with the same rules as `TRUSTED_P
 ```
 http://localhost:3000/streams?limit=50&offset=100
                               ^^^^^^^^^^^^^^^^^^^^^^^^^
-                              This part is measured (24 bytes)
+                              This part is measured (24 characters)
 ```
 
 ## Response Compression
@@ -161,8 +152,8 @@ Compression cuts transfer size for clients on metered or slow links. The thresho
 
 If a legitimate request is rejected:
 
-1. **Check the actual size:** For bodies, check `Content-Length` header. For query strings, measure the encoded URL.
-2. **Reduce the payload:** Paginate large lists, omit unnecessary fields, or use POST instead of GET with query parameters.
+1. **Check the actual size:** For bodies, check `Content-Length`. For query strings, count the encoded characters after `?`.
+2. **Reduce the URL:** Paginate large lists, omit unnecessary filters, or split a long ID lookup across requests.
 3. **Increase the limit:** If the size is justified, raise `BODY_LIMIT` or `QUERY_STRING_LIMIT` in your configuration.
 
 ### Checking Request Size
@@ -182,17 +173,17 @@ echo "limit=50&offset=100" | wc -c
 ```
 
 **Inspecting rejected requests (server logs):**
-The request ID in the error response matches the `reqId` field in structured logs. Search for that ID to see the full request context:
+The request ID in the error response matches the `reqId` field in Pino's structured output on stdout. For the local Docker API service, search its process output by that ID:
 
 ```bash
-# Find the rejected request in logs
-grep "req-1234" logs/app.log
+# Find the rejected request in the API container's stdout
+docker compose logs --no-color api | grep 'req-1234'
 ```
 
 ## Implementation Details
 
 - **Body limit:** Enforced by Fastify's built-in `bodyLimit` option, which reads from `config.bodyLimit`.
-- **Query string limit:** Enforced by a custom `onRequest` hook in `src/server.ts` that measures the raw query string length before parsing.
+- **Query string limit:** Enforced by a custom `onRequest` hook in `src/server.ts` that measures the raw query string before route handling or database access.
 - **Compression threshold:** Enforced by `@fastify/compress`, registered in `src/server.ts` with `threshold` read from `config.compressionThresholdBytes`.
 
 See `src/config.ts` for the default values and `src/server.ts` for the rejection logic.
@@ -205,19 +196,11 @@ See `src/config.ts` for the default values and `src/server.ts` for the rejection
 
 **Solution:**
 
-- Use cursor-based pagination instead of offset-based pagination (cursors are typically shorter)
-- POST the filters in a request body instead of a query string
-- Increase `QUERY_STRING_LIMIT` if the size is legitimate
+- Use cursor-based pagination and smaller pages to keep requests short.
+- Split an `ids` lookup across multiple requests; `/streams` accepts at most 100 IDs per request.
+- Increase `QUERY_STRING_LIMIT` only when the longer URL is expected by your deployment.
 
-### Scenario 2: Bulk Upload
-
-**Problem:** A client tries to POST a large JSON array of records.
-
-**Solution:**
-
-- Split the batch into smaller chunks
-- Increase `BODY_LIMIT` if the server has sufficient memory
-- Use streaming uploads if supported
+The API currently has no body-bearing route, so clients cannot submit a bulk upload to this service. If a future route accepts request bodies, document that route's behavior before recommending `BODY_LIMIT` changes.
 
 ## Further Reading
 
