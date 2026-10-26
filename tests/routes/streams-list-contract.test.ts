@@ -74,7 +74,7 @@ describe("GET /streams ids filter", () => {
     expect(streamsRepo.countStreams).toHaveBeenCalledWith(expect.objectContaining({ ids: [1n, 3n, 999n] }));
   });
 
-  it.each(["", ",", "1,", ",1", "1,,2", "-1", "1.5", "abc", "1e3", "18446744073709551616"])(
+  it.each(["", ",", "1,", ",1", "1,,2", "-1", "1.5", "abc", "1e3", "0042", "00", " 42", "42 ", "1, 2", "18446744073709551616"])(
     "rejects invalid ids %j before querying",
     async (ids) => {
       const response = await get(`/streams?ids=${encodeURIComponent(ids)}`);

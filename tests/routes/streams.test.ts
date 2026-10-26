@@ -304,8 +304,21 @@ describe("GET /streams/:id/schedule (#493)", () => {
   });
 
   it("returns 400 for invalid stream id on schedule route", async () => {
-    const response = await getStreamSchedule("not-an-id");
-    expect(response.statusCode).toBe(400);
+    for (const invalidId of ["not-an-id", "0042", "00", "%2042", "42%20"]) {
+      const response = await getStreamSchedule(invalidId);
+      expect(response.statusCode).toBe(400);
+      expect(response.json().code).toBe("VALIDATION_ERROR");
+    }
+    expect(streamsRepo.getStream).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 for leading zeros and whitespace on GET /streams/:id", async () => {
+    for (const invalidId of ["0042", "00", "%2042", "42%20", "%20"]) {
+      const response = await getStreamById(invalidId);
+      expect(response.statusCode).toBe(400);
+      expect(response.json().code).toBe("VALIDATION_ERROR");
+    }
+    expect(streamsRepo.getStream).not.toHaveBeenCalled();
   });
 });
 

@@ -9,11 +9,10 @@ export const MAX_UINT64 = 18446744073709551615n;
 export function parseStreamId(raw: string | undefined): bigint | null {
   if (raw === undefined) return null;
 
-  const value = raw.trim();
-  if (value.length === 0 || !/^\d+$/.test(value)) return null;
+  if (!/^(0|[1-9][0-9]*)$/.test(raw)) return null;
 
   try {
-    const parsed = BigInt(value);
+    const parsed = BigInt(raw);
     if (parsed < 0n || parsed > MAX_UINT64) return null;
     return parsed;
   } catch {

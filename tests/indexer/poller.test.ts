@@ -1,4 +1,4 @@
-import { rpc } from "@stellar/stellar-sdk";
+import { rpc, xdr } from "@stellar/stellar-sdk";
 
 import pino from "pino";
 
@@ -658,7 +658,7 @@ describe("Poller", () => {
         expect.objectContaining({ lastLedger: configuredStart - 1 }),
       );
     });
-
+  });
 
   it("records malformed events and continues through applyPage for empty data maps", async () => {
     const base = captured.events[0];
@@ -666,7 +666,7 @@ describe("Poller", () => {
       ...base,
       id: "malformed-1",
       topic: base.topic.slice(),
-      value: rpc.xdr.ScVal.scvMap([]).toXDR("base64"),
+      value: xdr.ScVal.scvMap([]).toXDR("base64"),
     } as unknown as rpc.Api.EventResponse;
 
     chain.getContractEvents.mockResolvedValue(pageOf([malformedEmptyMap, base]));
@@ -685,7 +685,7 @@ describe("Poller", () => {
       ...base,
       id: "malformed-2",
       topic: base.topic.slice(),
-      value: rpc.xdr.ScVal.scvVoid().toXDR("base64"),
+      value: xdr.ScVal.scvVoid().toXDR("base64"),
     } as unknown as rpc.Api.EventResponse;
 
     chain.getContractEvents.mockResolvedValue(pageOf([malformedVoid, base]));

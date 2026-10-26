@@ -200,4 +200,14 @@ describe("GET /streams/:id/events", () => {
     expect(response.statusCode).toBe(400);
     expect(indexedEventsRepo.listIndexedEvents).not.toHaveBeenCalled();
   });
+
+  it("returns 400 for stream ids with leading zeros or whitespace", async () => {
+    for (const invalidId of ["0042", "00", "%2042", "42%20", "%20"]) {
+      const response = await getHistory(invalidId);
+      expect(response.statusCode).toBe(400);
+      expect(response.json().code).toBe("VALIDATION_ERROR");
+    }
+    expect(streamsRepo.getStream).not.toHaveBeenCalled();
+    expect(indexedEventsRepo.listIndexedEvents).not.toHaveBeenCalled();
+  });
 });

@@ -156,6 +156,20 @@ function parseCancelled(raw: string | undefined): boolean | undefined {
   return undefined;
 }
 
+// Parses an amount string (non-negative integer). Returns null if invalid, negative, decimal, or non-numeric.
+function parseAmount(raw: string | undefined): bigint | null {
+  if (raw === undefined) return null;
+  const value = raw.trim();
+  if (value.length === 0 || !/^\d+$/.test(value)) return null;
+  try {
+    const parsed = BigInt(value);
+    if (parsed < 0n) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 const SUMMARY_STATUSES = ["pending", "streaming", "completed", "cancelled"] as const;
 
 type SummaryEntry = { count: number; totalAmount: string; withdrawn: string };
@@ -213,6 +227,8 @@ interface ListStreamsQuery {
   cancelled?: string;
   status?: StreamStatus;
   cursor?: string;
+  minAmount?: string;
+  maxAmount?: string;
 }
 
 export async function streamRoutes(
