@@ -45,6 +45,7 @@ const EXPECTED_FIELDS = [
   "enableDocsUi",
   "host",
   "keepAliveTimeoutMs",
+  "lagWarnThresholdLedgers",
   "maxBackoffMs",
   "maxPagesPerTick",
   "maxTrackedRateLimitClients",

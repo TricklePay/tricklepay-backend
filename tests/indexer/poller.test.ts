@@ -1,4 +1,4 @@
-import { rpc } from "@stellar/stellar-sdk";
+import { rpc, xdr } from "@stellar/stellar-sdk";
 
 import pino from "pino";
 
@@ -658,7 +658,7 @@ describe("Poller", () => {
         expect.objectContaining({ lastLedger: configuredStart - 1 }),
       );
     });
-
+  });
 
   it("records malformed events and continues through applyPage for empty data maps", async () => {
     const base = captured.events[0];
@@ -666,7 +666,7 @@ describe("Poller", () => {
       ...base,
       id: "malformed-1",
       topic: base.topic.slice(),
-      value: rpc.xdr.ScVal.scvMap([]).toXDR("base64"),
+      value: xdr.ScVal.scvMap([]).toXDR("base64"),
     } as unknown as rpc.Api.EventResponse;
 
     chain.getContractEvents.mockResolvedValue(pageOf([malformedEmptyMap, base]));
@@ -685,7 +685,7 @@ describe("Poller", () => {
       ...base,
       id: "malformed-2",
       topic: base.topic.slice(),
-      value: rpc.xdr.ScVal.scvVoid().toXDR("base64"),
+      value: xdr.ScVal.scvVoid().toXDR("base64"),
     } as unknown as rpc.Api.EventResponse;
 
     chain.getContractEvents.mockResolvedValue(pageOf([malformedVoid, base]));
@@ -715,6 +715,145 @@ describe("Poller", () => {
     expect(indexer.applyEvent).toHaveBeenCalled();
     expect(failedEvents.recordFailedEvent).toHaveBeenCalled();
     expect(indexerState.saveIndexerPosition).toHaveBeenCalled();
+  });
+
+  describe("indexer lag warning (#383)", () => {
+    it("logs a warning when lag exceeds the configured threshold", async () => {
+      const childWarn = vi.fn();
+      const customLog = {
+        child: () => ({
+          info: vi.fn(),
+          warn: childWarn,
+          error: vi.fn(),
+        }),
+      } as unknown as pino.Logger;
+
+      const poller = new Poller(
+        server,
+        { ...config, lagWarnThresholdLedgers: 500 },
+        customLog,
+      );
+
+      chain.getContractEvents.mockResolvedValue({
+        events: [],
+        latestLedger: 10000,
+        cursor: CURSOR,
+      });
+
+      await poller.tick({ cursor: CURSOR, lastLedger: 9000 });
+
+      expect(childWarn).toHaveBeenCalledTimes(1);
+      expect(childWarn).toHaveBeenCalledWith(
+        {
+          lag: 1000,
+          latestLedger: 10000,
+          lastLedger: 9000,
+          threshold: 500,
+        },
+        "indexer is falling behind chain head",
+      );
+    });
+
+    it("does not log a warning when lag is at or below the threshold or disabled", async () => {
+      const childWarn = vi.fn();
+      const customLog = {
+        child: () => ({
+          info: vi.fn(),
+          warn: childWarn,
+          error: vi.fn(),
+        }),
+      } as unknown as pino.Logger;
+
+      const poller = new Poller(
+        server,
+        { ...config, lagWarnThresholdLedgers: 500 },
+        customLog,
+      );
+
+      chain.getContractEvents.mockResolvedValue({
+        events: [],
+        latestLedger: 9500,
+        cursor: CURSOR,
+      });
+
+      await poller.tick({ cursor: CURSOR, lastLedger: 9000 });
+      expect(childWarn).not.toHaveBeenCalled();
+
+      const disabledPoller = new Poller(
+        server,
+        { ...config, lagWarnThresholdLedgers: 0 },
+        customLog,
+      );
+      chain.getContractEvents.mockResolvedValue({
+        events: [],
+        latestLedger: 50000,
+        cursor: CURSOR,
+      });
+      await disabledPoller.tick({ cursor: CURSOR, lastLedger: 9000 });
+      expect(childWarn).not.toHaveBeenCalled();
+    });
+
+    it("does not repeat the warning on consecutive ticks while lag stays high, and re-arms after catching up", async () => {
+      const childWarn = vi.fn();
+      const customLog = {
+        child: () => ({
+          info: vi.fn(),
+          warn: childWarn,
+          error: vi.fn(),
+        }),
+      } as unknown as pino.Logger;
+
+      const poller = new Poller(
+        server,
+        { ...config, lagWarnThresholdLedgers: 500 },
+        customLog,
+      );
+
+      // Tick 1: lag = 1000 (> 500) -> warns once
+      chain.getContractEvents.mockResolvedValueOnce({
+        events: [],
+        latestLedger: 10000,
+        cursor: "cursor-1",
+      });
+      let state = await poller.tick({ cursor: "cursor-0", lastLedger: 9000 });
+      expect(childWarn).toHaveBeenCalledTimes(1);
+
+      // Tick 2: lag = 1200 (> 500) -> still behind, must NOT repeat warning
+      chain.getContractEvents.mockResolvedValueOnce({
+        events: [],
+        latestLedger: 10200,
+        cursor: "cursor-2",
+      });
+      state = await poller.tick(state);
+      expect(childWarn).toHaveBeenCalledTimes(1);
+
+      // Tick 3: caught up (lag = 100 <= 500) -> resets warning state
+      chain.getContractEvents.mockResolvedValueOnce({
+        events: [],
+        latestLedger: 9100,
+        cursor: "cursor-3",
+      });
+      state = await poller.tick(state);
+      expect(childWarn).toHaveBeenCalledTimes(1);
+
+      // Tick 4: falls behind again (lag = 2000 > 500) -> logs warning again
+      chain.getContractEvents.mockResolvedValueOnce({
+        events: [],
+        latestLedger: 11000,
+        cursor: "cursor-4",
+      });
+      await poller.tick(state);
+      expect(childWarn).toHaveBeenCalledTimes(2);
+      expect(childWarn).toHaveBeenLastCalledWith(
+        {
+          lag: 2000,
+          latestLedger: 11000,
+          lastLedger: 9000,
+          threshold: 500,
+        },
+        "indexer is falling behind chain head",
+      );
+    });
   });
 
 });

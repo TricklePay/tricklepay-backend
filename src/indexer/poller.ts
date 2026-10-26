@@ -6,7 +6,11 @@ import { EVENT_PAGE_LIMIT, getContractEvents, type EventPage } from "../chain/rp
 
 import { nowSeconds } from "../lib/time.js";
 
-import { validateStartLedger, type Config } from "../config.js";
+import {
+  DEFAULT_INDEXER_LAG_WARN_LEDGERS,
+  validateStartLedger,
+  type Config,
+} from "../config.js";
 
 import { prisma } from "../db.js";
 
@@ -78,6 +82,9 @@ export class Poller {
   // Unix timestamp (ms) of when the next poll will fire. Set just before each
   // sleep so /status and metrics can report it to operators during backoff.
   private nextPollAtMs = 0;
+  // Tracks whether a lag warning has already been emitted for the current lag
+  // episode, so we do not spam identical warnings on every poll tick (#383).
+  private lagWarned = false;
   private readonly log: Logger;
 
   constructor(
@@ -367,6 +374,25 @@ export class Poller {
     // reporting a negative lag if the RPC response is briefly stale.
     const lag = Math.max(0, page.latestLedger - nextState.lastLedger);
     indexerLagLedgers.set(lag);
+
+    const lagWarnThreshold =
+      this.config.lagWarnThresholdLedgers ?? DEFAULT_INDEXER_LAG_WARN_LEDGERS;
+    if (lagWarnThreshold > 0 && lag > lagWarnThreshold) {
+      if (!this.lagWarned) {
+        this.lagWarned = true;
+        this.log.warn(
+          {
+            lag,
+            latestLedger: page.latestLedger,
+            lastLedger: nextState.lastLedger,
+            threshold: lagWarnThreshold,
+          },
+          "indexer is falling behind chain head",
+        );
+      }
+    } else {
+      this.lagWarned = false;
+    }
 
     return nextState;
   }
