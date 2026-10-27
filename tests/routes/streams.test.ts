@@ -463,6 +463,22 @@ describe("GET /streams", () => {
     expect(response.json()).toHaveProperty("error", "invalid sender address");
     expect(streamsRepo.listStreams).not.toHaveBeenCalled();
   });
+
+  it.each(["sender", "recipient", "token"] as const)(
+    "rejects empty and whitespace-only %s filter with 400 (#562)",
+    async (field) => {
+      for (const raw of ["", "%20%20%20"]) {
+        const response = await listRequest(`/streams?${field}=${raw}`);
+        expect(response.statusCode).toBe(400);
+        expect(response.json()).toMatchObject({
+          code: "VALIDATION_ERROR",
+          error: `invalid ${field} address`,
+        });
+      }
+      expect(streamsRepo.listStreams).not.toHaveBeenCalled();
+      expect(streamsRepo.countStreams).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("GET /streams token filter", () => {

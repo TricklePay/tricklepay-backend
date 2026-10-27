@@ -156,6 +156,19 @@ function parseCancelled(raw: string | undefined): boolean | undefined {
   return undefined;
 }
 
+function parseAmount(raw: string | undefined): bigint | null {
+  if (raw === undefined) return null;
+  const value = raw.trim();
+  if (value.length === 0 || !/^\d+$/.test(value)) return null;
+  try {
+    const parsed = BigInt(value);
+    if (parsed < 0n) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 const SUMMARY_STATUSES = ["pending", "streaming", "completed", "cancelled"] as const;
 
 type SummaryEntry = { count: number; totalAmount: string; withdrawn: string };
@@ -213,6 +226,8 @@ interface ListStreamsQuery {
   cancelled?: string;
   status?: StreamStatus;
   cursor?: string;
+  minAmount?: string;
+  maxAmount?: string;
 }
 
 export async function streamRoutes(
@@ -414,7 +429,7 @@ export async function streamRoutes(
       }
       for (const field of ["sender", "recipient", "token"] as const) {
         const raw = query[field];
-        if (!raw) continue;
+        if (raw === undefined) continue;
         const normalized = normalizeAddress(raw);
         if (!normalized) {
           return sendError(reply, request, 400, "VALIDATION_ERROR", `invalid ${field} address`);
