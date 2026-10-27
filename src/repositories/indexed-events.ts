@@ -8,7 +8,8 @@
 // writes to the indexed_events table in PostgreSQL must flow through these
 // functions rather than calling the database client directly.
 
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
+import type { StreamEvent } from "../chain/events.js";
 import { prisma, withQueryTimeout } from "../db.js";
 
 export type IndexedEventKind = "created" | "withdrawn" | "cancelled";
@@ -32,26 +33,52 @@ export interface IndexedEventRecord {
   closedAt: bigint | null;
 }
 
+function decimal(value: bigint): Prisma.Decimal {
+  return new Prisma.Decimal(value.toString());
+}
+
+function toIndexedEventKind(kind: string): IndexedEventKind {
+  if (kind === "created" || kind === "withdrawn" || kind === "cancelled") {
+    return kind;
+  }
+  throw new Error(`Invalid indexed event kind: ${kind}`);
+}
+
 export async function listIndexedEvents(
   streamId: bigint,
   kind?: IndexedEventKind,
 ): Promise<IndexedEventRecord[]> {
-  const where: { streamId: string; kind?: IndexedEventKind } = {
+  const where: Prisma.IndexedEventWhereInput = {
     streamId: streamId.toString(),
   };
   if (kind !== undefined) {
     where.kind = kind;
   }
   const rows = await withQueryTimeout(
-    (prisma as any).indexedEvent.findMany({
+    prisma.indexedEvent.findMany({
       where,
       orderBy: { eventId: "asc" },
     }),
   );
-  return rows as IndexedEventRecord[];
+  return rows.map((row) => ({
+    eventId: row.eventId,
+    kind: toIndexedEventKind(row.kind),
+    streamId: row.streamId,
+    ledger: row.ledger,
+    txHash: row.txHash,
+    sender: row.sender,
+    recipient: row.recipient,
+    token: row.token,
+    totalAmount: row.totalAmount,
+    amount: row.amount,
+    recipientAmount: row.recipientAmount,
+    senderRefund: row.senderRefund,
+    startTime: row.startTime,
+    endTime: row.endTime,
+    cliffTime: row.cliffTime,
+    closedAt: row.closedAt,
+  }));
 }
-
-import type { StreamEvent } from "../chain/events.js";
 
 export function indexedEventFromDecoded(event: StreamEvent): IndexedEventRecord {
   return {
@@ -63,10 +90,10 @@ export function indexedEventFromDecoded(event: StreamEvent): IndexedEventRecord 
     sender: "sender" in event ? event.sender : null,
     recipient: "recipient" in event ? event.recipient : null,
     token: "token" in event ? event.token : null,
-    totalAmount: "totalAmount" in event ? event.totalAmount as any : null,
-    amount: "amount" in event ? event.amount as any : null,
-    recipientAmount: "recipientAmount" in event ? event.recipientAmount as any : null,
-    senderRefund: "senderRefund" in event ? event.senderRefund as any : null,
+    totalAmount: "totalAmount" in event ? decimal(event.totalAmount) : null,
+    amount: "amount" in event ? decimal(event.amount) : null,
+    recipientAmount: "recipientAmount" in event ? decimal(event.recipientAmount) : null,
+    senderRefund: "senderRefund" in event ? decimal(event.senderRefund) : null,
     startTime: "startTime" in event ? event.startTime : null,
     endTime: "endTime" in event ? event.endTime : null,
     cliffTime: "cliffTime" in event ? event.cliffTime : null,
@@ -74,7 +101,9 @@ export function indexedEventFromDecoded(event: StreamEvent): IndexedEventRecord 
   };
 }
 
-export async function recordIndexedEvent(record: IndexedEventRecord, tx?: any): Promise<void> {
-  const db = tx ?? prisma;
-  await (db as any).indexedEvent.createMany({ data: record, skipDuplicates: true });
+export async function recordIndexedEvent(
+  record: IndexedEventRecord,
+  tx: Prisma.TransactionClient = prisma,
+): Promise<void> {
+  await tx.indexedEvent.createMany({ data: record, skipDuplicates: true });
 }

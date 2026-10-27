@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { StreamEvent } from "../../src/chain/events.js";
@@ -38,7 +39,7 @@ describe("indexedEventFromDecoded", () => {
       sender: "Gsender",
       recipient: "Grecipient",
       token: "CADDR",
-      totalAmount: 99n,
+      totalAmount: new Prisma.Decimal("99"),
       amount: null,
       recipientAmount: null,
       senderRefund: null,
@@ -66,20 +67,43 @@ describe("indexedEventFromDecoded", () => {
       kind: "withdrawn",
       streamId: "8",
       totalAmount: null,
-      amount: 11n,
+      amount: new Prisma.Decimal("11"),
       recipient: "Grecipient",
       closedAt: 456n,
+    });
+
+    const cancelledEvent: StreamEvent = {
+      kind: "cancelled",
+      id: "0000000000000000003",
+      ledger: 44,
+      closedAt: 789n,
+      txHash: "0xghi",
+      streamId: 9n,
+      recipientAmount: 30n,
+      senderRefund: 70n,
+    };
+
+    expect(indexedEventFromDecoded(cancelledEvent)).toMatchObject({
+      eventId: "0000000000000000003",
+      kind: "cancelled",
+      streamId: "9",
+      totalAmount: null,
+      amount: null,
+      recipientAmount: new Prisma.Decimal("30"),
+      senderRefund: new Prisma.Decimal("70"),
+      closedAt: 789n,
     });
   });
 });
 
 describe("recordIndexedEvent", () => {
   it("ignores duplicate event ids instead of failing the poller", async () => {
+    const createMany = vi.fn().mockResolvedValue({ count: 0 });
     const tx = {
       indexedEvent: {
-        createMany: vi.fn().mockResolvedValue({ count: 0 }),
+        createMany,
       },
-    } as any;
+    } as unknown as Prisma.TransactionClient;
 
     await expect(recordIndexedEvent({
       eventId: "duplicate",
@@ -90,7 +114,7 @@ describe("recordIndexedEvent", () => {
       sender: "Gsender",
       recipient: "Grecipient",
       token: "CADDR",
-      totalAmount: "5" as any,
+      totalAmount: new Prisma.Decimal("5"),
       amount: null,
       recipientAmount: null,
       senderRefund: null,
@@ -100,7 +124,7 @@ describe("recordIndexedEvent", () => {
       closedAt: 3n,
     }, tx)).resolves.toBeUndefined();
 
-    expect(tx.indexedEvent.createMany).toHaveBeenCalledWith(expect.objectContaining({
+    expect(createMany).toHaveBeenCalledWith(expect.objectContaining({
       skipDuplicates: true,
     }));
   });
@@ -112,17 +136,17 @@ describe("recordIndexedEvent idempotency (#222)", () => {
   });
 
   it("leaves one row unchanged when the same event is recorded twice", async () => {
-    const rows = new Map<string, Record<string, unknown>>();
+    const rows = new Map<string, Prisma.IndexedEventCreateManyInput>();
     const createMany = vi
-      .spyOn((prisma as any).indexedEvent, "createMany")
-      .mockImplementation(async ({ data }: any) => {
+      .spyOn(prisma.indexedEvent, "createMany")
+      .mockImplementation((({ data }: { data: Prisma.IndexedEventCreateManyInput | Prisma.IndexedEventCreateManyInput[] }) => {
         const row = Array.isArray(data) ? data[0] : data;
         // Mirror the primary key on eventId plus `skipDuplicates`: an id that
         // is already stored is not written again.
-        if (rows.has(row.eventId)) return { count: 0 };
-        rows.set(row.eventId, row);
-        return { count: 1 };
-      });
+        if (row && rows.has(row.eventId)) return Promise.resolve({ count: 0 }) as ReturnType<typeof prisma.indexedEvent.createMany>;
+        if (row) rows.set(row.eventId, row);
+        return Promise.resolve({ count: 1 }) as ReturnType<typeof prisma.indexedEvent.createMany>;
+      }) as typeof prisma.indexedEvent.createMany);
 
     const first: IndexedEventRecord = {
       eventId: "0241050272077447168-0000000001",
@@ -133,7 +157,7 @@ describe("recordIndexedEvent idempotency (#222)", () => {
       sender: "Gsender",
       recipient: "Grecipient",
       token: "CADDR",
-      totalAmount: "5" as any,
+      totalAmount: new Prisma.Decimal("5"),
       amount: null,
       recipientAmount: null,
       senderRefund: null,
@@ -150,7 +174,7 @@ describe("recordIndexedEvent idempotency (#222)", () => {
       ...first,
       ledger: 99,
       txHash: "0xchanged",
-      totalAmount: "999" as any,
+      totalAmount: new Prisma.Decimal("999"),
     });
 
     expect(createMany).toHaveBeenCalledTimes(2);
@@ -166,7 +190,7 @@ describe("listIndexedEvents", () => {
 
   it("queries by streamId without kind filter when kind is omitted", async () => {
     const findMany = vi
-      .spyOn((prisma as any).indexedEvent, "findMany")
+      .spyOn(prisma.indexedEvent, "findMany")
       .mockResolvedValue([]);
 
     await listIndexedEvents(42n);
@@ -179,7 +203,7 @@ describe("listIndexedEvents", () => {
 
   it("filters by kind when kind is specified", async () => {
     const findMany = vi
-      .spyOn((prisma as any).indexedEvent, "findMany")
+      .spyOn(prisma.indexedEvent, "findMany")
       .mockResolvedValue([]);
 
     await listIndexedEvents(42n, "withdrawn");
@@ -192,7 +216,7 @@ describe("listIndexedEvents", () => {
 
   it("filters by created kind when kind is created", async () => {
     const findMany = vi
-      .spyOn((prisma as any).indexedEvent, "findMany")
+      .spyOn(prisma.indexedEvent, "findMany")
       .mockResolvedValue([]);
 
     await listIndexedEvents(42n, "created");
@@ -205,7 +229,7 @@ describe("listIndexedEvents", () => {
 
   it("filters by cancelled kind when kind is cancelled", async () => {
     const findMany = vi
-      .spyOn((prisma as any).indexedEvent, "findMany")
+      .spyOn(prisma.indexedEvent, "findMany")
       .mockResolvedValue([]);
 
     await listIndexedEvents(42n, "cancelled");
