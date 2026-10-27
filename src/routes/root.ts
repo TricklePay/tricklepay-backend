@@ -20,6 +20,7 @@ export function rootRoutes(config: Config) {
         contractId: config.contractId,
         endpoints: [
           { method: "GET", path: "/health", description: "Liveness check" },
+          { method: "GET", path: "/ready", description: "Readiness check" },
           { method: "GET", path: "/status", description: "Indexer progress" },
           { method: "GET", path: "/metrics", description: "Prometheus metrics" },
           {
@@ -27,7 +28,32 @@ export function rootRoutes(config: Config) {
             path: "/streams",
             description: "List streams; filters: sender, recipient, token, limit, offset",
           },
+          {
+            method: "GET",
+            path: "/streams/summary",
+            description: "Summarize streams by lifecycle status",
+          },
+          {
+            method: "GET",
+            path: "/tokens",
+            description: "List distinct tokens with stream counts and total escrowed amounts",
+          },
           { method: "GET", path: "/streams/:id", description: "A single stream by id" },
+          {
+            method: "GET",
+            path: "/streams/:id/events",
+            description: "Indexed event history for a single stream",
+          },
+          {
+            method: "GET",
+            path: "/streams/:id/schedule",
+            description: "Vesting schedule points for a single stream",
+          },
+          {
+            method: "GET",
+            path: "/accounts/:address/summary",
+            description: "Incoming and outgoing stream summary for an account",
+          },
         ],
       };
     });
