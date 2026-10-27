@@ -200,4 +200,28 @@ describe("GET /streams/:id/events", () => {
     expect(response.statusCode).toBe(400);
     expect(indexedEventsRepo.listIndexedEvents).not.toHaveBeenCalled();
   });
+
+  it("rejects non-canonical stream ids (leading zeros and whitespace) with 400 across stream routes", async () => {
+    const app = Fastify();
+    registerErrorHandlers(app);
+    await app.register(streamRoutes);
+
+    for (const badId of ["0042", "00", "%2042", "42%20"]) {
+      for (const path of [
+        `/streams/${badId}`,
+        `/streams/${badId}/events`,
+        `/streams/${badId}/schedule`,
+      ]) {
+        const res = await app.inject({ method: "GET", url: path });
+        expect(res.statusCode).toBe(400);
+        expect(res.json()).toMatchObject({
+          code: "VALIDATION_ERROR",
+          error: "invalid stream id",
+        });
+      }
+    }
+
+    await app.close();
+    expect(streamsRepo.getStream).not.toHaveBeenCalled();
+  });
 });

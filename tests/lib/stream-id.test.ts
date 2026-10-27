@@ -19,12 +19,16 @@ describe("parseStreamId", () => {
     expect(parseStreamId(MAX_UINT64.toString())).toBe(MAX_UINT64);
   });
 
-  it("trims surrounding whitespace", () => {
-    expect(parseStreamId("  42  ")).toBe(42n);
+  it("returns null for surrounding whitespace", () => {
+    expect(parseStreamId("  42  ")).toBeNull();
+    expect(parseStreamId(" 42")).toBeNull();
+    expect(parseStreamId("42 ")).toBeNull();
   });
 
-  it("parses a value with leading zeros", () => {
-    expect(parseStreamId("007")).toBe(7n);
+  it("returns null for a value with leading zeros", () => {
+    expect(parseStreamId("007")).toBeNull();
+    expect(parseStreamId("0042")).toBeNull();
+    expect(parseStreamId("00")).toBeNull();
   });
 
   it("returns null for undefined", () => {
