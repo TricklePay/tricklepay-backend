@@ -12,6 +12,8 @@ try {
   // No .env file found; rely on the ambient environment.
 }
 
+// Keyed by the lowercase `network` value read from `NETWORK` (see
+// loadConfig below), not `Network` — verified against #449.
 const NETWORK_PASSPHRASES: Record<string, string> = {
   testnet: "Test SDF Network ; September 2015",
   mainnet: "Public Global Stellar Network ; September 2015",
