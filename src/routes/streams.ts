@@ -10,7 +10,7 @@ import { StrKey } from "@stellar/stellar-sdk";
 import type { FastifyInstance } from "fastify";
 
 import { sendError, bigIntToStringNullable } from "../lib/response.js";
-import { parsePagination } from "../lib/pagination.js";
+import { InvalidPaginationParameter, parsePagination } from "../lib/pagination.js";
 import { mapStreamResponse } from "../lib/stream-view.js";
 import { MAX_UINT64, parseStreamId } from "../lib/stream-id.js";
 
@@ -156,6 +156,19 @@ function parseCancelled(raw: string | undefined): boolean | undefined {
   return undefined;
 }
 
+function parseAmount(raw: string | undefined): bigint | null {
+  if (raw === undefined) return null;
+  const value = raw.trim();
+  if (value.length === 0 || !/^\d+$/.test(value)) return null;
+  try {
+    const parsed = BigInt(value);
+    if (parsed < 0n) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 const SUMMARY_STATUSES = ["pending", "streaming", "completed", "cancelled"] as const;
 
 type SummaryEntry = { count: number; totalAmount: string; withdrawn: string };
@@ -213,6 +226,8 @@ interface ListStreamsQuery {
   cancelled?: string;
   status?: StreamStatus;
   cursor?: string;
+  minAmount?: string;
+  maxAmount?: string;
 }
 
 export async function streamRoutes(
@@ -363,7 +378,16 @@ export async function streamRoutes(
     async (request, reply) => {
       const query = request.query;
 
-      const { limit, offset } = parsePagination(query);
+      let limit: number;
+      let offset: number;
+      try {
+        ({ limit, offset } = parsePagination(query));
+      } catch (error) {
+        if (error instanceof InvalidPaginationParameter) {
+          return sendError(reply, request, 400, "VALIDATION_ERROR", error.message);
+        }
+        throw error;
+      }
 
       let cursor: bigint | undefined;
       if (query.cursor !== undefined) {

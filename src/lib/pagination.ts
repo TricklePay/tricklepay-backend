@@ -11,16 +11,37 @@ export interface Pagination {
   offset: number;
 }
 
+/** Name the malformed field so callers can return a specific validation error. */
+export class InvalidPaginationParameter extends Error {
+  constructor(readonly parameter: "limit" | "offset") {
+    super(`invalid ${parameter}`);
+    this.name = "InvalidPaginationParameter";
+  }
+}
+
+function parseDecimalInteger(value: string, parameter: "limit" | "offset"): number {
+  if (!/^(0|[1-9][0-9]*)$/.test(value)) {
+    throw new InvalidPaginationParameter(parameter);
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) {
+    throw new InvalidPaginationParameter(parameter);
+  }
+  return parsed;
+}
+
 /** Parse the shared limit/offset query parameters used by paginated routes. */
 export function parsePagination(query: PaginationQuery): Pagination {
-  // Floored first so a fraction below 1 (which would become a limit of 0) falls back.
-  const rawLimit = query.limit ? Math.floor(Number(query.limit)) : DEFAULT_LIMIT;
-  const rawOffset = query.offset ? Number(query.offset) : 0;
+  const rawLimit =
+    query.limit === undefined ? DEFAULT_LIMIT : parseDecimalInteger(query.limit, "limit");
+  const rawOffset =
+    query.offset === undefined ? 0 : parseDecimalInteger(query.offset, "offset");
+  if (rawLimit === 0) {
+    throw new InvalidPaginationParameter("limit");
+  }
 
   return {
-    limit: !Number.isFinite(rawLimit) || rawLimit <= 0
-      ? DEFAULT_LIMIT
-      : Math.min(rawLimit, MAX_LIMIT),
-    offset: !Number.isFinite(rawOffset) || rawOffset < 0 ? 0 : Math.floor(rawOffset),
+    limit: Math.min(rawLimit, MAX_LIMIT),
+    offset: rawOffset,
   };
 }
