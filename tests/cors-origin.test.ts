@@ -95,4 +95,32 @@ describe("CORS origin handling", () => {
     expect(response.headers["access-control-allow-methods"]).toContain("GET");
     expect(response.headers["access-control-allow-headers"]).toBeTruthy();
   });
+
+  it("exposes custom response headers through Access-Control-Expose-Headers", async () => {
+    delete process.env.CORS_ORIGIN;
+
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/health",
+      headers: { Origin: "https://app.example.com" },
+    });
+    await app.close();
+
+    expect(response.statusCode).toBe(200);
+    const exposedHeader = response.headers["access-control-expose-headers"];
+    expect(typeof exposedHeader).toBe("string");
+    const exposed = String(exposedHeader)
+      .split(",")
+      .map((h) => h.trim());
+    expect(exposed).toEqual(
+      expect.arrayContaining([
+        "ETag",
+        "Link",
+        "Retry-After",
+        "X-Indexer-Lag-Ledgers",
+        "X-Request-Id",
+      ]),
+    );
+  });
 });

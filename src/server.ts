@@ -225,6 +225,13 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
   // synchronous for its callers.
   void app.register(cors, {
     origin: corsOrigin,
+    exposedHeaders: [
+      "ETag",
+      "Link",
+      "Retry-After",
+      "X-Indexer-Lag-Ledgers",
+      "X-Request-Id",
+    ],
   });
 
   // Compress responses at or above the configured threshold when the client
