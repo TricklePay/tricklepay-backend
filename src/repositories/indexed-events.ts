@@ -10,8 +10,11 @@
 
 import type { Prisma } from "@prisma/client";
 import { prisma, withQueryTimeout } from "../db.js";
+import type { StreamEvent } from "../chain/events.js";
 
 export type IndexedEventKind = "created" | "withdrawn" | "cancelled";
+
+export type DecimalField = Prisma.Decimal | bigint | number | string;
 
 export interface IndexedEventRecord {
   eventId: string;
@@ -22,10 +25,10 @@ export interface IndexedEventRecord {
   sender: string | null;
   recipient: string | null;
   token: string | null;
-  totalAmount: Prisma.Decimal | null;
-  amount: Prisma.Decimal | null;
-  recipientAmount: Prisma.Decimal | null;
-  senderRefund: Prisma.Decimal | null;
+  totalAmount: DecimalField | null;
+  amount: DecimalField | null;
+  recipientAmount: DecimalField | null;
+  senderRefund: DecimalField | null;
   startTime: bigint | null;
   endTime: bigint | null;
   cliffTime: bigint | null;
@@ -36,22 +39,20 @@ export async function listIndexedEvents(
   streamId: bigint,
   kind?: IndexedEventKind,
 ): Promise<IndexedEventRecord[]> {
-  const where: { streamId: string; kind?: IndexedEventKind } = {
+  const where: Prisma.IndexedEventWhereInput = {
     streamId: streamId.toString(),
   };
   if (kind !== undefined) {
     where.kind = kind;
   }
   const rows = await withQueryTimeout(
-    (prisma as any).indexedEvent.findMany({
+    prisma.indexedEvent.findMany({
       where,
       orderBy: { eventId: "asc" },
     }),
   );
-  return rows as IndexedEventRecord[];
+  return rows as unknown as IndexedEventRecord[];
 }
-
-import type { StreamEvent } from "../chain/events.js";
 
 export function indexedEventFromDecoded(event: StreamEvent): IndexedEventRecord {
   return {
@@ -63,10 +64,10 @@ export function indexedEventFromDecoded(event: StreamEvent): IndexedEventRecord 
     sender: "sender" in event ? event.sender : null,
     recipient: "recipient" in event ? event.recipient : null,
     token: "token" in event ? event.token : null,
-    totalAmount: "totalAmount" in event ? event.totalAmount as any : null,
-    amount: "amount" in event ? event.amount as any : null,
-    recipientAmount: "recipientAmount" in event ? event.recipientAmount as any : null,
-    senderRefund: "senderRefund" in event ? event.senderRefund as any : null,
+    totalAmount: "totalAmount" in event ? event.totalAmount : null,
+    amount: "amount" in event ? event.amount : null,
+    recipientAmount: "recipientAmount" in event ? event.recipientAmount : null,
+    senderRefund: "senderRefund" in event ? event.senderRefund : null,
     startTime: "startTime" in event ? event.startTime : null,
     endTime: "endTime" in event ? event.endTime : null,
     cliffTime: "cliffTime" in event ? event.cliffTime : null,
@@ -74,7 +75,14 @@ export function indexedEventFromDecoded(event: StreamEvent): IndexedEventRecord 
   };
 }
 
-export async function recordIndexedEvent(record: IndexedEventRecord, tx?: any): Promise<void> {
+export async function recordIndexedEvent(
+  record: IndexedEventRecord,
+  tx?: Prisma.TransactionClient,
+): Promise<void> {
   const db = tx ?? prisma;
-  await (db as any).indexedEvent.createMany({ data: record, skipDuplicates: true });
+  await db.indexedEvent.createMany({
+    data: record as unknown as Prisma.IndexedEventCreateManyInput,
+    skipDuplicates: true,
+  });
 }
+

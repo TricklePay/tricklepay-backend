@@ -9,6 +9,7 @@ import { StrKey } from "@stellar/stellar-sdk";
 
 import type { FastifyInstance } from "fastify";
 
+import { QueryTimeoutError } from "../db.js";
 import { sendError, bigIntToStringNullable } from "../lib/response.js";
 import { parsePagination } from "../lib/pagination.js";
 import { mapStreamResponse } from "../lib/stream-view.js";
@@ -156,6 +157,20 @@ function parseCancelled(raw: string | undefined): boolean | undefined {
   return undefined;
 }
 
+// Parses an amount string (non-negative integer). Returns null if invalid, negative, decimal, or non-numeric.
+function parseAmount(raw: string | undefined): bigint | null {
+  if (raw === undefined) return null;
+  const value = raw.trim();
+  if (value.length === 0 || !/^\d+$/.test(value)) return null;
+  try {
+    const parsed = BigInt(value);
+    if (parsed < 0n) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 const SUMMARY_STATUSES = ["pending", "streaming", "completed", "cancelled"] as const;
 
 type SummaryEntry = { count: number; totalAmount: string; withdrawn: string };
@@ -213,6 +228,8 @@ interface ListStreamsQuery {
   cancelled?: string;
   status?: StreamStatus;
   cursor?: string;
+  minAmount?: string;
+  maxAmount?: string;
 }
 
 export async function streamRoutes(
@@ -630,7 +647,15 @@ export async function streamRoutes(
         return sendError(reply, request, 400, "VALIDATION_ERROR", "invalid event kind");
       }
 
-      const stream = await getStream({ streamId });
+      let stream;
+      try {
+        stream = await getStream({ streamId });
+      } catch (err) {
+        if (err instanceof QueryTimeoutError) {
+          return sendError(reply, request, 500, "INTERNAL_SERVER_ERROR", "internal server error");
+        }
+        throw err;
+      }
       if (!stream) {
         return sendError(reply, request, 404, "NOT_FOUND", "stream not found");
       }
@@ -714,7 +739,15 @@ export async function streamRoutes(
         asOfTime = parsed;
       }
 
-      const stream = await getStream({ streamId });
+      let stream;
+      try {
+        stream = await getStream({ streamId });
+      } catch (err) {
+        if (err instanceof QueryTimeoutError) {
+          return sendError(reply, request, 500, "INTERNAL_SERVER_ERROR", "internal server error");
+        }
+        throw err;
+      }
       if (!stream) {
         return sendError(reply, request, 404, "NOT_FOUND", "stream not found");
       }
@@ -796,7 +829,15 @@ export async function streamRoutes(
         requestedPoints = Math.max(MIN_SCHEDULE_POINTS, Math.min(parsed, MAX_SCHEDULE_POINTS));
       }
 
-      const stream = await getStream({ streamId });
+      let stream;
+      try {
+        stream = await getStream({ streamId });
+      } catch (err) {
+        if (err instanceof QueryTimeoutError) {
+          return sendError(reply, request, 500, "INTERNAL_SERVER_ERROR", "internal server error");
+        }
+        throw err;
+      }
       if (!stream) {
         return sendError(reply, request, 404, "NOT_FOUND", "stream not found");
       }

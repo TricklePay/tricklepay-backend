@@ -148,6 +148,10 @@ export function decodeEvent(event: rpc.Api.EventResponse): StreamEvent | null {
     }
 
     const name = scValToNative(topics[0]) as string;
+    if (name !== "created" && name !== "withdrawn" && name !== "cancelled") {
+      return null;
+    }
+
     const rawData = scValToNative(event.value);
     if (rawData === null || rawData === undefined || typeof rawData !== "object" || Array.isArray(rawData)) {
       throw new InvalidEventError("event data is missing or invalid");

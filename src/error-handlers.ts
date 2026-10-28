@@ -9,8 +9,8 @@
 
 import type { FastifyError, FastifyInstance } from "fastify";
 
+import { QueryTimeoutError } from "./db.js";
 import { errorCodeForStatus, redactErrorMessage } from "./error-redaction.js";
-
 import { REQUEST_ID_HEADER } from "./request-id.js";
 
 /**
@@ -26,6 +26,26 @@ export function registerErrorHandlers(app: FastifyInstance): void {
   // reach the client (#74); the original error is logged server-side with
   // the request id for diagnosis.
   app.setErrorHandler((err: FastifyError, request, reply) => {
+    const isDatabaseError =
+      err instanceof QueryTimeoutError ||
+      (typeof err.message === "string" &&
+        /Can't reach database server|P1001|ECONNREFUSED.*5432|connect ECONNREFUSED/i.test(
+          err.message,
+        ));
+
+    if (isDatabaseError) {
+      request.log.error({ err }, "database unavailable");
+      void reply
+        .status(503)
+        .header("Retry-After", "30")
+        .send({
+          code: "SERVICE_UNAVAILABLE",
+          error: "internal server error",
+          requestId: request.id,
+        });
+      return;
+    }
+
     const statusCode =
       typeof err.statusCode === "number" && err.statusCode >= 400
         ? err.statusCode
@@ -44,7 +64,7 @@ export function registerErrorHandlers(app: FastifyInstance): void {
     });
   });
 
-  // Unmatched routes bypass the error handler, so they get their own handler —
+  // Unmatched routes bypass the error handler, so they get their own handler
   // with the request id attached like every other error response.
   app.setNotFoundHandler((request, reply) => {
     void reply.status(404).send({
