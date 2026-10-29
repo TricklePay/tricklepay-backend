@@ -36,13 +36,13 @@ describe("Server timeouts", () => {
       requestTimeoutMs: 100,
     });
 
-    await app.ready();
-
     // Register a route that delays longer than the timeout
     app.get("/slow", async (_request, reply) => {
       await new Promise((resolve) => setTimeout(resolve, 500));
       return reply.send({ ok: true });
     });
+
+    await app.ready();
 
     const response = await app.inject({
       method: "GET",

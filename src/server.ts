@@ -197,6 +197,23 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
   // Echo the request id header on every response.
   registerRequestIdHook(app);
 
+  if (config?.requestTimeoutMs) {
+    const timeoutMs = config.requestTimeoutMs;
+    app.addHook("onRequest", (request, reply, done) => {
+      const timer = setTimeout(() => {
+        if (!reply.sent) {
+          void reply.status(408).send({
+            code: errorCodeForStatus(408),
+            error: "request timeout",
+            requestId: request.id,
+          });
+        }
+      }, timeoutMs);
+      void reply.raw.on("finish", () => clearTimeout(timer));
+      done();
+    });
+  }
+
   // Add X-Indexer-Lag-Ledgers header to read responses.
   registerIndexerLagHook(app);
 
@@ -213,7 +230,13 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
       ? true
       : configuredCorsOrigin === ""
         ? false
-        : configuredCorsOrigin;
+        : (origin: string | undefined, cb: (err: Error | null, allow: boolean) => void) => {
+            if (!origin || origin === configuredCorsOrigin) {
+              cb(null, true);
+            } else {
+              cb(null, false);
+            }
+          };
 
   // The web client fetches this API from the browser, so it is always a
   // cross-origin caller once the two run on separate ports or hosts. The data
@@ -225,6 +248,7 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
   // synchronous for its callers.
   void app.register(cors, {
     origin: corsOrigin,
+    allowedHeaders: ["*"],
   });
 
   // Compress responses at or above the configured threshold when the client

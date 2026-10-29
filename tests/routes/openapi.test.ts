@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import { vi } from "vitest";
 
+import { rootRoutes } from "../../src/routes/root.js";
+
 import { statusRoutes } from "../../src/routes/status.js";
 
 import { streamRoutes } from "../../src/routes/streams.js";
@@ -10,6 +12,7 @@ import { buildServer } from "../../src/server.js";
 
 async function getSpec() {
   const app = await buildServer();
+  await app.register(rootRoutes({ network: "testnet", contractId: "C123" } as any));
   await app.register(streamRoutes);
   await app.register(statusRoutes);
   await app.ready();
