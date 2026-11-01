@@ -67,7 +67,7 @@ model IndexedEvent {
   totalAmount     Decimal? @db.Decimal(40, 0)
   // Amount withdrawn in smallest token units (e.g. stroops/base units); present on `withdrawn` events.
   amount          Decimal? @db.Decimal(40, 0)
-  // Vested unwithdrawn balance paid to recipient upon cancellation in smallest token units; present on `cancelled` events.
+  // Vested unwithdrawn balance still claimable by the recipient after cancellation in smallest token units; present on `cancelled` events.
   recipientAmount Decimal? @db.Decimal(40, 0)
   // Unvested deposit refunded to sender upon cancellation in smallest token units; present on `cancelled` events.
   senderRefund    Decimal? @db.Decimal(40, 0)

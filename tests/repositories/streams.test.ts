@@ -10,6 +10,7 @@ import {
   recordFailedEvent,
 } from "../../src/repositories/failed-events.js";
 import {
+  applyCancellation,
   applyWithdrawal,
   countStreams,
   getStream,
@@ -511,6 +512,106 @@ describe("streams repository filter combinations", () => {
       recipient,
       token,
     });
+  });
+});
+
+describe("applyCancellation repository (#542)", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("freezes totalAmount to stored.withdrawn + recipientAmount without updating withdrawn", async () => {
+    const stored = partialStream({
+      streamId: 42n,
+      totalAmount: new Prisma.Decimal(1000),
+      withdrawn: new Prisma.Decimal(200),
+      cancelled: false,
+    });
+
+    const txMock = {
+      stream: {
+        findUnique: vi.fn().mockResolvedValue(stored),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
+    } as unknown as Prisma.TransactionClient;
+
+    vi.spyOn(prisma, "$transaction").mockImplementation(async (cb: any) => cb(txMock));
+
+    const result = await applyCancellation({
+      streamId: 42n,
+      recipientAmount: 300n,
+      cancelledAt: 1700001000n,
+      ledger: 200,
+      eventId: "0000000000000000003",
+    });
+
+    expect(result).toBe("applied");
+    expect(txMock.stream.findUnique).toHaveBeenCalledWith({ where: { streamId: 42n } });
+    expect(txMock.stream.updateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        streamId: 42n,
+        withdrawn: stored.withdrawn,
+      }),
+      data: {
+        totalAmount: new Prisma.Decimal(500), // 200 + 300
+        endTime: 1700001000n,
+        cancelled: true,
+        updatedLedger: 200,
+        lastEventId: "0000000000000000003",
+      },
+    });
+
+    const updateCall = (txMock.stream.updateMany as any).mock.calls[0][0];
+    expect(updateCall.data).not.toHaveProperty("withdrawn");
+  });
+
+  it("returns 'missing' when stream does not exist", async () => {
+    const txMock = {
+      stream: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        updateMany: vi.fn(),
+      },
+    } as unknown as Prisma.TransactionClient;
+
+    vi.spyOn(prisma, "$transaction").mockImplementation(async (cb: any) => cb(txMock));
+
+    const result = await applyCancellation({
+      streamId: 999n,
+      recipientAmount: 100n,
+      cancelledAt: 1700001000n,
+      ledger: 200,
+      eventId: "0000000000000000004",
+    });
+
+    expect(result).toBe("missing");
+    expect(txMock.stream.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("returns 'duplicate' when updateMany matches 0 rows (concurrent or duplicate event)", async () => {
+    const stored = partialStream({
+      streamId: 42n,
+      totalAmount: new Prisma.Decimal(1000),
+      withdrawn: new Prisma.Decimal(200),
+    });
+
+    const txMock = {
+      stream: {
+        findUnique: vi.fn().mockResolvedValue(stored),
+        updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+      },
+    } as unknown as Prisma.TransactionClient;
+
+    vi.spyOn(prisma, "$transaction").mockImplementation(async (cb: any) => cb(txMock));
+
+    const result = await applyCancellation({
+      streamId: 42n,
+      recipientAmount: 300n,
+      cancelledAt: 1700001000n,
+      ledger: 200,
+      eventId: "0000000000000000003",
+    });
+
+    expect(result).toBe("duplicate");
   });
 });
 

@@ -215,10 +215,11 @@ export async function applyWithdrawal(input: WithdrawalInput, tx: Prisma.Transac
 
 // Applies a `cancelled` event. The contract freezes a cancelled stream by
 // setting its total to the amount vested at cancellation and its end time to
-// that moment; cancellation also settles both sides, paying the recipient their
-// vested-but-unwithdrawn balance and refunding the rest to the sender. So the
-// frozen total is what has been withdrawn so far plus the recipient's payout,
-// and `withdrawn` reaches it, leaving nothing further withdrawable.
+// that moment. Cancellation refunds the unvested balance to the sender while
+// leaving the recipient's vested-but-unwithdrawn balance still claimable.
+// So the frozen total is what has been withdrawn so far plus the recipient's
+// claimable amount, and `withdrawn` remains unchanged so the recipient can
+// still withdraw their remaining balance.
 //
 // The read and guarded update run in a single transaction so a concurrent
 // withdrawal cannot change `withdrawn` between the two operations, which would
@@ -234,7 +235,6 @@ export async function applyCancellation(input: CancellationInput, tx: Prisma.Tra
       where: { ...notYetApplied(input.streamId, input.eventId), withdrawn: stored.withdrawn },
       data: {
         totalAmount: frozenTotal,
-        withdrawn: frozenTotal,
         endTime: input.cancelledAt,
         cancelled: true,
         updatedLedger: input.ledger,

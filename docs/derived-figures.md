@@ -73,6 +73,6 @@ The vesting algorithm in `src/lib/vesting.ts` exactly mirrors the linear vesting
 - **Before `cliffTime`**: `vested = 0`, `withdrawable = 0`, `status = "streaming"`.
 - **Between `startTime`/`cliffTime` and `endTime`**: Vests linearly by second.
 - **At or after `endTime`**: `vested = totalAmount`, `withdrawable = totalAmount - withdrawn`, `status = "completed"`.
-- **Cancelled Streams**: Frozen at the point of cancellation; `totalAmount` and `withdrawn` are set to the settled amount, leaving `withdrawable = 0` and `status = "cancelled"`.
+- **Cancelled Streams**: Frozen at the point of cancellation; `totalAmount` is set to the amount vested at cancellation while `withdrawn` remains the amount withdrawn so far, leaving the recipient's unwithdrawn balance claimable and `status = "cancelled"`.
 
 Because the API uses the identical formula and the current clock, **the API's returned `withdrawable` figure matches what the on-chain contract would calculate if a withdrawal transaction were submitted at that exact moment**, all without requiring a slow, expensive Soroban RPC simulation.
