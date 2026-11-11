@@ -50,6 +50,24 @@ describe("checkHealth", () => {
     
     expect(result).toEqual({ status: "down", error: "database unavailable" });
   });
+
+  it("clears the timeout timer when query resolves successfully", async () => {
+    vi.spyOn(prisma, "$queryRaw").mockResolvedValueOnce([{ "?column?": 1 }]);
+
+    const result = await checkHealth();
+
+    expect(result).toEqual({ status: "up" });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("clears the timeout timer when query rejects with error", async () => {
+    vi.spyOn(prisma, "$queryRaw").mockRejectedValueOnce(new Error("connection terminated"));
+
+    const result = await checkHealth();
+
+    expect(result).toEqual({ status: "down", error: "database unavailable" });
+    expect(vi.getTimerCount()).toBe(0);
+  });
 });
 
 describe("disconnect", () => {
