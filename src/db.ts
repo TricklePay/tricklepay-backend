@@ -65,14 +65,19 @@ export async function disconnect(): Promise<void> {
 }
 
 export async function checkHealth(timeoutMs = 5000): Promise<{ status: "up" | "down"; error?: string }> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([
       prisma.$queryRaw`SELECT 1`,
-      new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), timeoutMs)),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("timeout")), timeoutMs);
+      }),
     ]);
     return { status: "up" };
   } catch (err: unknown) {
     const error = err instanceof Error && err.message === "timeout" ? "timeout" : "database unavailable";
     return { status: "down", error };
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
 }

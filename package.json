@@ -8,9 +8,9 @@
     "node": ">=20.12"
   },
   "scripts": {
-    "build": "tsc",
-    "start": "node dist/index.js",
-    "dev": "tsx watch src/index.ts",
+    "build": "node init && tsc",
+    "start": "node init && node dist/index.js",
+    "dev": "node init && tsx watch src/index.ts",
     "test": "vitest run --project unit",
     "test:integration": "vitest run --project integration",
     "test:watch": "vitest",
@@ -31,7 +31,9 @@
     "@fastify/swagger-ui": "^6.1.1",
     "@prisma/client": "6.19.3",
     "@stellar/stellar-sdk": "^13.1.0",
+    "dotenv": "^8.2.0",
     "fastify": "^5.2.1",
+    "node-fetch": "^3.3.2",
     "pino": "^9.6.0"
   },
   "devDependencies": {

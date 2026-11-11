@@ -1,6 +1,5 @@
 node_modules/
 dist/
-.env
 *.log
 .DS_Store
 
@@ -10,3 +9,4 @@ issue.md
 
 # MiMoCode
 .mimocode/
+config.bat
