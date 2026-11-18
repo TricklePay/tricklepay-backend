@@ -43,6 +43,7 @@ registered by [`src/security-headers.ts`](../src/security-headers.ts):
 | `X-Content-Type-Options` | `nosniff` | An error body is JSON; a browser must never sniff it as HTML. |
 | `Content-Security-Policy` | `default-src 'self'; …; frame-ancestors 'none'` | Restricts what the docs page and any rendered response may load. `script-src 'self'` and inline styles are allowed so the Swagger UI assets keep working; `upgrade-insecure-requests` is deliberately omitted so the docs work over plain HTTP in local development. |
 | `Referrer-Policy` | `no-referrer` | Query strings can carry addresses; never leak them to third parties. |
+| `Permissions-Policy` | `camera=(), microphone=(), geolocation=(), payment=()` | Disables browser access to powerful features unused by the API and Swagger documentation UI. |
 | `Cross-Origin-Resource-Policy` | `cross-origin` | Matches the API's deliberate CORS policy for non-CORS consumers. |
 
 HSTS is left at helmet's default: it is emitted on the response but only

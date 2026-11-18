@@ -23,11 +23,23 @@ import type { FastifyInstance } from "fastify";
  * - `X-Content-Type-Options: nosniff`, so an error body is never sniffed as HTML
  * - a restrictive `Content-Security-Policy`, including for the docs page
  * - `Referrer-Policy: no-referrer`
+ * - `Permissions-Policy` denying camera, microphone, geolocation, and payment
  *
  * Call during server construction, before the routes are registered, so the
  * hooks cover the docs and the error handlers too.
  */
 export async function registerSecurityHeaders(app: FastifyInstance): Promise<void> {
+  // Helmet does not support Permissions-Policy. Use onSend so early replies
+  // from onRequest guards also receive it, and register on the root instance
+  // so unmatched routes and the docs inherit the same policy.
+  app.addHook("onSend", async (_request, reply, payload) => {
+    reply.header(
+      "Permissions-Policy",
+      "camera=(), microphone=(), geolocation=(), payment=()",
+    );
+    return payload;
+  });
+
   await app.register(helmet, {
     contentSecurityPolicy: {
       directives: {
