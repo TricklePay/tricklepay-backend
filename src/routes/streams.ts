@@ -11,7 +11,7 @@ import type { FastifyInstance } from "fastify";
 
 import { QueryTimeoutError } from "../db.js";
 import { sendError, bigIntToStringNullable } from "../lib/response.js";
-import { parsePagination } from "../lib/pagination.js";
+import { PaginationValidationError, parsePagination } from "../lib/pagination.js";
 import { mapStreamResponse } from "../lib/stream-view.js";
 import { MAX_UINT64, parseStreamId } from "../lib/stream-id.js";
 
@@ -71,6 +71,7 @@ function weakEtagFromBody(body: unknown): string {
 }
 
 type StreamStatus = "pending" | "streaming" | "completed" | "cancelled";
+
 
 function parseIncludeTotal(raw: string | undefined): boolean {
   return raw === "true";
@@ -380,7 +381,16 @@ export async function streamRoutes(
     async (request, reply) => {
       const query = request.query;
 
-      const { limit, offset } = parsePagination(query);
+      let limit: number;
+      let offset: number;
+      try {
+        ({ limit, offset } = parsePagination(query));
+      } catch (err) {
+        if (err instanceof PaginationValidationError) {
+          return sendError(reply, request, 400, "VALIDATION_ERROR", err.message);
+        }
+        throw err;
+      }
 
       let cursor: bigint | undefined;
       if (query.cursor !== undefined) {
@@ -431,7 +441,7 @@ export async function streamRoutes(
       }
       for (const field of ["sender", "recipient", "token"] as const) {
         const raw = query[field];
-        if (!raw) continue;
+        if (raw === undefined) continue;
         const normalized = normalizeAddress(raw);
         if (!normalized) {
           return sendError(reply, request, 400, "VALIDATION_ERROR", `invalid ${field} address`);
