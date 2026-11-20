@@ -1269,6 +1269,7 @@ current template — copy it and fill in the required values.
 | `INDEXER_BACKOFF_MAX_MS` | No | `60000` | Maximum poll retry delay (ms) on RPC failures. |
 | `INDEXER_START_LEDGER` | No | `0` | Ledger to begin indexing from. `0` starts at the chain's latest ledger. |
 | `INDEXER_MAX_PAGES_PER_TICK` | No | `1000` | Maximum number of event pages fetched per poll tick. |
+| `INDEXER_LAG_WARN_LEDGERS` | No | `1000` | Log a warning when the indexer falls more than this many ledgers behind the chain head. Logged once when the lag crosses the threshold and once when it recovers, not on every tick. `0` disables the warning. |
 | `STREAM_SUMMARY_CACHE_TTL_MS` | No | `2000` | Summary endpoint cache window in milliseconds. Set to `0` to disable caching. |
 
 ### Switching to a different contract
