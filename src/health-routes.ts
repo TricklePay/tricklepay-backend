@@ -84,8 +84,8 @@ export function registerHealthRoutes(
                 type: "object",
                 required: ["lagLedgers"],
                 properties: {
-                  lagLedgers: { type: ["integer", "null"] },
-                  stalenessMs: { type: ["integer", "null"] },
+                  lagLedgers: { type: "integer", nullable: true },
+                  stalenessMs: { type: "integer", nullable: true },
                 },
               },
             },
