@@ -49,6 +49,7 @@ This directory contains technical documentation and operational guides for the T
 - [response-headers.md](response-headers.md): Table of which `Cache-Control`, `ETag`, and other headers each endpoint sets, and why, matched against the route code.
 - [request-size-limits.md](request-size-limits.md): Documentation on request body and query string size limits, including defaults, configuration, and rejection behavior.
 - [shutdown-ordering.md](shutdown-ordering.md): Ordered `SIGTERM`/`SIGINT` shutdown sequence and why each step must complete before the next.
+- [test-coverage.md](test-coverage.md): How unit test coverage is measured and reported in CI, and the recorded baseline figures.
 
 ## When to add a new document here
 
