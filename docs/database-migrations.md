@@ -197,7 +197,18 @@ npx prisma migrate deploy
 
 ### Issue 2: "Schema drift detected"
 
-**Cause:** Manual database changes were made outside Prisma's migration system.
+**Cause:** Manual database changes were made outside Prisma's migration system, or migration SQL diverges from `schema.prisma`.
+
+**Checking for Drift:**
+To check whether the database or migration history has drifted from `schema.prisma`:
+```bash
+# Check drift between database and schema.prisma
+npx prisma migrate diff --from-url "$DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --script
+
+# Check drift between migration files and schema.prisma
+npx prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --script
+```
+If the command produces no SQL output, there is no drift. Any printed SQL indicates divergence that must be addressed.
 
 **Solution:**
 ```bash

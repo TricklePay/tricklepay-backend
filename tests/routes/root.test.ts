@@ -69,4 +69,40 @@ describe("GET /", () => {
     const { body } = await getRoot();
     expect(body.contractId).toBe(mockConfig.contractId);
   });
+
+  it("fails when a route is registered on the server but not listed in root endpoints", async () => {
+    const { body } = await getRoot();
+    const listedEndpoints = new Set(
+      body.endpoints.map((e: { method: string; path: string }) => `${e.method} ${e.path}`),
+    );
+
+    const registeredRoutes = [
+      { method: "GET", path: "/health" },
+      { method: "GET", path: "/ready" },
+      { method: "GET", path: "/status" },
+      { method: "GET", path: "/metrics" },
+      { method: "GET", path: "/streams" },
+      { method: "GET", path: "/streams/summary" },
+      { method: "GET", path: "/streams/:id" },
+      { method: "GET", path: "/streams/:id/events" },
+      { method: "GET", path: "/streams/:id/schedule" },
+      { method: "GET", path: "/accounts/:address/summary" },
+      { method: "GET", path: "/tokens" },
+      { method: "GET", path: "/docs" },
+    ];
+
+    for (const route of registeredRoutes) {
+      const key = `${route.method} ${route.path}`;
+      expect(listedEndpoints.has(key), `Registered route ${key} is not listed in root index`).toBe(true);
+    }
+  });
+
+  it("lists all /streams filters including cursor, cancelled, and includeTotal", async () => {
+    const { body } = await getRoot();
+    const streamsEndpoint = body.endpoints.find((e: { path: string }) => e.path === "/streams");
+    expect(streamsEndpoint).toBeDefined();
+    for (const param of ["sender", "recipient", "token", "limit", "offset", "cursor", "cancelled", "includeTotal"]) {
+      expect(streamsEndpoint.description).toContain(param);
+    }
+  });
 });

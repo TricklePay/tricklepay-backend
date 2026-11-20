@@ -1,3 +1,6 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 // ---------------------------------------------------------------------------
 // Shared command-line argument parser used by the prune and replay scripts.
 //
@@ -7,6 +10,19 @@
 //   --key value       → "value" (positional next-token when the next arg
 //                       does not start with "--")
 // ---------------------------------------------------------------------------
+
+/**
+ * Returns true if the file identified by `metaUrl` is the script being executed directly.
+ * Uses `fileURLToPath(metaUrl)` and `path.resolve(argv1)` to safely handle spaces
+ * and percent-encoding in pathnames.
+ */
+export function isMainModule(metaUrl: string, argv1: string | undefined = process.argv[1]): boolean {
+  if (!argv1) return false;
+  return fileURLToPath(metaUrl) === path.resolve(argv1);
+}
+
+export const isMain = isMainModule;
+
 
 /**
  * Parses `process.argv.slice(2)` into a map of flag → value.
