@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import { vi } from "vitest";
 
+import { rootRoutes } from "../../src/routes/root.js";
+
 import { statusRoutes } from "../../src/routes/status.js";
 
 import { streamRoutes } from "../../src/routes/streams.js";
@@ -10,6 +12,7 @@ import { buildServer } from "../../src/server.js";
 
 async function getSpec() {
   const app = await buildServer();
+  await app.register(rootRoutes({ network: "testnet", contractId: "C123" } as any));
   await app.register(streamRoutes);
   await app.register(statusRoutes);
   await app.ready();
@@ -47,6 +50,42 @@ describe("GET /docs/json (OpenAPI spec)", () => {
     expect(info.version).toBeTruthy();
   });
 
+  it("includes a contact entry so readers can reach the maintainers", async () => {
+    const spec = await getSpec();
+    const info = spec.info as { contact?: Record<string, unknown> };
+    expect(info.contact).toBeDefined();
+    expect(info.contact).toHaveProperty("name");
+    expect(info.contact).toHaveProperty("url");
+  });
+
+  it("includes a servers entry built from configuration", async () => {
+    const app = await buildServer({ publicBaseUrl: "https://api.tricklepay.example" });
+    await app.register(streamRoutes);
+    await app.register(statusRoutes);
+    await app.ready();
+
+    const response = await app.inject({ method: "GET", url: "/docs/json" });
+    await app.close();
+
+    const spec = response.json() as { servers?: Array<{ url: string }> };
+    expect(spec.servers).toBeDefined();
+    expect(spec.servers?.length).toBeGreaterThan(0);
+    expect(spec.servers?.[0]?.url).toBe("https://api.tricklepay.example");
+  });
+
+  it("defaults the server URL to the configured host and port", async () => {
+    const app = await buildServer({ host: "0.0.0.0", port: 4321 });
+    await app.register(streamRoutes);
+    await app.register(statusRoutes);
+    await app.ready();
+
+    const response = await app.inject({ method: "GET", url: "/docs/json" });
+    await app.close();
+
+    const spec = response.json() as { servers?: Array<{ url: string }> };
+    expect(spec.servers?.[0]?.url).toBe("http://localhost:4321");
+  });
+
   it("documents the GET /streams path", async () => {
     const spec = await getSpec();
     const paths = spec.paths as Record<string, unknown>;
@@ -60,6 +99,17 @@ describe("GET /docs/json (OpenAPI spec)", () => {
     expect(paths).toHaveProperty("/streams/{id}");
   });
 
+  it("documents the ids query filter and its limit", async () => {
+    const spec = await getSpec();
+    const paths = spec.paths as Record<string, {
+      get: { parameters: { name: string; in: string; schema: { type: string }; description?: string }[] };
+    }>;
+    const ids = paths["/streams"].get.parameters.find((parameter) => parameter.name === "ids");
+    expect(ids).toMatchObject({ name: "ids", in: "query", schema: { type: "string" } });
+    expect(ids?.description).toContain("100");
+    expect(ids?.description).toContain("Unknown ids are omitted");
+  });
+
   it("documents the GET /streams/summary path", async () => {
     const spec = await getSpec();
     const paths = spec.paths as Record<string, unknown>;
@@ -67,10 +117,41 @@ describe("GET /docs/json (OpenAPI spec)", () => {
     expect((paths["/streams/summary"] as Record<string, unknown>)).toHaveProperty("get");
   });
 
+  it("documents the GET /tokens path", async () => {
+    const spec = await getSpec();
+    const paths = spec.paths as Record<string, unknown>;
+    expect(paths).toHaveProperty("/tokens");
+    expect((paths["/tokens"] as Record<string, unknown>)).toHaveProperty("get");
+  });
+
+  it("documents the GET /accounts/:address/summary path", async () => {
+    const spec = await getSpec();
+    const paths = spec.paths as Record<string, unknown>;
+    expect(paths).toHaveProperty("/accounts/{address}/summary");
+    expect((paths["/accounts/{address}/summary"] as Record<string, unknown>)).toHaveProperty("get");
+  });
+
   it("documents the GET /status path", async () => {
     const spec = await getSpec();
     const paths = spec.paths as Record<string, unknown>;
     expect(paths).toHaveProperty("/status");
+  });
+
+  it("documents the configured start ledger in the status response schema", async () => {
+    const spec = await getSpec();
+    const schemas = (
+      spec.components as { schemas?: Record<string, unknown> }
+    )?.schemas ?? {};
+    const indexerStatus = schemas["IndexerStatus"] as {
+      properties?: Record<string, unknown>;
+    };
+    const indexer = indexerStatus.properties?.indexer as {
+      properties?: Record<string, unknown>;
+      required?: string[];
+    };
+
+    expect(indexer.properties).toHaveProperty("startLedger");
+    expect(indexer.required).toContain("startLedger");
   });
 
   it("documents the GET /health path", async () => {
@@ -254,5 +335,23 @@ describe("GET /docs/yaml (OpenAPI spec — YAML)", () => {
     // A minimal sanity check: the body starts with the openapi version line.
     expect(response.body).toContain("openapi:");
     expect(response.body).toContain("TricklePay API");
+  });
+});
+
+
+describe("README endpoint table", () => {
+  it("contains every generated OpenAPI route except documentation endpoints", async () => {
+    const spec = await getSpec();
+    const paths = spec.paths as Record<string, Record<string, unknown>>;
+    const expected = new Set<string>();
+    for (const [path, methods] of Object.entries(paths)) {
+      if (path.startsWith("/docs")) continue;
+      for (const method of Object.keys(methods)) if (["get","post","put","patch","delete","head"].includes(method)) expected.add(`${method.toUpperCase()} ${path}`);
+    }
+    const readme = (await import("node:fs/promises")).readFile(new URL("../../README.md", import.meta.url), "utf8");
+    const actual = new Set<string>();
+    for (const line of (await readme).split("\n")) { const m=line.match(/^\| `?(GET|POST|PUT|PATCH|DELETE|HEAD)`? \| `([^`]+)` \|/); if (m) actual.add(`${m[1]} ${m[2]}`); }
+    expect([...expected].filter((x) => !actual.has(x))).toEqual([]);
+    expect([...actual].filter((x) => !expected.has(x))).toEqual([]);
   });
 });

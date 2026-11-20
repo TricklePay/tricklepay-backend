@@ -1,9 +1,17 @@
 import { PrismaClient } from "@prisma/client";
 
+import { databaseQueryDuration } from "./metrics.js";
+
 // A single Prisma client shared across the process. Each new client opens its
 // own connection pool, so every module imports this one instance rather than
 // constructing its own.
-export const prisma = new PrismaClient();
+export const prisma = new PrismaClient({
+  log: [{ emit: "event", level: "query" }],
+});
+
+prisma.$on("query", (event) => {
+  databaseQueryDuration.observe({}, event.duration);
+});
 
 // ---------------------------------------------------------------------------
 // Bounded reads (#221)

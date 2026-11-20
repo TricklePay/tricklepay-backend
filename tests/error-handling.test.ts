@@ -1,10 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   buildServer,
+} from "../src/server.js";
+
+import {
   errorCodeForStatus,
   redactErrorMessage,
-} from "../src/server.js";
+} from "../src/error-redaction.js";
 
 // Structured error codes (#73): every failure carries a stable machine-
 // readable code derived from the status, without changing messages or status
@@ -26,7 +29,88 @@ describe("errorCodeForStatus (#73)", () => {
   });
 
   it("falls back to REQUEST_ERROR for other client errors", () => {
-    expect(errorCodeForStatus(429)).toBe("REQUEST_ERROR");
+    expect(errorCodeForStatus(429)).toBe("RATE_LIMITED");
+  });
+});
+
+describe("request rate limiting (#381)", () => {
+  it("does not rate limit /health after /streams exhausts the client limit", async () => {
+    const app = await buildServer({ rateLimitMax: 3, rateLimitWindowMs: 5000 });
+    app.get("/streams", async () => ({ streams: [] }));
+
+    try {
+      for (let request = 0; request < 3; request += 1) {
+        const response = await app.inject({ method: "GET", url: "/streams" });
+        expect(response.statusCode).toBe(200);
+      }
+
+      const limited = await app.inject({ method: "GET", url: "/streams" });
+      expect(limited.statusCode).toBe(429);
+
+      const health = await app.inject({ method: "GET", url: "/health" });
+      expect(health.statusCode).toBe(200);
+      expect(health.json()).toMatchObject({ status: "ok" });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("returns Retry-After for the remaining fixed-window duration", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(10_000);
+    const app = await buildServer({ rateLimitMax: 1, rateLimitWindowMs: 5000 });
+    app.get("/rate-limited", async () => ({ status: "ok" }));
+
+    try {
+      const first = await app.inject({ method: "GET", url: "/rate-limited" });
+      expect(first.statusCode).toBe(200);
+
+      now.mockReturnValue(12_100);
+      const limited = await app.inject({ method: "GET", url: "/rate-limited" });
+      expect(limited.statusCode).toBe(429);
+      expect(limited.headers["retry-after"]).toBe("3");
+      expect(limited.json()).toMatchObject({ code: "RATE_LIMITED", error: "rate limit exceeded" });
+
+      now.mockReturnValue(14_100);
+      const nearlyExpired = await app.inject({ method: "GET", url: "/rate-limited" });
+      expect(nearlyExpired.headers["retry-after"]).toBe("1");
+
+      now.mockReturnValue(15_000);
+      const reset = await app.inject({ method: "GET", url: "/rate-limited" });
+      expect(reset.statusCode).toBe(200);
+    } finally {
+      await app.close();
+      now.mockRestore();
+    }
+  });
+  it("evicts the oldest tracked client when the named limit is reached", async () => {
+    const app = await buildServer({ rateLimitMax: 1, maxTrackedRateLimitClients: 2 });
+    app.get("/rate-limited-eviction", async () => ({ status: "ok" }));
+    try {
+      const a = await app.inject({ method: "GET", url: "/rate-limited-eviction", remoteAddress: "10.0.0.1" });
+      const b = await app.inject({ method: "GET", url: "/rate-limited-eviction", remoteAddress: "10.0.0.2" });
+      expect(a.statusCode).toBe(200); expect(b.statusCode).toBe(200);
+      const c = await app.inject({ method: "GET", url: "/rate-limited-eviction", remoteAddress: "10.0.0.3" });
+      expect(c.statusCode).toBe(200);
+      const aAgain = await app.inject({ method: "GET", url: "/rate-limited-eviction", remoteAddress: "10.0.0.1" });
+      expect(aAgain.statusCode).toBe(200);
+    } finally { await app.close(); }
+  });
+
+});
+
+describe("unmatched routes (404)", () => {
+  it("returns the documented error shape, not Fastify's default 404 body", async () => {
+    const app = await buildServer();
+    const response = await app.inject({ method: "GET", url: "/this-route-does-not-exist" });
+    await app.close();
+
+    expect(response.statusCode).toBe(404);
+    expect(response.headers["x-request-id"]).toBeTruthy();
+    expect(response.json()).toEqual({
+      code: "NOT_FOUND",
+      error: "Route GET /this-route-does-not-exist not found",
+      requestId: response.headers["x-request-id"],
+    });
   });
 });
 

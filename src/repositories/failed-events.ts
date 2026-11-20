@@ -15,6 +15,8 @@ import type { StreamEvent } from "../chain/events.js";
 
 import { prisma } from "../db.js";
 
+import { failedEventBacklog } from "../metrics.js";
+
 export interface FailedEventInput {
   // The RPC event id — unique per event on chain and used as the primary key.
   eventId: string;
@@ -23,6 +25,8 @@ export interface FailedEventInput {
   // The stream id as a string (bigint cannot be stored directly in JSON/text).
   streamId: string | null;
   ledger: number;
+  // Transaction hash when available; older callers may omit it.
+  txHash?: string | null;
   // The error message from the most recent failure.
   error: string;
 }
@@ -38,10 +42,12 @@ export async function recordFailedEvent(input: FailedEventInput): Promise<void> 
       kind: input.kind,
       streamId: input.streamId,
       ledger: input.ledger,
+      txHash: input.txHash ?? null,
       error: input.error,
       failureCount: 1,
     },
     update: {
+      txHash: input.txHash ?? undefined,
       error: input.error,
       failureCount: { increment: 1 },
     },
@@ -50,7 +56,19 @@ export async function recordFailedEvent(input: FailedEventInput): Promise<void> 
 
 // Returns the total count of unresolved failed events.
 export async function countFailedEvents(): Promise<number> {
-  return prisma.failedEvent.count();
+  const count = await prisma.failedEvent.count();
+  failedEventBacklog.set(count);
+  return count;
+}
+
+// Refresh telemetry without allowing a metrics-only query failure to interrupt
+// indexing or replay after the underlying event operation has completed.
+export async function refreshFailedEventBacklog(): Promise<void> {
+  try {
+    await countFailedEvents();
+  } catch {
+    // Keep the last observed gauge value until the database is reachable again.
+  }
 }
 
 // Removes the failed-event row for an event that subsequently applied cleanly.
@@ -71,6 +89,11 @@ export async function listFailedEvents({ limit = 100 }: { limit?: number } = {})
   });
 }
 
+// Returns a single failed event row by its eventId, or null when not found.
+export async function getFailedEventById(eventId: string) {
+  return prisma.failedEvent.findUnique({ where: { eventId } });
+}
+
 // Builds a FailedEventInput from a decoded event and an error.
 export function failedEventFromDecoded(
   event: StreamEvent,
@@ -81,6 +104,42 @@ export function failedEventFromDecoded(
     kind: event.kind,
     streamId: event.streamId.toString(),
     ledger: event.ledger,
+    txHash: event.txHash,
     error: error instanceof Error ? error.message : String(error),
   };
+}
+
+export interface PruneFailedEventsOptions {
+  olderThan: Date;
+  dryRun?: boolean;
+}
+
+export interface PruneFailedEventsResult {
+  deletedCount: number;
+  dryRun: boolean;
+  cutoff: Date;
+}
+
+// Prunes failed events whose firstFailedAt timestamp is older than the given cutoff.
+// In dry-run mode, counts the eligible records without deleting them.
+export async function pruneFailedEvents(
+  options: PruneFailedEventsOptions,
+): Promise<PruneFailedEventsResult> {
+  const { olderThan: cutoff, dryRun = false } = options;
+  if (dryRun) {
+    const count = await prisma.failedEvent.count({
+      where: {
+        firstFailedAt: { lt: cutoff },
+      },
+    });
+    return { deletedCount: count, dryRun: true, cutoff };
+  }
+
+  const result = await prisma.failedEvent.deleteMany({
+    where: {
+      firstFailedAt: { lt: cutoff },
+    },
+  });
+  await refreshFailedEventBacklog();
+  return { deletedCount: result.count, dryRun: false, cutoff };
 }

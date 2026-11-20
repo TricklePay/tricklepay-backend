@@ -98,7 +98,7 @@ This document describes the end-to-end journey of an HTTP request through the Tr
 - **Action**: Evaluates linear vesting formulas at the exact wall-clock second of the request, computing derived fields (`vested`, `withdrawable`, `locked`, `progress`, `status`).
 
 ### Layer 7: Response Serialization & Cache Headers (`src/routes/`)
-- **Action**: Sets caching headers (e.g. `Cache-Control: public, max-age=30` and `ETag: "<updatedLedger>"`). Evaluates `If-None-Match` and returns `304 Not Modified` when applicable.
+- **Action**: Sets caching headers (`Cache-Control: public, max-age=30`). `GET /streams/:id` sets `ETag: "<updatedLedger>"`; `GET /streams` sets a weak `ETag` derived from the response body. Both evaluate `If-None-Match` and return `304 Not Modified` with no body when it matches.
 
 ### Layer 8: Metrics, Logging & Error Handling (`src/server.ts`)
 - **Hook**: `onResponse` and `app.setErrorHandler()`.

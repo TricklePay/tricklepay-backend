@@ -3,9 +3,15 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_MAX_BACKOFF_MS,
   DEFAULT_MAX_PAGES_PER_TICK,
+  DEFAULT_RATE_LIMIT_MAX,
+  DEFAULT_RATE_LIMIT_WINDOW_MS,
+  DEFAULT_READINESS_RETRY_AFTER_SECONDS,
+  DEFAULT_COMPRESSION_THRESHOLD_BYTES,
+  DEFAULT_STREAM_SUMMARY_CACHE_TTL_MS,
   MIN_POLL_INTERVAL_MS,
   isLocalUrl,
   loadConfig,
+  type Config,
 } from "../src/config.js";
 
 // `isLocalUrl` is tested in isolation first, then `loadConfig` is exercised
@@ -44,6 +50,25 @@ function withEnv(overrides: Record<string, string | undefined>, fn: () => void) 
   }
 }
 
+describe("loadConfig network passphrases", () => {
+  it.each([
+    ["testnet", "Test SDF Network ; September 2015"],
+    ["mainnet", "Public Global Stellar Network ; September 2015"],
+  ])("uses the exact Stellar passphrase for %s", (network, passphrase) => {
+    withEnv({ NETWORK: network, SOROBAN_RPC_URL: undefined }, () => {
+      expect(loadConfig().networkPassphrase).toBe(passphrase);
+    });
+  });
+
+  it("rejects an unknown network with the existing error", () => {
+    withEnv({ NETWORK: "unknown", SOROBAN_RPC_URL: undefined }, () => {
+      expect(() => loadConfig()).toThrow(
+        'Unknown NETWORK "unknown"; expected "testnet" or "mainnet"',
+      );
+    });
+  });
+});
+
 describe("isLocalUrl", () => {
   it("accepts localhost", () => {
     expect(isLocalUrl("http://localhost:8000")).toBe(true);
@@ -56,6 +81,11 @@ describe("isLocalUrl", () => {
   it("accepts other 127.x.x.x addresses", () => {
     expect(isLocalUrl("http://127.0.0.2:8000")).toBe(true);
     expect(isLocalUrl("http://127.1.2.3")).toBe(true);
+    expect(isLocalUrl("http://127.5.5.5")).toBe(true);
+  });
+
+  it("accepts the IPv6 loopback", () => {
+    expect(isLocalUrl("http://[::1]:8000")).toBe(true);
   });
 
   it("rejects a public hostname", () => {
@@ -74,6 +104,11 @@ describe("isLocalUrl", () => {
   it("is not confused by a hostname that merely contains '127'", () => {
     expect(isLocalUrl("http://host127.example.com")).toBe(false);
   });
+
+  it("rejects a public hostname that merely begins with '127.'", () => {
+    expect(isLocalUrl("http://127.evil.com/rpc")).toBe(false);
+    expect(isLocalUrl("http://127.0.0.1.attacker.io/rpc")).toBe(false);
+  });
 });
 
 describe("loadConfig — default values for unset optional settings", () => {
@@ -90,7 +125,11 @@ describe("loadConfig — default values for unset optional settings", () => {
         INDEXER_START_LEDGER: undefined,
         INDEXER_BACKOFF_MAX_MS: undefined,
         INDEXER_MAX_PAGES_PER_TICK: undefined,
+        STREAM_SUMMARY_CACHE_TTL_MS: undefined,
         TRUSTED_PROXIES: undefined,
+        READINESS_RETRY_AFTER_SECONDS: undefined,
+        PUBLIC_BASE_URL: undefined,
+        COMPRESSION_THRESHOLD_BYTES: undefined,
       },
       () => {
         expect(loadConfig()).toMatchObject({
@@ -98,16 +137,52 @@ describe("loadConfig — default values for unset optional settings", () => {
           rpcUrl: "https://soroban-testnet.stellar.org",
           port: 3000,
           host: "0.0.0.0",
+          publicBaseUrl: "http://localhost:3000",
           pollIntervalMs: 5000,
           startLedger: 0,
           maxBackoffMs: DEFAULT_MAX_BACKOFF_MS,
           maxPagesPerTick: DEFAULT_MAX_PAGES_PER_TICK,
+          summaryCacheTtlMs: DEFAULT_STREAM_SUMMARY_CACHE_TTL_MS,
           bodyLimit: 1048576,
           queryStringLimit: 2048,
+          compressionThresholdBytes: DEFAULT_COMPRESSION_THRESHOLD_BYTES,
           trustedProxies: [],
+          rateLimitMax: DEFAULT_RATE_LIMIT_MAX,
+          rateLimitWindowMs: DEFAULT_RATE_LIMIT_WINDOW_MS,
+          readinessRetryAfterSeconds: DEFAULT_READINESS_RETRY_AFTER_SECONDS,
         });
       },
     );
+  });
+
+  it("loads custom request rate limits", () => {
+    withEnv({ RATE_LIMIT_MAX: "25", RATE_LIMIT_WINDOW_MS: "30000" }, () => {
+      expect(loadConfig()).toMatchObject({ rateLimitMax: 25, rateLimitWindowMs: 30000 });
+    });
+  });
+
+  it("loads a custom readiness Retry-After value", () => {
+    withEnv({ READINESS_RETRY_AFTER_SECONDS: "30" }, () => {
+      expect(loadConfig().readinessRetryAfterSeconds).toBe(30);
+    });
+  });
+
+  it("loads an explicit public base URL", () => {
+    withEnv({ PUBLIC_BASE_URL: "https://api.tricklepay.example" }, () => {
+      expect(loadConfig().publicBaseUrl).toBe("https://api.tricklepay.example");
+    });
+  });
+
+  it("derives the public base URL from the configured host and port", () => {
+    withEnv({ HOST: "api.internal", PORT: "8080", PUBLIC_BASE_URL: undefined }, () => {
+      expect(loadConfig().publicBaseUrl).toBe("http://api.internal:8080");
+    });
+  });
+
+  it("loads a custom compression threshold", () => {
+    withEnv({ COMPRESSION_THRESHOLD_BYTES: "4096" }, () => {
+      expect(loadConfig().compressionThresholdBytes).toBe(4096);
+    });
   });
 
   it("switches the default RPC URL to the selected network", () => {
@@ -116,6 +191,25 @@ describe("loadConfig — default values for unset optional settings", () => {
         network: "mainnet",
         rpcUrl: "https://mainnet.sorobanrpc.com",
       });
+    });
+  });
+});
+
+describe("loadConfig — STREAM_SUMMARY_CACHE_TTL_MS", () => {
+  it("accepts a configured non-negative TTL", () => {
+    withEnv({ STREAM_SUMMARY_CACHE_TTL_MS: "2500" }, () => {
+      expect(loadConfig().summaryCacheTtlMs).toBe(2500);
+    });
+    withEnv({ STREAM_SUMMARY_CACHE_TTL_MS: "0" }, () => {
+      expect(loadConfig().summaryCacheTtlMs).toBe(0);
+    });
+  });
+
+  it("rejects negative values", () => {
+    withEnv({ STREAM_SUMMARY_CACHE_TTL_MS: "-1" }, () => {
+      expect(() => loadConfig()).toThrow(
+        "Environment variable STREAM_SUMMARY_CACHE_TTL_MS must be a non-negative integer",
+      );
     });
   });
 });
@@ -410,4 +504,72 @@ describe("loadConfig — TRUSTED_PROXIES validation", () => {
     });
   });
 });
+
+describe("loadConfig — readonly configuration (#369)", () => {
+  it("type prevents mutation of configuration properties", () => {
+    // Verified at compile time via @ts-expect-error; typecheck fails if properties are mutable
+    const mutate = (config: Config) => {
+      // @ts-expect-error - mutation must fail typecheck (#369)
+      config.port = 8080;
+      // @ts-expect-error - mutation must fail typecheck (#369)
+      config.host = "127.0.0.1";
+      // @ts-expect-error - array mutation must fail typecheck (#369)
+      config.trustedProxies.push("192.168.1.1");
+    };
+    expect(mutate).toBeDefined();
+  });
+});
+
+describe("loadConfig — ENABLE_DOCS_UI", () => {
+  it("enables the interactive docs by default", () => {
+    withEnv({ ENABLE_DOCS_UI: undefined }, () => {
+      expect(loadConfig().enableDocsUi).toBe(true);
+    });
+    withEnv({ ENABLE_DOCS_UI: "   " }, () => {
+      expect(loadConfig().enableDocsUi).toBe(true);
+    });
+  });
+
+  it("disables the UI for false spellings", () => {
+    for (const value of ["false", "0", "no", "off", "FALSE"]) {
+      withEnv({ ENABLE_DOCS_UI: value }, () => {
+        expect(loadConfig().enableDocsUi).toBe(false);
+      });
+    }
+  });
+
+  it("keeps the UI for true spellings", () => {
+    for (const value of ["true", "1", "yes", "on"]) {
+      withEnv({ ENABLE_DOCS_UI: value }, () => {
+        expect(loadConfig().enableDocsUi).toBe(true);
+      });
+    }
+  });
+
+  it("rejects an unrecognised value instead of guessing", () => {
+    withEnv({ ENABLE_DOCS_UI: "flase" }, () => {
+      expect(() => loadConfig()).toThrow(
+        'Environment variable ENABLE_DOCS_UI must be "true" or "false"',
+      );
+    });
+  });
+});
+
+describe("loadConfig — METRICS_TOKEN", () => {
+  it("leaves the endpoint unauthenticated when unset or blank", () => {
+    withEnv({ METRICS_TOKEN: undefined }, () => {
+      expect(loadConfig().metricsToken).toBeUndefined();
+    });
+    withEnv({ METRICS_TOKEN: "   " }, () => {
+      expect(loadConfig().metricsToken).toBeUndefined();
+    });
+  });
+
+  it("keeps a configured token, trimmed", () => {
+    withEnv({ METRICS_TOKEN: "  s3cret  " }, () => {
+      expect(loadConfig().metricsToken).toBe("s3cret");
+    });
+  });
+});
+
 

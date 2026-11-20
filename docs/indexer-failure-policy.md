@@ -7,6 +7,7 @@ When the indexer encounters a contract event that cannot be successfully process
 1. **The event is logged**: The failure is written to the server logs with the event ID, ledger, stream ID, and error details.
 2. **The failure is recorded**: A row is inserted or updated in the `FailedEvent` table with:
    - The event ID and ledger sequence
+   - The transaction hash when available
    - The decoded event kind (or `"unknown"` if decoding itself failed)
    - The target stream ID when available
    - The error message from the failed attempt
@@ -44,6 +45,7 @@ Failed events are stored in the **`FailedEvent` table** in PostgreSQL. Each row 
 | `kind` | The decoded event type (`created`, `withdrawn`, `cancelled`, or `unknown`) |
 | `streamId` | The target stream ID as a string, when available |
 | `ledger` | The ledger sequence where the event was observed |
+| `txHash` | Transaction hash when available; null for older rows or unavailable hashes |
 | `error` | The exception message from the most recent failure |
 | `failureCount` | Number of times this event has failed to apply |
 | `firstFailedAt` | Timestamp of the first failure |
@@ -55,7 +57,7 @@ Failed events can be inspected using:
 
 **SQL query** (direct database access):
 ```sql
-SELECT "eventId", "kind", "streamId", "ledger", "failureCount", "error" 
+SELECT "eventId", "kind", "streamId", "ledger", "txHash", "failureCount", "error" 
 FROM "FailedEvent" 
 ORDER BY "ledger" ASC 
 LIMIT 20;

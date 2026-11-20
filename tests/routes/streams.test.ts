@@ -1,6 +1,6 @@
 import Fastify from "fastify";
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Tests for stream routes: caching, filtering, pagination, ordering, and validation.
 
@@ -48,22 +48,36 @@ function makeStream(overrides: Record<string, unknown> = {}) {
   };
 }
 
-async function getStreamById(id: string, headers: Record<string, string> = {}) {
+async function getStreamById(id: string, headers: Record<string, string> = {}, query = "") {
   const app = Fastify();
   await app.register(streamRoutes);
   const response = await app.inject({
     method: "GET",
-    url: `/streams/${id}`,
+    url: `/streams/${id}${query ? `?${query}` : ""}`,
     headers,
   });
   await app.close();
   return response;
 }
 
-async function listRequest(url: string) {
+async function getStreamSchedule(id: string, query = "") {
   const app = Fastify();
   await app.register(streamRoutes);
-  const response = await app.inject({ method: "GET", url });
+  const response = await app.inject({
+    method: "GET",
+    url: `/streams/${id}/schedule${query ? `?${query}` : ""}`,
+  });
+  await app.close();
+  return response;
+}
+
+async function listRequest(
+  url: string,
+  options: { summaryCacheTtlMs?: number; headers?: Record<string, string> } = {},
+) {
+  const app = Fastify();
+  await app.register(streamRoutes, options);
+  const response = await app.inject({ method: "GET", url, headers: options.headers });
   await app.close();
   return response;
 }
@@ -71,6 +85,22 @@ async function listRequest(url: string) {
 beforeEach(() => {
   vi.resetAllMocks();
 });
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+async function headStreamById(id: string, headers: Record<string, string> = {}) {
+  const app = Fastify();
+  await app.register(streamRoutes);
+  const response = await app.inject({
+    method: "HEAD",
+    url: `/streams/${id}`,
+    headers,
+  });
+  await app.close();
+  return response;
+}
 
 describe("GET /streams/:id", () => {
   it("returns cache-control header", async () => {
@@ -110,6 +140,206 @@ describe("GET /streams/:id", () => {
     expect(response.statusCode).toBe(404);
     expect(response.headers["cache-control"]).toBeUndefined();
   });
+
+  it("includes createdLedger and updatedLedger in the stream view (#491)", async () => {
+    streamsRepo.getStream.mockResolvedValue(
+      makeStream({ createdLedger: 12345, updatedLedger: 67890 }),
+    );
+    const response = await getStreamById("42");
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.createdLedger).toBe(12345);
+    expect(body.updatedLedger).toBe(67890);
+  });
+
+  it("computes derived figures as of the timestamp provided in the at query parameter (#492)", async () => {
+    // Stream starts at 1000, cliff at 1500, ends at 2000, total amount 1000
+    const stream = makeStream({
+      totalAmount: { toString: () => "1000" },
+      withdrawn: { toString: () => "100" },
+      startTime: 1000n,
+      cliffTime: 1500n,
+      endTime: 2000n,
+      cancelled: false,
+    });
+    streamsRepo.getStream.mockResolvedValue(stream);
+
+    // 1. Before cliff: at=1200
+    const beforeCliff = await getStreamById("42", {}, "at=1200");
+    expect(beforeCliff.statusCode).toBe(200);
+    const b1 = beforeCliff.json();
+    expect(b1.vested).toBe("0");
+    expect(b1.withdrawable).toBe("0");
+    expect(b1.locked).toBe("1000");
+    expect(b1.progress).toBe(0);
+    expect(b1.status).toBe("streaming");
+
+    // 2. Midway past cliff: at=1750 (750 elapsed out of 1000 => 750 vested)
+    const midStream = await getStreamById("42", {}, "at=1750");
+    expect(midStream.statusCode).toBe(200);
+    const b2 = midStream.json();
+    expect(b2.vested).toBe("750");
+    expect(b2.withdrawable).toBe("650"); // 750 - 100 withdrawn
+    expect(b2.locked).toBe("250");
+    expect(b2.progress).toBe(7500);
+    expect(b2.status).toBe("streaming");
+
+    // 3. Past end: at=2500
+    const pastEnd = await getStreamById("42", {}, "at=2500");
+    expect(pastEnd.statusCode).toBe(200);
+    const b3 = pastEnd.json();
+    expect(b3.vested).toBe("1000");
+    expect(b3.withdrawable).toBe("900"); // 1000 - 100 withdrawn
+    expect(b3.locked).toBe("0");
+    expect(b3.progress).toBe(10000);
+    expect(b3.status).toBe("completed");
+  });
+
+  it("returns 400 for invalid at query parameter (#492)", async () => {
+    streamsRepo.getStream.mockResolvedValue(makeStream());
+
+    const res1 = await getStreamById("42", {}, "at=not-a-number");
+    expect(res1.statusCode).toBe(400);
+    expect(res1.json().code).toBe("VALIDATION_ERROR");
+
+    const res2 = await getStreamById("42", {}, "at=-100");
+    expect(res2.statusCode).toBe(400);
+    expect(res2.json().code).toBe("VALIDATION_ERROR");
+
+    const res3 = await getStreamById("42", {}, "at=12.34");
+    expect(res3.statusCode).toBe(400);
+    expect(res3.json().code).toBe("VALIDATION_ERROR");
+  });
+});
+
+describe("GET /streams/:id/schedule (#493)", () => {
+  it("returns vesting schedule points including the cliff step", async () => {
+    // 1000 total, start 1000, cliff 1500, end 2000
+    const stream = makeStream({
+      totalAmount: { toString: () => "1000" },
+      startTime: 1000n,
+      cliffTime: 1500n,
+      endTime: 2000n,
+    });
+    streamsRepo.getStream.mockResolvedValue(stream);
+
+    const response = await getStreamSchedule("42", "points=11");
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["cache-control"]).toBe("public, max-age=30");
+
+    const { points } = response.json();
+    expect(Array.isArray(points)).toBe(true);
+    expect(points.length).toBe(11);
+
+    // Verify first and last points
+    expect(points[0].time).toBe("1000");
+    expect(points[0].amount).toBe("0");
+    expect(points[0].vested).toBe("0");
+
+    const last = points[points.length - 1];
+    expect(last.time).toBe("2000");
+    expect(last.amount).toBe("1000");
+    expect(last.vested).toBe("1000");
+
+    // Verify cliff point is present with correct cliff step arithmetic
+    const cliffPoint = points.find((p: any) => p.time === "1500");
+    expect(cliffPoint).toBeDefined();
+    expect(cliffPoint.amount).toBe("500"); // (1000 * 500) / 1000 = 500
+    expect(cliffPoint.vested).toBe("500");
+
+    // Any point before cliff should be 0
+    const beforeCliff = points.filter((p: any) => BigInt(p.time) < 1500n);
+    for (const p of beforeCliff) {
+      expect(p.amount).toBe("0");
+      expect(p.vested).toBe("0");
+    }
+  });
+
+  it("caps the number of points and defaults to 50", async () => {
+    streamsRepo.getStream.mockResolvedValue(
+      makeStream({
+        totalAmount: { toString: () => "1000" },
+        startTime: 1000n,
+        cliffTime: 1000n,
+        endTime: 2000n,
+      }),
+    );
+
+    // Default count
+    const defaultRes = await getStreamSchedule("42");
+    expect(defaultRes.statusCode).toBe(200);
+    expect(defaultRes.json().points.length).toBe(50);
+
+    // Capped to max (100)
+    const cappedRes = await getStreamSchedule("42", "points=500");
+    expect(cappedRes.statusCode).toBe(200);
+    expect(cappedRes.json().points.length).toBe(100);
+
+    // Configurable lower count
+    const smallRes = await getStreamSchedule("42", "points=5");
+    expect(smallRes.statusCode).toBe(200);
+    expect(smallRes.json().points.length).toBe(5);
+  });
+
+  it("returns 400 for invalid points parameter", async () => {
+    streamsRepo.getStream.mockResolvedValue(makeStream());
+
+    const res1 = await getStreamSchedule("42", "points=abc");
+    expect(res1.statusCode).toBe(400);
+    expect(res1.json().code).toBe("VALIDATION_ERROR");
+
+    const res2 = await getStreamSchedule("42", "points=-5");
+    expect(res2.statusCode).toBe(400);
+    expect(res2.json().code).toBe("VALIDATION_ERROR");
+
+    const res3 = await getStreamSchedule("42", "points=0");
+    expect(res3.statusCode).toBe(400);
+    expect(res3.json().code).toBe("VALIDATION_ERROR");
+  });
+
+  it("returns 404 for unknown stream schedule", async () => {
+    streamsRepo.getStream.mockResolvedValue(null);
+    const response = await getStreamSchedule("999");
+    expect(response.statusCode).toBe(404);
+  });
+
+  it("returns 400 for invalid stream id on schedule route", async () => {
+    const response = await getStreamSchedule("not-an-id");
+    expect(response.statusCode).toBe(400);
+  });
+});
+
+describe("HEAD /streams/:id", { timeout: 20000 }, () => {
+  it("returns the same status and headers as GET without a body", async () => {
+    streamsRepo.getStream.mockResolvedValue(makeStream({ updatedLedger: 200 }));
+    const getResponse = await getStreamById("42");
+    const headResponse = await headStreamById("42");
+
+    expect(headResponse.statusCode).toBe(getResponse.statusCode);
+    expect(headResponse.statusCode).toBe(200);
+    expect(headResponse.body).toBe("");
+    expect(headResponse.headers["etag"]).toBe(getResponse.headers["etag"]);
+    expect(headResponse.headers["cache-control"]).toBe(getResponse.headers["cache-control"]);
+    expect(headResponse.headers["content-type"]).toBe(getResponse.headers["content-type"]);
+    expect(headResponse.headers["content-length"]).toBe(getResponse.headers["content-length"]);
+  });
+
+  it("returns 404 without a body for an unknown id", async () => {
+    streamsRepo.getStream.mockResolvedValue(null);
+    const response = await headStreamById("999");
+
+    expect(response.statusCode).toBe(404);
+    expect(response.body).toBe("");
+    expect(response.headers["cache-control"]).toBeUndefined();
+  });
+
+  it("returns 304 without a body when If-None-Match matches", async () => {
+    streamsRepo.getStream.mockResolvedValue(makeStream({ updatedLedger: 200 }));
+    const response = await headStreamById("42", { "if-none-match": '"200"' });
+
+    expect(response.statusCode).toBe(304);
+    expect(response.body).toBe("");
+  });
 });
 
 describe("GET /streams", () => {
@@ -118,6 +348,61 @@ describe("GET /streams", () => {
     streamsRepo.countStreams.mockResolvedValue(0);
     const response = await listRequest("/streams");
     expect(response.headers["cache-control"]).toBe("public, max-age=30");
+  });
+
+  it("returns a weak ETag derived from the response body", async () => {
+    streamsRepo.listStreams.mockResolvedValue({ streams: [makeStream()] });
+    const response = await listRequest("/streams");
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["etag"]).toMatch(/^W\/"[0-9a-f]{64}"$/);
+  });
+
+  it("returns the same ETag for identical bodies", async () => {
+    streamsRepo.listStreams.mockResolvedValue({ streams: [makeStream()] });
+    const first = await listRequest("/streams");
+    streamsRepo.listStreams.mockResolvedValue({ streams: [makeStream()] });
+    const second = await listRequest("/streams");
+    expect(second.headers["etag"]).toBe(first.headers["etag"]);
+  });
+
+  it("returns a different ETag when the body changes", async () => {
+    streamsRepo.listStreams.mockResolvedValue({ streams: [makeStream()] });
+    const first = await listRequest("/streams");
+    streamsRepo.listStreams.mockResolvedValue({
+      streams: [makeStream({ updatedLedger: 999 })],
+    });
+    const second = await listRequest("/streams");
+    expect(second.headers["etag"]).not.toBe(first.headers["etag"]);
+  });
+
+  it("returns 304 with no body when If-None-Match matches", async () => {
+    streamsRepo.listStreams.mockResolvedValue({ streams: [makeStream()] });
+    const initial = await listRequest("/streams");
+
+    streamsRepo.listStreams.mockResolvedValue({ streams: [makeStream()] });
+    const revalidated = await listRequest("/streams", {
+      headers: { "if-none-match": initial.headers["etag"] as string },
+    });
+
+    expect(revalidated.statusCode).toBe(304);
+    expect(revalidated.body).toBe("");
+  });
+
+  it("returns the full body when If-None-Match does not match", async () => {
+    streamsRepo.listStreams.mockResolvedValue({ streams: [makeStream()] });
+    const response = await listRequest("/streams", {
+      headers: { "if-none-match": 'W/"does-not-match"' },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toHaveProperty("streams");
+  });
+
+  it("returns the full body with a malformed If-None-Match header", async () => {
+    streamsRepo.listStreams.mockResolvedValue({ streams: [makeStream()] });
+    const response = await listRequest("/streams", {
+      headers: { "if-none-match": "not-a-valid-etag" },
+    });
+    expect(response.statusCode).toBe(200);
   });
 
   it("uses the documented default pagination when no params are supplied", async () => {
@@ -599,7 +884,7 @@ describe("GET /streams/summary", () => {
     });
     const response = await listRequest("/streams/summary");
     expect(response.statusCode).toBe(200);
-    expect(response.headers["cache-control"]).toBe("public, max-age=30");
+    expect(response.headers["cache-control"]).toBe("public, max-age=2");
     expect(response.json()).toEqual({
       pending: { count: 0, totalAmount: "0", withdrawn: "0" },
       streaming: { count: 0, totalAmount: "0", withdrawn: "0" },
@@ -623,6 +908,53 @@ describe("GET /streams/summary", () => {
       completed: { count: 3, totalAmount: "99999999999999999999999999", withdrawn: "42" },
       cancelled: { count: 4, totalAmount: "12345", withdrawn: "12345" },
     });
+  });
+
+  it("serves cached aggregates only until the configured TTL expires", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    let generation = 0;
+    streamsRepo.aggregateStreams.mockImplementation(() =>
+      Promise.resolve(
+        generation === 0
+          ? { count: 1, totalAmount: "100", withdrawn: "0" }
+          : { count: 2, totalAmount: "200", withdrawn: "25" },
+      ),
+    );
+
+    const app = Fastify();
+    await app.register(streamRoutes, { summaryCacheTtlMs: 2000 });
+    const first = await app.inject({ method: "GET", url: "/streams/summary" });
+    vi.advanceTimersByTime(1500);
+    const cached = await app.inject({ method: "GET", url: "/streams/summary" });
+    generation = 1;
+    vi.advanceTimersByTime(500);
+    const expired = await app.inject({ method: "GET", url: "/streams/summary" });
+    await app.close();
+
+    expect(first.headers["cache-control"]).toBe("public, max-age=2");
+    expect(cached.headers["cache-control"]).toBe("public, max-age=0");
+    expect(first.json().pending).toEqual({ count: 1, totalAmount: "100", withdrawn: "0" });
+    expect(cached.json()).toEqual(first.json());
+    expect(expired.json().pending).toEqual({ count: 2, totalAmount: "200", withdrawn: "25" });
+    expect(expired.json()).not.toEqual(first.json());
+    expect(streamsRepo.aggregateStreams).toHaveBeenCalledTimes(8);
+    expect(expired.statusCode).toBe(200);
+  });
+
+  it("does not cache when the configured TTL is zero", async () => {
+    streamsRepo.aggregateStreams.mockResolvedValue({
+      count: 0,
+      totalAmount: "0",
+      withdrawn: "0",
+    });
+    const app = Fastify();
+    await app.register(streamRoutes, { summaryCacheTtlMs: 0 });
+    await app.inject({ method: "GET", url: "/streams/summary" });
+    await app.inject({ method: "GET", url: "/streams/summary" });
+    await app.close();
+
+    expect(streamsRepo.aggregateStreams).toHaveBeenCalledTimes(8);
   });
 });
 

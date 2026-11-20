@@ -6,7 +6,7 @@ This document defines the versioning policy, stability guarantees, and change ma
 
 The TricklePay API is a contract between the backend service, the web client (`tricklepay-frontend`), indexers, and third-party integrations.
 
-- **Current API Status**: The primary endpoints (`/`, `/health`, `/ready`, `/status`, `/streams`, `/streams/summary`, `/streams/:id`, `/metrics`, `/docs`) represent **v1 (stable)**.
+- **Current API Status**: The following endpoints represent **v1 (stable)**: `/`, `/health`, `/ready`, `/status`, `/streams`, `/streams/summary`, `/streams/:id`, `/streams/:id/events`, `/streams/:id/schedule`, `/metrics`, and `/docs`.
 - **Specification**: The authoritative API specification is served live via OpenAPI 3.0 at `/docs`, `/docs/json`, and `/docs/yaml`.
 
 ---
@@ -24,7 +24,7 @@ A change is considered **breaking** if it requires client authors to modify thei
 
 ### Non-Breaking Changes (Released in Minor or Patch Updates)
 - **Adding Optional Query Parameters**: Introducing new optional filters or pagination controls.
-- **Adding New Response Fields**: Introducing new additive fields to JSON responses (client parsers should ignore unknown keys).
+- **Adding Optional Response Fields**: New optional fields may be added to JSON responses without a major version increment. These additions are non-breaking; clients should ignore unknown response fields.
 - **Adding New Endpoints**: Introducing new routes that do not alter existing paths.
 - **Performance & Bug Fixes**: Internal optimizations that maintain existing schema and contract semantics.
 

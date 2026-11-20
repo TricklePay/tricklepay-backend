@@ -7,7 +7,12 @@ import { countFailedEvents } from "../repositories/failed-events.js";
 
 import { getIndexerPosition } from "../repositories/indexer-state.js";
 
+import type { Poller } from "../indexer/poller.js";
+
+import { INDEXER_STATUS_SCHEMA_ID, indexerStatusSchema } from "../schema.js";
+
 // The default TTL for the server-side status cache. Kept short (2 s) so
+
 // monitoring tools get a reasonably fresh view without hammering the database
 // on every poll. The value is exported so tests can pass a custom TTL and
 // exercise expiry without sleeping for the production window.
@@ -16,9 +21,12 @@ export const STATUS_CACHE_TTL_MS = 2_000;
 type StatusPayload = {
   indexer: {
     initialized: boolean;
+    startLedger: number;
     lastLedger: number;
     cursor: string | null;
     updatedAt: string | null;
+    consecutiveFailures: number;
+    nextPollAt: string | null;
   };
   chain: { latestLedger: number };
   lagLedgers: number | null;
@@ -26,7 +34,7 @@ type StatusPayload = {
 };
 
 // Simple in-process TTL cache: one slot, refreshed whenever the entry is older
-// than `ttlMs`. Extracted as a factory so each plugin registration gets its own
+// than `ttlM`'. Extracted as a factory so each plugin registration gets its own
 // independent cache, which keeps tests isolated from one another.
 function makeStatusCache(ttlMs: number) {
   let cachedAt = -Infinity;
@@ -46,6 +54,10 @@ function makeStatusCache(ttlMs: number) {
 export type StatusRoutesOptions = {
   /** Override the cache TTL (milliseconds). Defaults to STATUS_CACHE_TTL_MS. */
   cacheTtlMs?: number;
+  /** Configured ledger from which indexing begins when there is no saved cursor. */
+  startLedger?: number;
+  /** Live poller instance so /status can report in-process failure counts and backoff state. */
+  poller?: Poller;
 };
 
 // Reports how far the indexer has progressed, so an operator or monitor can see
@@ -58,44 +70,71 @@ export type StatusRoutesOptions = {
 // of the indexer's last completed poll. `updatedAt` is when that was: an
 // indexer that has stopped leaves a lag that no longer grows, and this is what
 // tells that apart from one that is genuinely level.
+//
+// Readiness is served separately by `/ready` (see registerHealthRoutes in
+// health-routes.ts), not by this module.
 export async function statusRoutes(
   app: FastifyInstance,
   opts: StatusRoutesOptions = {},
 ): Promise<void> {
   const ttlMs = opts.cacheTtlMs ?? STATUS_CACHE_TTL_MS;
+  const startLedger = opts.startLedger ?? 0;
+  const poller = opts.poller;
   const cache = makeStatusCache(ttlMs);
 
-  app.get("/status", async (_request, reply) => {
-    const now = Date.now();
-    const hit = cache.get(now);
-    if (hit !== null) {
+  if (!app.getSchema(INDEXER_STATUS_SCHEMA_ID)) app.addSchema(indexerStatusSchema);
+
+  app.get(
+    "/status",
+    {
+      schema: {
+        summary: "Report indexer progress",
+        description:
+          "Reports the configured start ledger alongside the indexer's current position, chain head, and lag.",
+        tags: ["indexer"],
+        response: {
+          200: { $ref: INDEXER_STATUS_SCHEMA_ID },
+        },
+      },
+    },
+    async (_request, reply) => {
+      const now = Date.now();
+      const hit = cache.get(now);
+      if (hit !== null) {
+        reply.header("Cache-Control", "no-store");
+        return hit;
+      }
+
+      const position = await getIndexerPosition();
+      const failedEventCount = await countFailedEvents();
+
+      const consecutiveFailures = poller?.getConsecutiveFailures() ?? 0;
+      const nextPollAtSeconds = poller?.getNextPollAt() ?? 0;
+
+      const payload: StatusPayload = {
+        indexer: {
+          initialized: position !== null,
+          startLedger,
+          lastLedger: position?.lastLedger ?? 0,
+          cursor: position?.cursor ?? null,
+          updatedAt: position?.updatedAt.toISOString() ?? null,
+          consecutiveFailures,
+          nextPollAt:
+            nextPollAtSeconds > 0 ? new Date(nextPollAtSeconds * 1000).toISOString() : null,
+        },
+        chain: {
+          latestLedger: position?.chainLedger ?? 0,
+        },
+        // Ledgers behind the chain, or null before the first poll has recorded
+        // anything to measure against. Never negative: the head is read in the
+        // same poll that applies the events, so the position cannot outrun it.
+        lagLedgers: position ? Math.max(0, position.chainLedger - position.lastLedger) : null,
+        failedEventCount,
+      };
+
+      cache.set(payload, now);
       reply.header("Cache-Control", "no-store");
-      return hit;
-    }
-
-    const position = await getIndexerPosition();
-    const failedEventCount = await countFailedEvents();
-
-    const payload: StatusPayload = {
-      indexer: {
-        initialized: position !== null,
-        lastLedger: position?.lastLedger ?? 0,
-        cursor: position?.cursor ?? null,
-        updatedAt: position?.updatedAt.toISOString() ?? null,
-      },
-      chain: {
-        latestLedger: position?.chainLedger ?? 0,
-      },
-      // Ledgers behind the chain, or null before the first poll has recorded
-      // anything to measure against. Never negative: the head is read in the
-      // same poll that applies the events, so the position cannot outrun it.
-      lagLedgers: position ? Math.max(0, position.chainLedger - position.lastLedger) : null,
-      failedEventCount,
-    };
-
-    cache.set(payload, now);
-    reply.header("Cache-Control", "no-store");
-    return payload;
-  });
+      return payload;
+    },
+  );
 }
-

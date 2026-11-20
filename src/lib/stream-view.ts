@@ -7,6 +7,7 @@
 
 import type { Stream } from "@prisma/client";
 
+import { nowSeconds } from "./time.js";
 import { vestedAmount, withdrawableAmount } from "./vesting.js";
 
 // ---------------------------------------------------------------------------
@@ -14,10 +15,6 @@ import { vestedAmount, withdrawableAmount } from "./vesting.js";
 // ---------------------------------------------------------------------------
 
 type StreamStatus = "pending" | "streaming" | "completed" | "cancelled";
-
-function nowSeconds(): bigint {
-  return BigInt(Math.floor(Date.now() / 1000));
-}
 
 function statusOf(stream: Stream, now: bigint): StreamStatus {
   if (stream.cancelled) return "cancelled";
@@ -27,7 +24,7 @@ function statusOf(stream: Stream, now: bigint): StreamStatus {
 }
 
 // ---------------------------------------------------------------------------
-// toView (#158)
+// mapStreamResponse (#363)
 // ---------------------------------------------------------------------------
 
 /**
@@ -40,10 +37,11 @@ function statusOf(stream: Stream, now: bigint): StreamStatus {
  * 128-bit precision used by the contract.
  *
  * @param stream - The raw stream row from the database.
+ * @param asOfTime - Optional Unix timestamp in seconds to evaluate derived vesting fields at.
  * @returns The API-ready view object matching the `StreamView` JSON Schema.
  */
-export function toView(stream: Stream) {
-  const now = nowSeconds();
+export function mapStreamResponse(stream: Stream, asOfTime?: bigint) {
+  const now = typeof asOfTime === "bigint" ? asOfTime : nowSeconds();
   const total = BigInt(stream.totalAmount.toString());
   const withdrawn = BigInt(stream.withdrawn.toString());
   const vested = vestedAmount(total, stream.startTime, stream.endTime, stream.cliffTime, now);
@@ -68,5 +66,10 @@ export function toView(stream: Stream) {
     cliffTime: stream.cliffTime.toString(),
     cancelled: stream.cancelled,
     status: statusOf(stream, now),
+    createdLedger: stream.createdLedger,
+    updatedLedger: stream.updatedLedger,
   };
 }
+
+/** @deprecated Use mapStreamResponse for new callers. */
+export const toView = mapStreamResponse;

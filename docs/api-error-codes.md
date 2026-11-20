@@ -2,6 +2,84 @@
 
 Every API failure returned by the TricklePay backend includes a stable, machine-readable `code` alongside a human-readable message. This allows client developers to build robust error handling and branch on error categories without having to parse human-readable text.
 
+## Response Shape
+
+Error responses are returned as a JSON object with the following structure:
+
+```json
+{
+  "code": "NOT_FOUND",
+  "error": "Route GET /missing-path not found",
+  "requestId": "client-trace-42"
+}
+```
+
+- `code`: The stable error code (see below).
+- `error`: A human-readable error message. For `INTERNAL_SERVER_ERROR`, raw error details (stack traces, SQL fragments) are redacted and a generic `"internal server error"` message is returned instead.
+- `requestId`: The request ID associated with the error, useful for correlating client errors with server-side logs.
+
+## Defined Error Codes
+
+The table below lists every HTTP status code the service can return and the `code` it maps to.
+
+| HTTP Status | Code | When it occurs |
+|-------------|------|----------------|
+| `400` | `VALIDATION_ERROR` | Invalid or malformed request — missing required fields, bad parameter values, repeated query parameters, or a query string that exceeds the configured length limit. |
+| `404` | `NOT_FOUND` | The requested resource or route cannot be found. |
+| `413` | `REQUEST_ERROR` | The request body exceeds the configured `BODY_LIMIT` (default 1 MiB). |
+| `429` | `RATE_LIMITED` | The client has exceeded the configured request rate limit. The response includes a `Retry-After` header with the number of seconds until the window resets. Clients should back off and retry after that interval. |
+| `500` | `INTERNAL_SERVER_ERROR` | An unexpected server-side error. The original error is logged internally with the request ID; the client receives a safe, redacted message. |
+
+### Example: 400 Validation Error
+
+```bash
+curl -s http://localhost:3000/streams/invalid | jq
+```
+
+```json
+{
+  "code": "VALIDATION_ERROR",
+  "error": "invalid stream id",
+  "requestId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+}
+```
+
+### Example: 404 Not Found
+
+```bash
+curl -s http://localhost:3000/streams/99999999 | jq
+```
+
+```json
+{
+  "code": "NOT_FOUND",
+  "error": "stream not found",
+  "requestId": "b2c3d4e5-f6a7-8901-bcde-f12345678901"
+}
+```
+
+### Example: 429 Rate Limited
+
+```bash
+curl -s -D - http://localhost:3000/streams | head -20
+```
+
+```
+HTTP/1.1 429 Too Many Requests
+Retry-After: 42
+x-request-id: c3d4e5f6-a7b8-9012-cdef-123456789012
+```
+
+```json
+{
+  "code": "RATE_LIMITED",
+  "error": "rate limit exceeded",
+  "requestId": "c3d4e5f6-a7b8-9012-cdef-123456789012"
+}
+```
+
+The `Retry-After` value is the number of seconds remaining in the current rate-limit window. Wait that long before retrying rather than branching on the HTTP status code alone.
+
 ## Log Redaction Behaviour
 
 Error messages sent to clients are redacted to prevent leaking sensitive information such as database connection strings, internal hostnames, or stack traces. The full, unredacted error remains in the server log for operator diagnosis.
@@ -61,32 +139,3 @@ Exposing raw database or RPC errors to clients can leak:
 - SQL query structure and table names
 
 By redacting client responses while preserving full details server-side, operators retain the diagnostic information needed to fix failures without exposing sensitive infrastructure details to external callers.
-
-## Response Shape
-
-Error responses are returned as a JSON object with the following structure:
-
-```json
-{
-  "code": "NOT_FOUND",
-  "error": "Route GET /missing-path not found",
-  "requestId": "client-trace-42"
-}
-```
-
-- `code`: The stable error code (see below).
-- `error`: A human-readable error message. Note that for `INTERNAL_SERVER_ERROR`, original raw error details (such as stack traces or SQL fragments) are redacted for security, and a generic "internal server error" message is returned instead.
-- `requestId`: The request ID associated with the error (useful for correlating client errors with server-side logs).
-
-## Defined Error Codes
-
-The backend defines and returns the following error codes based on the HTTP status code of the failure:
-
-- `VALIDATION_ERROR`
-  - **Returned When:** The request is invalid or malformed (HTTP status `400`). This could be due to missing required fields, invalid parameters, or malformed request bodies.
-- `NOT_FOUND`
-  - **Returned When:** The requested resource or route cannot be found (HTTP status `404`).
-- `REQUEST_ERROR`
-  - **Returned When:** The request fails with any other 4xx client error (e.g., HTTP statuses `401`, `403`, `409`, etc.) that is not explicitly a `VALIDATION_ERROR` or `NOT_FOUND`.
-- `INTERNAL_SERVER_ERROR`
-  - **Returned When:** An unexpected server-side error occurs (HTTP status `500` and above). The original error message is logged internally with the request ID, but the client receives a safe, redacted message.

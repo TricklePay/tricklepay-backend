@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Counter, Gauge, Histogram, renderMetrics } from "../src/metrics.js";
+import { Counter, Gauge, Histogram, registerMetric, renderMetrics } from "../src/metrics.js";
 
 describe("Counter", () => {
   it("increments independently for different label sets", () => {
@@ -43,6 +43,82 @@ describe("Histogram", () => {
   });
 });
 
+describe("registerMetric helper (#367)", () => {
+  it("handles collector construction and registration into shared registry", () => {
+    registerMetric("test_custom_metric", "A helper-registered metric", "gauge", () => {
+      return "# HELP test_custom_metric A helper-registered metric\n# TYPE test_custom_metric gauge\ntest_custom_metric 42";
+    });
+
+    const output = renderMetrics();
+    expect(output).toContain("test_custom_metric 42");
+    expect(output).toContain("# TYPE test_custom_metric gauge");
+  });
+});
+
+describe("backlog metric tracking failed events", () => {
+  it("asserts the gauge rises when a failure is recorded", () => {
+    const backlogGauge = new Gauge(
+      "tricklepay_failed_events_backlog_rise",
+      "Tracks unresolved failed events backlog",
+    );
+    let failedEventsCount = 0;
+    const recordFailure = () => {
+      failedEventsCount += 1;
+      backlogGauge.set(failedEventsCount);
+    };
+
+    backlogGauge.set(failedEventsCount);
+    expect(renderMetrics()).toContain("tricklepay_failed_events_backlog_rise 0");
+
+    recordFailure();
+    expect(renderMetrics()).toContain("tricklepay_failed_events_backlog_rise 1");
+
+    recordFailure();
+    expect(renderMetrics()).toContain("tricklepay_failed_events_backlog_rise 2");
+  });
+
+  it("asserts it falls when the record is cleared", () => {
+    const backlogGauge = new Gauge(
+      "tricklepay_failed_events_backlog_fall",
+      "Tracks unresolved failed events backlog",
+    );
+    let failedEventsCount = 2;
+    backlogGauge.set(failedEventsCount);
+    expect(renderMetrics()).toContain("tricklepay_failed_events_backlog_fall 2");
+
+    const clearRecord = () => {
+      failedEventsCount = Math.max(0, failedEventsCount - 1);
+      backlogGauge.set(failedEventsCount);
+    };
+
+    clearRecord();
+    expect(renderMetrics()).toContain("tricklepay_failed_events_backlog_fall 1");
+
+    clearRecord();
+    expect(renderMetrics()).toContain("tricklepay_failed_events_backlog_fall 0");
+  });
+});
+
+describe("indexed streams metric (#393)", () => {
+  it("reports the number of indexed streams as a gauge", () => {
+    const gauge = new Gauge("indexed_streams", "Number of indexed streams", []);
+    gauge.set({}, 7);
+
+    const output = renderMetrics();
+    expect(output).toContain("# HELP indexed_streams Number of indexed streams");
+    expect(output).toContain("# TYPE indexed_streams gauge");
+    expect(output).toContain("indexed_streams 7");
+  });
+
+  it("updates as streams are indexed", () => {
+    const gauge = new Gauge("indexed_streams_update", "Number of indexed streams", []);
+    gauge.set({}, 1);
+    expect(renderMetrics()).toContain("indexed_streams_update 1");
+
+    gauge.set({}, 2);
+    expect(renderMetrics()).toContain("indexed_streams_update 2");
+  });
+});
 describe("Exposition format", () => {
   it("matches the exposition format for counters, gauges and histograms together", () => {
     // The previous tests have already registered a Counter, Gauge, and Histogram.
@@ -57,5 +133,3 @@ describe("Exposition format", () => {
     }
   });
 });
-
-

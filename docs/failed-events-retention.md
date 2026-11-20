@@ -10,17 +10,43 @@ Before deleting records, operators should attempt to reprocess actionable failur
 
 Events older than this window that have already been reviewed or resolved may be safely deleted.
 
-## Cleanup Instructions
+## Automated Cleanup Tool
 
-When cleaning up failed events, ensure you only delete records from the `FailedEvent` table and do not interfere with active stream state in the `Stream` table.
+To automate failed event cleanup according to this retention policy, use the `prune-failed-events` command:
+
+```bash
+# Preview how many records would be deleted without modifying data
+npm run prune-failed-events -- --older-than=30d --dry-run
+
+# Delete failed events older than 30 days
+npm run prune-failed-events -- --older-than=30d
+```
+
+### Options:
+- `--older-than=<age>`: Required. Retention window threshold (e.g. `30d`, `60 days`, `24h`, or a plain number of days `30`). Events first failed before this cutoff are pruned.
+- `--dry-run`: Optional. Only counts and logs matching records without deleting them.
+
+## Manual Cleanup Instructions
+
+Inspect the failures before deleting them. The nullable `txHash` identifies the
+transaction to investigate; older records or events without a hash contain null.
+
+```sql
+SELECT "eventId", "kind", "streamId", "ledger", "txHash", "error"
+FROM "FailedEvent"
+WHERE "firstFailedAt" < NOW() - INTERVAL '30 days'
+ORDER BY "ledger" ASC, "eventId" ASC;
+```
+
+When cleaning up failed events manually via SQL, ensure you only delete records from the `FailedEvent` table and do not interfere with active stream state in the `Stream` table.
 
 You can safely run the following cleanup query via your PostgreSQL client to delete failed events older than 30 days:
 
 ```sql
 DELETE FROM "FailedEvent" 
-WHERE "createdAt" < NOW() - INTERVAL '30 days';
+WHERE "firstFailedAt" < NOW() - INTERVAL '30 days';
 ```
 
 ### Scheduled Maintenance
 
-If you run a heavy load, you might consider running this query as a scheduled task (e.g. via `cron` or a pgAgent job) to keep the database size manageable without manual intervention.
+If you run a heavy load, you might consider running the prune command or cleanup query as a scheduled task (e.g. via `cron` or a pgAgent job) to keep the database size manageable without manual intervention.

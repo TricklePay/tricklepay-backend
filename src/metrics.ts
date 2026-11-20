@@ -36,8 +36,19 @@ interface Metric {
 
 const registry: Metric[] = [];
 
-function register(m: Metric): void {
-  registry.push(m);
+/**
+ * Constructs and registers a metric collector in the shared registry.
+ *
+ * Consolidates construction of the registry record and enrollment so each
+ * metric class shares a single registration path, avoiding missed registrations.
+ */
+export function registerMetric(
+  name: string,
+  help: string,
+  type: "counter" | "gauge" | "histogram",
+  collect: () => string,
+): void {
+  registry.push({ name, help, type, collect });
 }
 
 // Renders all registered metrics in Prometheus exposition format.
@@ -57,12 +68,7 @@ export class Counter {
     readonly help: string,
     readonly labelNames: string[] = [],
   ) {
-    register({
-      name,
-      help,
-      type: "counter",
-      collect: () => this.serialize(),
-    });
+    registerMetric(name, help, "counter", () => this.serialize());
   }
 
   inc(labels: Record<string, string> = {}, amount = 1): void {
@@ -102,12 +108,7 @@ export class Gauge {
     readonly help: string,
     readonly labelNames: string[] = [],
   ) {
-    register({
-      name,
-      help,
-      type: "gauge",
-      collect: () => this.serialize(),
-    });
+    registerMetric(name, help, "gauge", () => this.serialize());
   }
 
   set(labels: Record<string, string>, value: number): void;
@@ -117,6 +118,28 @@ export class Gauge {
       this.values.set("", labelsOrValue);
     } else {
       this.values.set(labelsKey(labelsOrValue), value!);
+    }
+  }
+
+  inc(labels: Record<string, string>, amount?: number): void;
+  inc(amount?: number): void;
+  inc(labelsOrAmount: Record<string, string> | number = 1, amount = 1): void {
+    if (typeof labelsOrAmount === "number") {
+      this.values.set("", (this.values.get("") ?? 0) + labelsOrAmount);
+    } else {
+      const key = labelsKey(labelsOrAmount);
+      this.values.set(key, (this.values.get(key) ?? 0) + amount);
+    }
+  }
+
+  dec(labels: Record<string, string>, amount?: number): void;
+  dec(amount?: number): void;
+  dec(labelsOrAmount: Record<string, string> | number = 1, amount = 1): void {
+    if (typeof labelsOrAmount === "number") {
+      this.values.set("", (this.values.get("") ?? 0) - labelsOrAmount);
+    } else {
+      const key = labelsKey(labelsOrAmount);
+      this.values.set(key, (this.values.get(key) ?? 0) - amount);
     }
   }
 
@@ -155,12 +178,7 @@ export class Histogram {
     buckets: number[] = DEFAULT_BUCKETS,
   ) {
     this.buckets = [...buckets].sort((a, b) => a - b);
-    register({
-      name,
-      help,
-      type: "histogram",
-      collect: () => this.serialize(),
-    });
+    registerMetric(name, help, "histogram", () => this.serialize());
   }
 
   observe(labels: Record<string, string>, value: number): void {
@@ -287,11 +305,43 @@ export const indexerPollLastSuccess = new Gauge(
   "Unix timestamp in seconds of the last successful indexer poll iteration. 0 before the first success; use with time() to detect a stalled poller.",
 );
 
+/** Number of streams the indexer has indexed. */
+export const indexedStreams = new Gauge(
+  "tricklepay_indexer_indexed_streams",
+  "Number of streams the indexer has indexed.",
+);
+
 /** Total individual events that failed to apply and were skipped. */
 export const eventsFailed = new Counter(
   "tricklepay_indexer_events_failed",
   "Total individual events that failed to apply and were skipped.",
   ["kind"],
+);
+
+/** Number of unresolved failed indexer events awaiting recovery. */
+export const failedEventBacklog = new Gauge(
+  "tricklepay_indexer_failed_event_backlog",
+  "Number of failed indexer events awaiting recovery.",
+);
+
+/** Number of consecutive poll iterations that have failed since the last success. */
+export const indexerConsecutiveFailures = new Gauge(
+  "tricklepay_indexer_consecutive_failures",
+  "Number of consecutive poll iterations that have failed since the last success. Resets to 0 after a successful tick.",
+);
+
+/** Unix timestamp (seconds) of the next scheduled poll attempt. 0 before the first failure. */
+export const indexerNextPollAt = new Gauge(
+  "tricklepay_indexer_next_poll_timestamp_seconds",
+  "Unix timestamp in seconds of the next scheduled poll attempt. 0 when no backoff is active.",
+);
+
+// Database -----------------------------------------------------------------
+
+/** Database query execution durations in milliseconds. */
+export const databaseQueryDuration = new Histogram(
+  "tricklepay_database_query_duration_ms",
+  "Time spent executing a database query in milliseconds.",
 );
 
 // HTTP ----------------------------------------------------------------------

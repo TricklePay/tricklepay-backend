@@ -1,6 +1,6 @@
 import { createRpcServer, verifyRpcEndpoint } from "./chain/rpc.js";
 
-import { loadConfig } from "./config.js";
+import { describeConfig, loadConfig, validateStartLedger } from "./config.js";
 
 import { disconnect } from "./db.js";
 
@@ -22,16 +22,25 @@ import { createShutdown } from "./shutdown.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();
+  // The resolved configuration, before anything that depends on it can fail,
+  // so a startup failure is diagnosed against the values that caused it (#474).
+  logger.info({ config: describeConfig(config) }, "effective configuration");
+
   const rpcServer = createRpcServer(config);
   await verifyRpcEndpoint(rpcServer, config.rpcUrl);
 
+  const chainHead = await rpcServer.getLatestLedger();
+  validateStartLedger(config.startLedger, chainHead.sequence);
+
   const app = await buildServer(config);
   await app.register(rootRoutes(config));
-  await app.register(streamRoutes);
-  await app.register(statusRoutes);
-  await app.register(metricsRoutes);
+  await app.register(streamRoutes, { summaryCacheTtlMs: config.summaryCacheTtlMs });
 
   const poller = new Poller(rpcServer, config, logger);
+
+  await app.register(statusRoutes, { startLedger: config.startLedger, poller });
+  await app.register(metricsRoutes, { token: config.metricsToken });
+
   // Transient errors after the startup check are retried in the background.
   poller.start().catch((err) => logger.error({ err }, "indexer stopped"));
 

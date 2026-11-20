@@ -5,9 +5,9 @@ import { isLocalUrl } from "../config.js";
 import type { Config } from "../config.js";
 
 // Creates the Soroban RPC client pointed at the configured endpoint. Plain
-// HTTP is only allowed for local endpoints (localhost / 127.x.x.x); the config
-// layer already rejects remote http:// URLs at startup, so this is a final
-// safeguard in case the server is constructed outside of `loadConfig`.
+// HTTP is only allowed for loopback endpoints (localhost / 127.x.x.x / [::1]);
+// the config layer already rejects remote http:// URLs at startup, so this is
+// a final safeguard in case the server is constructed outside of `loadConfig`.
 export function createRpcServer(config: Config): rpc.Server {
   return new rpc.Server(config.rpcUrl, {
     allowHttp: config.rpcUrl.startsWith("http://") && isLocalUrl(config.rpcUrl),

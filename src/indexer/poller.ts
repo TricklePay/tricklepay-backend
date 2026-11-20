@@ -4,7 +4,9 @@ import { decodeEvent, InvalidEventError } from "../chain/events.js";
 
 import { EVENT_PAGE_LIMIT, getContractEvents, type EventPage } from "../chain/rpc.js";
 
-import type { Config } from "../config.js";
+import { nowSeconds } from "../lib/time.js";
+
+import { validateStartLedger, type Config } from "../config.js";
 
 import { prisma } from "../db.js";
 
@@ -13,7 +15,9 @@ import type { Logger } from "../logger.js";
 import {
   eventsApplied,
   eventsFailed,
+  indexerConsecutiveFailures,
   indexerLagLedgers,
+  indexerNextPollAt,
   indexerPollLastSuccess,
   indexerPollSuccess,
   pagesFetched,
@@ -24,6 +28,7 @@ import {
 import {
   clearFailedEvent,
   failedEventFromDecoded,
+  refreshFailedEventBacklog,
   recordFailedEvent,
 } from "../repositories/failed-events.js";
 
@@ -36,7 +41,7 @@ import { applyEvent } from "./apply.js";
 // The loop's state between ticks: where to read from next, and how far the
 // indexer has actually got. `lastLedger` is carried across ticks because a page
 // that applies nothing must leave it alone rather than reset it.
-interface Position {
+interface IndexerState {
   cursor?: string;
   startLedger?: number;
   lastLedger: number;
@@ -65,6 +70,14 @@ export class Poller {
   // first success, so a single transient blip does not leave the poller
   // stuck at a long delay.
   private consecutiveFailures = 0;
+  // Whether the indexer has made any progress since startup. Readiness depends
+  // on this because a freshly started instance that has not yet applied any
+  // events is not yet usable. Once true it stays true for the lifetime of the
+  // process, so readiness is not flipped back by a transient poll failure.
+  private hasProgressed = false;
+  // Unix timestamp (ms) of when the next poll will fire. Set just before each
+  // sleep so /status and metrics can report it to operators during backoff.
+  private nextPollAtMs = 0;
   private readonly log: Logger;
 
   constructor(
@@ -75,27 +88,58 @@ export class Poller {
     this.log = logger.child({ module: "indexer" });
   }
 
+  // Whether the indexer has made progress. The readiness endpoint uses this to
+  // decide whether the service has usable data. Liveness is unaffected.
+  isReady(): boolean {
+    return this.hasProgressed;
+  }
+
+  /** Number of poll iterations that have failed consecutively since the last success. */
+  getConsecutiveFailures(): number {
+    return this.consecutiveFailures;
+  }
+
+  /** Unix timestamp in seconds of the next scheduled poll, or 0 when no backoff is active. */
+  getNextPollAt(): number {
+    return this.nextPollAtMs > 0 ? Math.floor(this.nextPollAtMs / 1000) : 0;
+  }
+
   async start(): Promise<void> {
     this.running = true;
+    await refreshFailedEventBacklog();
     let position = await this.resolveStart();
 
+    await this.runLoop(position);
+  }
+
+  /** Owns scheduling and failure backoff; one tick is deliberately separate. */
+  private async runLoop(position: IndexerState): Promise<void> {
     while (this.running) {
       try {
-        position = await this.tick(position);
+        position = await this.tick(position, () => this.running);
         // A successful iteration breaks the streak — back off returns to the
         // normal interval so a recovered RPC is not punished for past failures.
         this.consecutiveFailures = 0;
+        indexerConsecutiveFailures.set(0);
       } catch (err) {
         this.log.error({ err }, "poll iteration failed");
         pollErrors.inc();
         this.consecutiveFailures += 1;
+        indexerConsecutiveFailures.set(this.consecutiveFailures);
       }
       // Checked before sleeping, so a stop does not have to wait out an
       // interval that exists only to pace an idle indexer.
       if (!this.running) break;
       // Delay grows with consecutive failures (2×, 4×, …) up to the ceiling,
       // so a struggling RPC is not hammered on a tight fixed schedule.
-      await sleep(this.backoffDelay());
+      const delay = this.backoffDelay();
+      this.nextPollAtMs = Date.now() + delay;
+      indexerNextPollAt.set(Math.floor(this.nextPollAtMs / 1000));
+      await sleep(delay);
+      // After waking, clear the next-poll timestamp so it is only set during
+      // active backoff rather than lingering after the poll fires.
+      this.nextPollAtMs = 0;
+      indexerNextPollAt.set(0);
     }
   }
 
@@ -123,13 +167,18 @@ export class Poller {
   // stored. A backfill has processed nothing at or after its start ledger, so
   // it claims the one below. Starting from the chain's head means deliberately
   // skipping everything before it, so that head is already fully processed.
-  private async resolveStart(): Promise<Position> {
+  private async resolveStart(): Promise<IndexerState> {
     const saved = await getIndexerPosition();
     if (saved?.cursor) {
       this.log.info({ cursor: saved.cursor }, "resuming from saved cursor");
       return { cursor: saved.cursor, lastLedger: saved.lastLedger };
     }
     if (this.config.startLedger > 0) {
+      const latest = await this.server.getLatestLedger();
+      // Re-checked here because resolveStart runs again on a fresh state even
+      // when startup already validated the value; both paths share the single
+      // implementation in config.ts.
+      validateStartLedger(this.config.startLedger, latest.sequence);
       this.log.info({ ledger: this.config.startLedger }, "backfilling from configured ledger");
       return { startLedger: this.config.startLedger, lastLedger: this.config.startLedger - 1 };
     }
@@ -147,7 +196,8 @@ export class Poller {
   //
   // The cursor is saved after every page, so a backlog interrupted part way
   // through resumes where it stopped rather than starting the tick over.
-  private async tick(position: Position): Promise<Position> {
+  /** Execute one poll tick. This can be called directly by tests or tooling. */
+  async tick(position: IndexerState, shouldContinue: () => boolean = () => true): Promise<IndexerState> {
     let current = position;
     let pages = 0;
     let events = 0;
@@ -155,7 +205,7 @@ export class Poller {
     // `running` is checked between pages as well, so a stop during a long
     // backfill takes effect at the next page boundary instead of at the end of
     // the whole backlog.
-    while (this.running) {
+    while (shouldContinue()) {
       let page: EventPage;
       try {
         page = await getContractEvents(this.server, this.config.contractId, current);
@@ -179,8 +229,7 @@ export class Poller {
       }
 
       pagesFetched.inc();
-      const nextPosition = await this.applyPage(page, current.lastLedger);
-      current = nextPosition;
+      current = await this.applyPage(page, current);
       pages += 1;
       events += page.events.length;
 
@@ -203,19 +252,26 @@ export class Poller {
       this.log.info({ pages, events }, "drained event backlog");
     }
 
+    // Any event applied during this tick means the indexer has made progress and
+    // the service now has usable data. This is set before the heartbeat below
+    // so a readiness check after a successful tick observes the update.
+    if (events > 0) {
+      this.hasProgressed = true;
+    }
+
     // A tick that reaches here completed without throwing, so the poller is
     // alive. Operators use the timestamp to tell a quiet chain (still polling
     // successfully) from a stalled poller (no successful tick), and the counter
     // to graph poll throughput. A failed tick throws before getting here, so it
     // never emits a false heartbeat.
     indexerPollSuccess.inc();
-    indexerPollLastSuccess.set(Math.floor(Date.now() / 1000));
+    indexerPollLastSuccess.set(Number(nowSeconds()));
 
     return current;
   }
 
-  private async applyPage(page: EventPage, previousLastLedger: number): Promise<Position> {
-    let lastLedger = previousLastLedger;
+  private async applyPage(page: EventPage, state: IndexerState): Promise<IndexerState> {
+    const nextState: IndexerState = { ...state, cursor: page.cursor };
 
     for (const raw of page.events) {
       let event;
@@ -234,6 +290,7 @@ export class Poller {
               kind: "malformed",
               streamId: "0",
               ledger: raw.ledger ?? 0,
+              txHash: raw.txHash ?? null,
               error: err.message,
             });
           } catch (recordErr) {
@@ -292,27 +349,26 @@ export class Poller {
       // Raised only once the write has landed. If applying throws, the tick
       // aborts without saving, so the page is read again and this ledger is
       // never claimed as processed on the strength of a write that failed.
-      lastLedger = Math.max(lastLedger, event.ledger);
+      nextState.lastLedger = Math.max(nextState.lastLedger, event.ledger);
       eventsApplied.inc({ kind: event.kind, outcome });
     }
 
-    // The poller deliberately records `lastLedger` (the highest ledger it
-    // applied) rather than `page.latestLedger` (the chain head) as its own
-    // position. This avoids the failure mode where a backfill or poller falsely
-    // reports itself as caught up with the chain head when it has only reached
-    // the head as a value in the RPC response without having actually applied
-    // all the ledgers up to that point.
-    //
-    // `page.latestLedger` is stored separately as `chainLedger`: the two
-    // together are what make indexer lag visible.
-    await saveIndexerPosition({ lastLedger, chainLedger: page.latestLedger, cursor: page.cursor });
+    // Record the highest ledger actually applied, not the RPC chain head.
+    // The chain head is stored separately so readiness and lag remain honest.
+    await saveIndexerPosition({
+      cursor: page.cursor,
+      lastLedger: nextState.lastLedger,
+      chainLedger: page.latestLedger,
+    });
 
-    // Update the lag gauge. Never negative: the indexer's position cannot
-    // outrun the chain head that was observed in the same poll.
-    indexerLagLedgers.set(Math.max(0, page.latestLedger - lastLedger));
+    // Metric of how far behind the chain head the indexer is. The RPC response
+    // carries the latest ledger it knows about, so the difference is a direct
+    // measure of lag. A negative difference is clamped to zero to avoid
+    // reporting a negative lag if the RPC response is briefly stale.
+    const lag = Math.max(0, page.latestLedger - nextState.lastLedger);
+    indexerLagLedgers.set(lag);
 
-    // Once a page is fetched, always continue from its cursor.
-    return { cursor: page.cursor, lastLedger };
+    return nextState;
   }
 }
 

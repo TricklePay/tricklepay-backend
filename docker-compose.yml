@@ -15,6 +15,30 @@ services:
       timeout: 5s
       retries: 5
 
+  # Opt-in database for the integration suite (npx vitest run --project
+  # integration). Separate container name, port and volume from `postgres`
+  # above, so starting it can never point tests at development data or
+  # collide with a `postgres` already running: `docker compose --profile
+  # test up -d postgres-test` runs it alongside, or standalone, the dev
+  # database without either affecting the other.
+  postgres-test:
+    image: postgres:17-alpine
+    profiles: ["test"]
+    container_name: tricklepay-postgres-test
+    environment:
+      POSTGRES_USER: tricklepay_test
+      POSTGRES_PASSWORD: tricklepay_test
+      POSTGRES_DB: tricklepay_test
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata-test:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tricklepay_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   api:
     build: .
     depends_on:
@@ -32,3 +56,4 @@ services:
 
 volumes:
   pgdata:
+  pgdata-test:

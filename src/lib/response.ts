@@ -4,7 +4,7 @@
 
 import type { FastifyReply, FastifyRequest } from "fastify";
 
-import type { ApiErrorCode } from "../server.js";
+import type { ApiErrorCode } from "../error-redaction.js";
 
 // ---------------------------------------------------------------------------
 // Error response helper (#160)

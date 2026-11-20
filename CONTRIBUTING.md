@@ -54,18 +54,13 @@ For overarching architecture, security models, and cross-repository contribution
 
 ## Code Quality Checks
 
-Before submitting a pull request, run all required quality checks to ensure type safety, test validity, and build success:
+Before submitting a pull request, run the local checks script to ensure type safety, test validity, and build success:
 
 ```bash
-# 1. Type checking
-npm run typecheck
-
-# 2. Run unit test suite
-npm test
-
-# 3. Build production output
-npm run build
+./scripts/check.sh
 ```
+
+This script will run type checking, unit tests, and the build step in order, exiting non-zero on the first failure.
 
 ### Code Quality Standards
 
