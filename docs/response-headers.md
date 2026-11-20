@@ -9,17 +9,17 @@ read back out of `src/routes/*.ts`, `src/health-routes.ts`, and
 
 | Endpoint | `Cache-Control` | `ETag` | Other headers | Set only on success? |
 | --- | --- | --- | --- | --- |
-| `GET /` | — | — | — | — |
+| `GET /` | — | — | `X-Indexer-Lag-Ledgers` | Yes |
 | `GET /health` | — | — | — | — |
 | `GET /ready` | — | — | — | — |
-| `GET /status` | `no-store` | — | — | Yes (always 200; see below) |
-| `GET /streams` | `public, max-age=30` | — | — | Yes — a 400 carries neither |
-| `GET /streams/summary` | `public, max-age=N` (variable, see below) | — | — | Always 200 |
-| `GET /streams/:id` (also `HEAD`) | `public, max-age=30` | `"<updatedLedger>"`, or `"<updatedLedger>-<at>"` with `?at=` | — | Yes — 400/404 carry neither |
-| `GET /streams/:id/events` | `public, max-age=30` | — | — | Yes — 400/404 carry neither |
-| `GET /streams/:id/schedule` | `public, max-age=30` | `"<updatedLedger>-schedule-<points>"` | — | Yes — 400/404 carry neither |
-| `GET /accounts/:address/summary` | `public, max-age=30` | — | — | Yes — 400 carries neither |
-| `GET /tokens` | `public, max-age=30` | — | — | Always 200 |
+| `GET /status` | `no-store` | — | `X-Indexer-Lag-Ledgers` | Yes (always 200; see below) |
+| `GET /streams` | `public, max-age=30` | — | `X-Indexer-Lag-Ledgers` | Yes — a 400 carries neither |
+| `GET /streams/summary` | `public, max-age=N` (variable, see below) | — | `X-Indexer-Lag-Ledgers` | Always 200 |
+| `GET /streams/:id` (also `HEAD`) | `public, max-age=30` | `"<updatedLedger>"`, or `"<updatedLedger>-<at>"` with `?at=` | `X-Indexer-Lag-Ledgers` | Yes — 400/404/304 carry neither |
+| `GET /streams/:id/events` | `public, max-age=30` | — | `X-Indexer-Lag-Ledgers` | Yes — 400/404 carry neither |
+| `GET /streams/:id/schedule` | `public, max-age=30` | `"<updatedLedger>-schedule-<points>"` | `X-Indexer-Lag-Ledgers` | Yes — 400/404/304 carry neither |
+| `GET /accounts/:address/summary` | `public, max-age=30` | — | `X-Indexer-Lag-Ledgers` | Yes — 400 carries neither |
+| `GET /tokens` | `public, max-age=30` | — | `X-Indexer-Lag-Ledgers` | Always 200 |
 | `GET /metrics` | — | — | `Content-Type: text/plain; version=0.0.4; charset=utf-8` | — |
 | Any route, `429` (rate limited) | — | — | `Retry-After: <seconds>` | — |
 | Any unmatched route, `404` | — | — | — | — |
@@ -41,7 +41,7 @@ registered by [`src/security-headers.ts`](../src/security-headers.ts):
 | Header | Value | Why |
 | --- | --- | --- |
 | `X-Content-Type-Options` | `nosniff` | An error body is JSON; a browser must never sniff it as HTML. |
-| `Content-Security-Policy` | `default-src 'self'; …; frame-ancestors 'none'` | Restricts what the docs page and any rendered response may load. `script-src 'self'` and inline styles are allowed so the Swagger UI assets keep working; `upgrade-insecure-requests` is deliberately omitted so the docs work over plain HTTP in local development. |
+| `Content-Security-Policy` | `default-src 'self'; font-src 'self' data:; style-src 'self' 'unsafe-inline'; …; frame-ancestors 'none'` | Restricts what the docs page and any rendered response may load. Fonts are limited to `'self'` and `data:`; styles are limited to `'self'` and `'unsafe-inline'` (for Swagger UI inline styling). No remote `https:` sources are allowed for fonts or stylesheets. `script-src 'self'` ensures scripts stay restricted to same-origin assets; `upgrade-insecure-requests` is deliberately omitted so the docs work over plain HTTP in local development. |
 | `Referrer-Policy` | `no-referrer` | Query strings can carry addresses; never leak them to third parties. |
 | `Cross-Origin-Resource-Policy` | `cross-origin` | Matches the API's deliberate CORS policy for non-CORS consumers. |
 
@@ -104,3 +104,14 @@ No other endpoint sets `ETag`: `/streams`, `/streams/:id/events`, `/tokens`,
 and `/accounts/:address/summary` all return collections or aggregates that
 don't reduce to one stream's `updatedLedger`, so there is no single version
 token to compare against.
+
+## `X-Indexer-Lag-Ledgers` header (#674)
+
+The `X-Indexer-Lag-Ledgers` header communicates how fresh the service's indexer
+data is relative to the chain head. It is attached to successful GET read
+responses so clients know the current lag without issuing an extra `/status`
+query.
+
+- **Exclusions**: `/health`, `/ready`, and `/metrics` are excluded by exact pathname match (without query string), so queries like `/metrics?x=1` or `/health?verbose=true` still skip the header. Unrelated routes with matching prefixes (e.g. `/healthcheck`) are not excluded.
+- **Errors and 304 responses**: Error responses (`statusCode >= 400`) and conditional `304 Not Modified` responses skip this header, preventing database lookups for failed requests or body-less responses.
+- **Uninitialized indexer**: If the indexer has not yet completed its initial poll tick, no lag value is known and the header is omitted.
