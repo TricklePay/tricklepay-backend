@@ -29,6 +29,16 @@ jobs:
 
       - run: npm run build
 
+  # Builds the production image so a broken Dockerfile (for example an
+  # install step that runs before a file it needs is copied) fails the PR
+  # instead of the next deploy.
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: docker build --tag tricklepay-backend:ci .
+
   migration-check:
     runs-on: ubuntu-latest
 
