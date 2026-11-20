@@ -47,17 +47,19 @@ export async function getContractEvents(
   contractId: string,
   options: { startLedger?: number; cursor?: string; limit?: number },
 ): Promise<EventPage> {
-  const request: rpc.Server.GetEventsRequest = {
-    filters: [{ type: "contract", contractIds: [contractId] }],
-    limit: options.limit ?? EVENT_PAGE_LIMIT,
-  };
-
   // The RPC accepts either a cursor or a start ledger, not both.
-  if (options.cursor !== undefined) {
-    request.cursor = options.cursor;
-  } else if (options.startLedger !== undefined) {
-    request.startLedger = options.startLedger;
-  }
+  const request: rpc.Server.GetEventsRequest =
+    options.cursor !== undefined
+      ? {
+          filters: [{ type: "contract", contractIds: [contractId] }],
+          limit: options.limit ?? EVENT_PAGE_LIMIT,
+          cursor: options.cursor,
+        }
+      : {
+          filters: [{ type: "contract", contractIds: [contractId] }],
+          limit: options.limit ?? EVENT_PAGE_LIMIT,
+          startLedger: options.startLedger ?? 0,
+        };
 
   const response = await server.getEvents(request);
   return {
