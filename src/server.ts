@@ -107,6 +107,11 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
     ajv: { customOptions: { removeAdditional: false } },
   });
 
+  // Echo the request id header on every response. Registered as the first
+  // onRequest hook so responses sent early by the hooks below (repeated query
+  // parameter 400s, rate-limit 429s) still carry the header.
+  registerRequestIdHook(app);
+
   // Query-string hardening (#519). Fastify parses the query string while
   // routing, before any hook, so this runs after parsing but still before the
   // route handler and before any database access.
@@ -193,9 +198,6 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
 
     window.requests += 1;
   });
-
-  // Echo the request id header on every response.
-  registerRequestIdHook(app);
 
   if (config?.requestTimeoutMs) {
     const timeoutMs = config.requestTimeoutMs;
