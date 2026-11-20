@@ -41,7 +41,7 @@ registered by [`src/security-headers.ts`](../src/security-headers.ts):
 | Header | Value | Why |
 | --- | --- | --- |
 | `X-Content-Type-Options` | `nosniff` | An error body is JSON; a browser must never sniff it as HTML. |
-| `Content-Security-Policy` | `default-src 'self'; …; frame-ancestors 'none'` | Restricts what the docs page and any rendered response may load. `script-src 'self'` and inline styles are allowed so the Swagger UI assets keep working; `upgrade-insecure-requests` is deliberately omitted so the docs work over plain HTTP in local development. |
+| `Content-Security-Policy` | `default-src 'self'; font-src 'self' data:; style-src 'self' 'unsafe-inline'; …; frame-ancestors 'none'` | Restricts what the docs page and any rendered response may load. Fonts are limited to `'self'` and `data:`; styles are limited to `'self'` and `'unsafe-inline'` (for Swagger UI inline styling). No remote `https:` sources are allowed for fonts or stylesheets. `script-src 'self'` ensures scripts stay restricted to same-origin assets; `upgrade-insecure-requests` is deliberately omitted so the docs work over plain HTTP in local development. |
 | `Referrer-Policy` | `no-referrer` | Query strings can carry addresses; never leak them to third parties. |
 | `Cross-Origin-Resource-Policy` | `cross-origin` | Matches the API's deliberate CORS policy for non-CORS consumers. |
 
