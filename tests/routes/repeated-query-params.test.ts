@@ -29,7 +29,7 @@ const SENDER_A = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN";
 const SENDER_B = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H";
 
 async function listRequest(url: string) {
-  const app = Fastify({ querystringParser: parseQueryString });
+  const app = Fastify({ routerOptions: { querystringParser: parseQueryString } });
   await app.register(streamRoutes);
   const response = await app.inject({ method: "GET", url });
   await app.close();
