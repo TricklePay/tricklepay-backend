@@ -2,10 +2,13 @@
 
 Every response carries `x-request-id` (see [request-ids.md](request-ids.md)) and
 the security headers described under [Security headers](#security-headers).
+Most `GET` responses also carry `X-Indexer-Lag-Ledgers` (see
+[`X-Indexer-Lag-Ledgers`](#x-indexer-lag-ledgers)), and large responses are
+compressed (see [Compression](#compression-content-encoding-and-vary)).
 Beyond that, which headers a response carries — and what a client may rely on
 — varies by route. This table states it explicitly so it doesn't have to be
-read back out of `src/routes/*.ts`, `src/health-routes.ts`, and
-`src/request-id-hook.ts`.
+read back out of `src/routes/*.ts`, `src/health-routes.ts`,
+`src/request-id-hook.ts`, `src/indexer-lag-hook.ts`, and `src/server.ts`.
 
 | Endpoint | `Cache-Control` | `ETag` | Other headers | Set only on success? |
 | --- | --- | --- | --- | --- |
@@ -28,6 +31,9 @@ read back out of `src/routes/*.ts`, `src/health-routes.ts`, and
 in an `onRequest` hook that runs before routing (`src/request-id-hook.ts`),
 so it's present even on a 404 for a path that matches no route, a 429 from
 the rate limiter, and a 400 from schema validation.
+`X-Indexer-Lag-Ledgers`, `Content-Encoding`, and `Vary` are also omitted:
+they are added by hooks to responses on most rows, under the conditions
+described in their own sections below, rather than by the route.
 
 `/docs`, `/docs/json`, and `/docs/yaml` aren't listed — their caching headers
 are `@fastify/swagger-ui`'s defaults. They do carry the security headers below,

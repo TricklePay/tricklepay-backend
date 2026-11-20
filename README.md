@@ -1301,6 +1301,9 @@ current template — copy it and fill in the required values.
 | `LOG_PRETTY` | No | - | Set to `true` for human-readable development logs; requires the `pino-pretty` dev dependency. Output stays JSON when unset. |
 | `BODY_LIMIT` | No | `1048576` | Largest accepted request body in bytes. |
 | `QUERY_STRING_LIMIT` | No | `2048` | Longest accepted URL query string in bytes. |
+| `CONNECTION_TIMEOUT_MS` | No | `10000` | Milliseconds a connection may sit with no bytes moving while a request is in flight before it is closed. `0` disables it. See [Server timeouts](docs/CONFIGURATION.md#server-timeouts). |
+| `KEEP_ALIVE_TIMEOUT_MS` | No | `72000` | Milliseconds an idle keep-alive connection is held open after a response. Keep it above any load balancer's idle timeout. `0` disables it. See [Server timeouts](docs/CONFIGURATION.md#server-timeouts). |
+| `REQUEST_TIMEOUT_MS` | No | `30000` | Milliseconds within which a request must be received and answered; past it the client gets `408`. `0` disables it. See [Server timeouts](docs/CONFIGURATION.md#server-timeouts). |
 | `ENABLE_DOCS_UI` | No | `true` | Serve the interactive Swagger UI at `/docs`. Set to `false` to disable the page and its static assets while `/docs/json` and `/docs/yaml` stay available. Accepts `true/false` (also `1/0`, `yes/no`, `on/off`); anything else fails startup. |
 | `METRICS_TOKEN` | No | - | Bearer token required on `/metrics` when set; unset keeps the endpoint unauthenticated. Only send it over TLS and keep the recommended network restriction. |
 | `COMPRESSION_THRESHOLD_BYTES` | No | `1024` | Responses at least this many bytes are compressed when the client accepts `gzip` or `br`. Smaller responses are sent uncompressed. |
@@ -1309,6 +1312,7 @@ current template — copy it and fill in the required values.
 | `RATE_LIMIT_ALLOWLIST` | No | - | Client addresses that bypass the rate limiter entirely (never counted, never sent a `429`). Comma-separated list of IPv4/IPv6 addresses or IPv4 CIDR blocks, e.g. `10.0.0.5,10.0.1.0/24,::1`; whitespace around entries is ignored. IPv6 CIDR blocks are not supported, and an invalid entry or a prefix outside `0`–`32` fails startup. Matched against the resolved client address, so behind a proxy it only works together with `TRUSTED_PROXIES`. Unset or empty exempts no one. See [docs/request-size-limits.md](docs/request-size-limits.md). |
 | `TRUSTED_PROXIES` | No | - | Comma-separated list of trusted reverse-proxy addresses or IPv4 CIDR blocks. Forwarded headers are ignored when unset. |
 | `READINESS_RETRY_AFTER_SECONDS` | No | `5` | Seconds advertised in the `Retry-After` header when `GET /ready` returns 503, so orchestrators and load balancers know when to probe again. |
+| `READY_MAX_STALENESS_MS` | No | `0` | Maximum age in milliseconds of the indexer position before `GET /ready` returns 503 with `indexer position is stale`. `0` disables the staleness check. |
 | `INDEXER_POLL_INTERVAL_MS` | No | `5000` | Milliseconds between polls of the chain. |
 | `INDEXER_BACKOFF_MAX_MS` | No | `60000` | Maximum poll retry delay (ms) on RPC failures. |
 | `INDEXER_START_LEDGER` | No | `0` | Ledger to begin indexing from. `0` starts at the chain's latest ledger. |
