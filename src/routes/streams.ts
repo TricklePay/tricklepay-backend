@@ -53,16 +53,31 @@ function statusOf(stream: Stream, now: bigint): StreamStatus {
   return "streaming";
 }
 
-function parseLimit(raw: string | undefined): number {
-  const value = raw ? Number(raw) : DEFAULT_LIMIT;
-  if (!Number.isFinite(value) || value <= 0) return DEFAULT_LIMIT;
-  return Math.min(Math.floor(value), MAX_LIMIT);
+export function parseLimit(raw: string | undefined): number | null {
+  if (raw === undefined) return DEFAULT_LIMIT;
+  if (!/^\d+$/.test(raw)) return null;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value)) return null;
+  return Math.min(value, MAX_LIMIT);
 }
 
-function parseOffset(raw: string | undefined): number {
-  const value = raw ? Number(raw) : 0;
-  if (!Number.isFinite(value) || value < 0) return 0;
-  return Math.floor(value);
+export function parseOffset(raw: string | undefined): number | null {
+  if (raw === undefined) return 0;
+  if (!/^\d+$/.test(raw)) return null;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value)) return null;
+  return value;
+}
+
+export function parsePagination(query: { limit?: string; offset?: string }): {
+  limit: number;
+  offset: number;
+} | { error: string; parameter: "limit" | "offset" } {
+  const limit = parseLimit(query.limit);
+  if (limit === null) return { error: "invalid limit", parameter: "limit" };
+  const offset = parseOffset(query.offset);
+  if (offset === null) return { error: "invalid offset", parameter: "offset" };
+  return { limit, offset };
 }
 
 function parseIncludeTotal(raw: string | undefined): boolean {
@@ -98,7 +113,9 @@ function parseCancelled(raw: string | undefined): boolean | undefined {
 // reject values that are neither a valid account nor a valid contract address.
 // Returns null when the input cannot be normalized safely.
 function normalizeAddress(raw: string): string | null {
+  if (typeof raw !== "string") return null;
   const candidate = raw.trim().toUpperCase();
+  if (candidate.length === 0) return null;
   if (StrKey.isValidEd25519PublicKey(candidate) || StrKey.isValidContract(candidate)) {
     return candidate;
   }
@@ -226,7 +243,14 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
       };
 
       const limit = parseLimit(query.limit);
+      if (limit === null) {
+        return sendError(reply, request, 400, "VALIDATION_ERROR", "invalid limit");
+      }
+
       const offset = parseOffset(query.offset);
+      if (offset === null) {
+        return sendError(reply, request, 400, "VALIDATION_ERROR", "invalid offset");
+      }
 
       let cursor: bigint | undefined;
       if (query.cursor !== undefined) {
@@ -258,7 +282,7 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
       } = {};
       for (const field of ["sender", "recipient", "token"] as const) {
         const raw = query[field];
-        if (!raw) continue;
+        if (raw === undefined) continue;
         const normalized = normalizeAddress(raw);
         if (!normalized) {
           return sendError(reply, request, 400, "VALIDATION_ERROR", `invalid ${field} address`);

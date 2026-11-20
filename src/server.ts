@@ -193,6 +193,13 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
   // keeps this builder synchronous for its callers.
   void app.register(cors, {
     origin: process.env.CORS_ORIGIN ?? true,
+    exposedHeaders: [
+      "ETag",
+      "Retry-After",
+      "X-Request-Id",
+      "Link",
+      "X-Indexer-Lag-Ledgers",
+    ],
   });
 
   // Register shared schemas so routes can reference them with { $ref: "$id" }.

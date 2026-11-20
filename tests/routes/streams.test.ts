@@ -178,6 +178,26 @@ describe("GET /streams", () => {
     expect(response.json()).toHaveProperty("error", "invalid sender address");
     expect(streamsRepo.listStreams).not.toHaveBeenCalled();
   });
+
+  it("rejects empty address filters for sender, recipient, and token", async () => {
+    for (const field of ["sender", "recipient", "token"] as const) {
+      const response = await listRequest(`/streams?${field}=`);
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toHaveProperty("code", "VALIDATION_ERROR");
+      expect(response.json()).toHaveProperty("error", `invalid ${field} address`);
+      expect(streamsRepo.listStreams).not.toHaveBeenCalled();
+    }
+  });
+
+  it("rejects whitespace-only address filters for sender, recipient, and token", async () => {
+    for (const field of ["sender", "recipient", "token"] as const) {
+      const response = await listRequest(`/streams?${field}=%20%20%20`);
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toHaveProperty("code", "VALIDATION_ERROR");
+      expect(response.json()).toHaveProperty("error", `invalid ${field} address`);
+      expect(streamsRepo.listStreams).not.toHaveBeenCalled();
+    }
+  });
 });
 
 describe("GET /streams token filter", () => {
@@ -373,40 +393,44 @@ describe("GET /streams offset ceiling", () => {
   });
 });
 
-describe("GET /streams invalid offset (#134)", () => {
-  it("treats a non-numeric offset as zero", async () => {
+describe("GET /streams limit and offset validation (#561)", () => {
+  it("rejects malformed limit values (hex, exponent, fractional, negative, non-numeric)", async () => {
+    const badLimits = ["0x10", "1e2", "1.9", "-3", "abc", ""];
+    for (const bad of badLimits) {
+      const response = await listRequest(`/streams?limit=${encodeURIComponent(bad)}`);
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toHaveProperty("code", "VALIDATION_ERROR");
+      expect(response.json()).toHaveProperty("error", "invalid limit");
+      expect(streamsRepo.listStreams).not.toHaveBeenCalled();
+    }
+  });
+
+  it("rejects malformed offset values (hex, exponent, fractional, negative, non-numeric)", async () => {
+    const badOffsets = ["0x10", "1e2", "1.9", "-3", "abc", ""];
+    for (const bad of badOffsets) {
+      const response = await listRequest(`/streams?offset=${encodeURIComponent(bad)}`);
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toHaveProperty("code", "VALIDATION_ERROR");
+      expect(response.json()).toHaveProperty("error", "invalid offset");
+      expect(streamsRepo.listStreams).not.toHaveBeenCalled();
+    }
+  });
+
+  it("still caps limit above 100 at 100", async () => {
     streamsRepo.listStreams.mockResolvedValue({ streams: [] });
-    const response = await listRequest("/streams?offset=abc");
+    const response = await listRequest("/streams?limit=150");
     expect(response.statusCode).toBe(200);
     expect(streamsRepo.listStreams).toHaveBeenCalledWith(
-      expect.objectContaining({ offset: 0 }),
+      expect.objectContaining({ limit: 100 }),
     );
   });
 
-  it("treats a negative offset as zero", async () => {
+  it("accepts limit of 0", async () => {
     streamsRepo.listStreams.mockResolvedValue({ streams: [] });
-    const response = await listRequest("/streams?offset=-5");
+    const response = await listRequest("/streams?limit=0");
     expect(response.statusCode).toBe(200);
     expect(streamsRepo.listStreams).toHaveBeenCalledWith(
-      expect.objectContaining({ offset: 0 }),
-    );
-  });
-
-  it("treats an empty string offset as zero", async () => {
-    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
-    const response = await listRequest("/streams?offset=");
-    expect(response.statusCode).toBe(200);
-    expect(streamsRepo.listStreams).toHaveBeenCalledWith(
-      expect.objectContaining({ offset: 0 }),
-    );
-  });
-
-  it("treats a floating-point offset as truncated integer", async () => {
-    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
-    const response = await listRequest("/streams?offset=3.7");
-    expect(response.statusCode).toBe(200);
-    expect(streamsRepo.listStreams).toHaveBeenCalledWith(
-      expect.objectContaining({ offset: 3 }),
+      expect.objectContaining({ limit: 0 }),
     );
   });
 });
