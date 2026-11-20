@@ -25,9 +25,20 @@ jobs:
 
       - run: npm run typecheck
 
-      - run: npm test
+      # The JUnit report is written outside the checkout so it never shows up
+      # as an untracked file, and is uploaded below whether or not tests pass.
+      - run: npm test -- --reporter=default --reporter=junit --outputFile.junit="$RUNNER_TEMP/test-results/unit.xml"
 
       - run: npm run build
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results-node-${{ matrix.node-version }}
+          path: ${{ runner.temp }}/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
 
   # Unused and undeclared dependencies do not depend on the Node version, so
   # this runs once rather than in each entry of the build matrix. Known false
@@ -103,4 +114,21 @@ jobs:
       - name: Integration tests
         run: |
           PGPASSWORD=ci createdb -h localhost -U ci -d tricklepay_test tricklepay_shadow
-          npx vitest run --project integration
+          npx vitest run --project integration --reporter=default --reporter=junit --outputFile.junit="$RUNNER_TEMP/test-results/integration.xml"
+
+      # The database's own log is often the only explanation for a flaky
+      # integration failure, and it is gone once the service container stops.
+      - name: Collect Postgres logs
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/test-results"
+          docker logs "${{ job.services.postgres.id }}" > "$RUNNER_TEMP/test-results/postgres.log" 2>&1 || true
+
+      - name: Upload test results and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-results-postgres-${{ matrix.postgres-version }}
+          path: ${{ runner.temp }}/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
