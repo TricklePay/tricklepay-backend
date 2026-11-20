@@ -320,47 +320,58 @@ export const streamEventSchema = {
       examples: ["66f7505577a417f4c1187fb8a8eeb6f3737f848d5f0b3b20c5a6c57ab7d659d1"],
     },
     sender: {
-      type: ["string", "null"],
+      type: "string",
+      nullable: true,
       description: "Sender address for created/cancelled events, if present.",
     },
     recipient: {
-      type: ["string", "null"],
+      type: "string",
+      nullable: true,
       description: "Recipient address for created/withdrawn/cancelled events, if present.",
     },
     token: {
-      type: ["string", "null"],
+      type: "string",
+      nullable: true,
       description: "Token contract address for created events, if present.",
     },
     totalAmount: {
-      type: ["string", "null"],
+      type: "string",
+      nullable: true,
       description: "Total amount for created events, as a decimal string.",
     },
     amount: {
-      type: ["string", "null"],
+      type: "string",
+      nullable: true,
       description: "Withdrawn amount for withdrawal events, as a decimal string.",
     },
     recipientAmount: {
-      type: ["string", "null"],
+      type: "string",
+      nullable: true,
       description: "Recipient payout for cancellation events, as a decimal string.",
     },
     senderRefund: {
-      type: ["string", "null"],
+      type: "string",
+      nullable: true,
       description: "Sender refund for cancellation events, as a decimal string.",
     },
     startTime: {
-      type: ["string", "null"],
+      type: "string",
+      nullable: true,
       description: "Stream start time, in Unix seconds, for created events.",
     },
     endTime: {
-      type: ["string", "null"],
+      type: "string",
+      nullable: true,
       description: "Stream end time, in Unix seconds, for created events.",
     },
     cliffTime: {
-      type: ["string", "null"],
+      type: "string",
+      nullable: true,
       description: "Vesting cliff time, in Unix seconds, for created events.",
     },
     closedAt: {
-      type: ["string", "null"],
+      type: "string",
+      nullable: true,
       description: "Ledger close time, in Unix seconds, for the event.",
     },
   },
@@ -501,11 +512,13 @@ export const indexerStatusSchema = {
           examples: [56290013],
         },
         cursor: {
-          type: ["string", "null"],
+          type: "string",
+          nullable: true,
           description: "RPC paging cursor to resume from, or null before the first poll.",
         },
         updatedAt: {
-          type: ["string", "null"],
+          type: "string",
+          nullable: true,
           format: "date-time",
           description: "When the position was last written, or null before the first poll.",
         },
@@ -518,7 +531,8 @@ export const indexerStatusSchema = {
           examples: [0, 3],
         },
         nextPollAt: {
-          type: ["string", "null"],
+          type: "string",
+          nullable: true,
           format: "date-time",
           description:
             "ISO 8601 timestamp of the next scheduled poll attempt. " +
@@ -539,7 +553,8 @@ export const indexerStatusSchema = {
       },
     },
     lagLedgers: {
-      type: ["integer", "null"],
+      type: "integer",
+      nullable: true,
       description:
         "Ledgers the indexer is behind the chain. Null before the first poll. Never negative.",
       examples: [709986],
