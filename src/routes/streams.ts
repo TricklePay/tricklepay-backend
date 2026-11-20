@@ -1,8 +1,6 @@
 // Registers the GET /streams, GET /streams/summary, GET /tokens, GET /streams/:id/events, and GET /streams/:id endpoints.
 // These routes read stream records, historical events, and aggregations from the database.
 
-import { createHash } from "node:crypto";
-
 import { Prisma, type Stream } from "@prisma/client";
 
 import { StrKey } from "@stellar/stellar-sdk";
@@ -11,6 +9,7 @@ import type { FastifyInstance } from "fastify";
 
 import { QueryTimeoutError } from "../db.js";
 import { sendError, bigIntToStringNullable } from "../lib/response.js";
+import { ifNoneMatchMatches, strongEtag, weakEtagFromBody } from "../lib/etag.js";
 import { parsePagination } from "../lib/pagination.js";
 import { mapStreamResponse } from "../lib/stream-view.js";
 import { MAX_UINT64, parseStreamId } from "../lib/stream-id.js";
@@ -59,16 +58,6 @@ import { DEFAULT_STREAM_SUMMARY_CACHE_TTL_MS } from "../config.js";
 // Above this offset a scan gets expensive enough that callers should page
 // through results in order or narrow them with filters instead.
 const MAX_OFFSET = 10000;
-
-// Weak ETag for list responses, derived from the serialized body so it changes
-// whenever any returned field changes (streams, total, nextCursor, pagination).
-// "Weak" (W/) is correct here: the body is byte-identical between revalidations
-// for the same data, but we only guarantee semantic equivalence, matching the
-// detail route's revalidation model without a per-row version column.
-function weakEtagFromBody(body: unknown): string {
-  const digest = createHash("sha256").update(JSON.stringify(body)).digest("hex");
-  return `W/"${digest}"`;
-}
 
 type StreamStatus = "pending" | "streaming" | "completed" | "cancelled";
 
@@ -493,7 +482,7 @@ export async function streamRoutes(
       const etag = weakEtagFromBody(body);
       reply.header("ETag", etag);
 
-      if (request.headers["if-none-match"] === etag) {
+      if (ifNoneMatchMatches(request.headers["if-none-match"], etag)) {
         return reply.code(304).send();
       }
 
@@ -754,13 +743,12 @@ export async function streamRoutes(
 
       const etag =
         asOfTime !== undefined
-          ? `"${stream.updatedLedger}-${asOfTime}"`
-          : `"${stream.updatedLedger}"`;
+          ? strongEtag(stream.updatedLedger, asOfTime)
+          : strongEtag(stream.updatedLedger);
       reply.header("Cache-Control", "public, max-age=30");
       reply.header("ETag", etag);
 
-      const ifNoneMatch = request.headers["if-none-match"];
-      if (ifNoneMatch === etag) {
+      if (ifNoneMatchMatches(request.headers["if-none-match"], etag)) {
         return reply.code(304).send();
       }
 
@@ -842,12 +830,11 @@ export async function streamRoutes(
         return sendError(reply, request, 404, "NOT_FOUND", "stream not found");
       }
 
-      const etag = `"${stream.updatedLedger}-schedule-${requestedPoints}"`;
+      const etag = strongEtag(stream.updatedLedger, "schedule", requestedPoints);
       reply.header("Cache-Control", "public, max-age=30");
       reply.header("ETag", etag);
 
-      const ifNoneMatch = request.headers["if-none-match"];
-      if (ifNoneMatch === etag) {
+      if (ifNoneMatchMatches(request.headers["if-none-match"], etag)) {
         return reply.code(304).send();
       }
 

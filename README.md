@@ -367,12 +367,13 @@ Each point has three fields, all decimal strings:
 
 ### ETag and conditional requests
 
-`GET /streams/:id` and `GET /streams/:id/schedule` both set an `ETag` response header and honour the `If-None-Match` request header for conditional GET / HEAD requests.
+`GET /streams`, `GET /streams/:id` and `GET /streams/:id/schedule` set an `ETag` response header and honour the `If-None-Match` request header for conditional GET / HEAD requests. All three build the tag and evaluate `If-None-Match` through the shared helpers in `src/lib/etag.ts`.
 
 **How ETags are formed:**
 
 | Route | `ETag` value |
 |-------|-------------|
+| `GET /streams` | `W/"<sha256 of the response body>"` |
 | `GET /streams/:id` (no `?at=`) | `"<updatedLedger>"` |
 | `GET /streams/:id?at=<ts>` | `"<updatedLedger>-<ts>"` |
 | `GET /streams/:id/schedule?points=<n>` | `"<updatedLedger>-schedule-<n>"` |
@@ -401,7 +402,13 @@ curl -si -H 'If-None-Match: "200-schedule-50"' \
 HTTP/1.1 304 Not Modified
 ```
 
-**When a 304 is returned:** the server checks the incoming `If-None-Match` value against the ETag it would have produced for the current database state. If they match exactly the response body is omitted and `304 Not Modified` is returned, saving the round-trip data. A mismatched `If-None-Match` (or no header at all) always produces a full `200` response.
+**When a 304 is returned:** the server compares the incoming `If-None-Match` header with the ETag it would have produced for the current database state, using RFC 9110 weak comparison. It returns `304 Not Modified` with no body when:
+
+- the header is `*`;
+- any entry in a comma-separated list matches (`W/"a", W/"b", "200"`); or
+- an entry is the weak or strong form of the current tag (`W/"200"` matches `"200"`).
+
+Entries that are not valid entity-tags (for example an unquoted `200`) are ignored. A header with no matching entry, or no header at all, always produces a full `200` response.
 
 **Caveat:** `?at=` and `?points=` are both encoded into the ETag, so changing either parameter on the same stream id produces a different ETag even when `updatedLedger` has not advanced. A client caching both `?at=1735689600` and the bare URL for stream 42 will hold two separate cache entries and must send the right `If-None-Match` for each request variant.
 
