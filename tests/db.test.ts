@@ -28,6 +28,7 @@ describe("checkHealth", () => {
     const result = await checkHealth();
     
     expect(result).toEqual({ status: "up" });
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("times out predictably", async () => {

@@ -99,7 +99,9 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
     // logger, so it lands in every structured request log line as `reqId`.
     genReqId: (req) =>
       sanitizeRequestId(req.headers[REQUEST_ID_HEADER]) ?? randomUUID(),
-    querystringParser: parseQueryString,
+    routerOptions: {
+      querystringParser: parseQueryString,
+    },
     // Fastify's default Ajv strips properties a schema forbids with
     // `additionalProperties: false`. Turn that off so an unknown or misspelt
     // query parameter (`limt=5`) is rejected with a 400 instead of silently
