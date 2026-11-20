@@ -22,7 +22,7 @@ This directory contains technical documentation and operational guides for the T
 - [debugging-a-stream.md](debugging-a-stream.md): Queries to list a stream's event history, compare it against its stored row, and spot a gap or an over-counted balance.
 - [backfill-duration.md](backfill-duration.md): Explains what determines how long an indexer backfill takes, how to estimate remaining progress, and the metric that shows it.
 - [CONFIGURATION.md](CONFIGURATION.md): How configuration is loaded from the process environment and the optional `.env` file, which of the two wins when they disagree, and the variables that are read outside `loadConfig()`.
-- [container-image.md](container-image.md): What the two-stage Dockerfile builds, what the runtime image contains, and how the container starts.
+- [container-image.md](container-image.md): What the two-stage Dockerfile builds, what the runtime image contains, and how the container starts; the base image tag policy; the CI build, health check and vulnerability scan; SBOMs; and the images published to GHCR on release tags.
 - [DATABASE.md](DATABASE.md): Supported PostgreSQL versions and compatibility requirements; this is about the database server, whereas [database-schema.md](database-schema.md) documents the tables the application creates.
 - [database-migrations.md](database-migrations.md): Prisma workflow for creating, reviewing, and applying schema migrations.
 - [database-schema.md](database-schema.md): PostgreSQL schema reference covering models (`Stream`, `IndexedEvent`, `FailedEvent`, `IndexerState`), field definitions, types, indexes, and persistence logic.

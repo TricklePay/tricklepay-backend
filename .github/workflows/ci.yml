@@ -29,6 +29,33 @@ jobs:
 
       - run: npm run build
 
+  sbom:
+    runs-on: ubuntu-latest
+    env:
+      # Pinned so the SBOM format does not drift with the runner's bundled npm.
+      # Keep in step with release.yml (docs/container-image.md#sboms).
+      NPM_SBOM_VERSION: 10.9.2
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Reads package-lock.json only, so no install is needed. Dev
+      # dependencies are included because the runtime image ships them.
+      - name: Generate npm SBOM (CycloneDX)
+        run: |
+          mkdir -p sbom
+          npx --yes "npm@$NPM_SBOM_VERSION" sbom --sbom-format cyclonedx --sbom-type application \
+            --package-lock-only > sbom/tricklepay-backend-npm.cdx.json
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sbom-npm
+          path: sbom/
+          if-no-files-found: error
+
   migration-check:
     runs-on: ubuntu-latest
 
