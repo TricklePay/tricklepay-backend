@@ -616,6 +616,7 @@ export const apiIndexSchema = {
     },
     endpoints: {
       type: "array",
+      description: "List of all registered API routes.",
       items: {
         type: "object",
         required: ["method", "path", "description"],

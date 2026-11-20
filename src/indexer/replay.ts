@@ -8,7 +8,7 @@ import { loadConfig } from "../config.js";
 
 import { prisma } from "../db.js";
 
-import { parseCliArgs, wantsJsonOutput } from "../lib/cli-args.js";
+import { isMainModule, parseCliArgs, wantsJsonOutput } from "../lib/cli-args.js";
 
 import { logger } from "../logger.js";
 
@@ -339,7 +339,7 @@ async function main(): Promise<void> {
   await prisma.$disconnect();
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   void main().catch((err) => {
     logger.error({ err }, "failed to replay failed events");
     process.exitCode = 1;

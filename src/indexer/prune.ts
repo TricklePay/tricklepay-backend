@@ -1,5 +1,5 @@
 import { prisma } from "../db.js";
-import { parseCliArgs, wantsJsonOutput } from "../lib/cli-args.js";
+import { isMainModule, parseCliArgs, wantsJsonOutput } from "../lib/cli-args.js";
 import { logger } from "../logger.js";
 import { pruneFailedEvents, type PruneFailedEventsResult } from "../repositories/failed-events.js";
 
@@ -84,7 +84,7 @@ async function main(): Promise<void> {
   await prisma.$disconnect();
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   void main().catch((err) => {
     logger.error({ err }, "failed to prune failed events");
     process.exitCode = 1;
