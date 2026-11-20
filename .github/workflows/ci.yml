@@ -49,11 +49,20 @@ jobs:
       - run: npm run depcheck
 
   migration-check:
+    name: migration-check (Postgres ${{ matrix.postgres-version }})
     runs-on: ubuntu-latest
+
+    # Each version runs to completion, so a failure on one does not hide
+    # whether the other passes.
+    strategy:
+      fail-fast: false
+      matrix:
+        # Keep in step with the tested versions in docs/DATABASE.md.
+        postgres-version: [16, 17]
 
     services:
       postgres:
-        image: postgres:16
+        image: postgres:${{ matrix.postgres-version }}
         env:
           POSTGRES_USER: ci
           POSTGRES_PASSWORD: ci
