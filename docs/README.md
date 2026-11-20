@@ -27,6 +27,7 @@ This directory contains technical documentation and operational guides for the T
 - [database-migrations.md](database-migrations.md): Prisma workflow for creating, reviewing, and applying schema migrations.
 - [database-schema.md](database-schema.md): PostgreSQL schema reference covering models (`Stream`, `IndexedEvent`, `FailedEvent`, `IndexerState`), field definitions, types, indexes, and persistence logic.
 - [database-outage-runbook.md](database-outage-runbook.md): Operator checklist for database outage symptoms, relevant metrics, automatic recovery behavior, and actions for unresolved event failures.
+- [dependency-updates.md](dependency-updates.md): How Dependabot groups and limits version updates without delaying security updates, and what the weekly canary build against the latest dependency versions does when it fails.
 - [derived-figures.md](derived-figures.md): How `vested`, `withdrawable`, `locked`, and `progress` are computed on demand and why they agree with the smart contract.
 - [endpoint-failure-modes.md](endpoint-failure-modes.md): Every API failure mode, the HTTP status it returns, and its machine-readable error code.
 - [event-replay.md](event-replay.md): Operator guide for the event replay recovery CLI tool (`npm run replay-failed-events`), detailing how to inspect, dry-run, and reprocess failed events.
