@@ -35,7 +35,8 @@ For overarching architecture, security models, and cross-repository contribution
 3. **Install Dependencies and Generate Prisma Client:**
 
    ```bash
-   npm install
+   npm ci --ignore-scripts
+   npx prisma generate
    ```
 
 4. **Start Development Stack:**

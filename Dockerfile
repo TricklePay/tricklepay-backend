@@ -2,9 +2,10 @@
 FROM node:22-alpine AS build
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci
+RUN npm ci --ignore-scripts
 COPY . .
-RUN npx prisma generate && npm run build
+RUN npx prisma generate
+RUN npm run build
 
 # Runtime stage: carry over the built output and the resolved dependencies,
 # including the generated Prisma client.
