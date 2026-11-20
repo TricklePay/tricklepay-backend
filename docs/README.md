@@ -44,6 +44,7 @@ This directory contains technical documentation and operational guides for the T
 - [openapi-client-generation.md](openapi-client-generation.md): Guide for generating a typed TypeScript client from the `/docs/json` OpenAPI document, and why amount and time fields are decimal strings rather than numbers.
 - [poll-tick-sequence.md](poll-tick-sequence.md): Mermaid sequence diagram of a single poll tick, from fetching a page of events through decoding, applying, recording failures, and saving the new position.
 - [resource-footprint.md](resource-footprint.md): Indicative deployment sizing, per-process Prisma connection usage, and how retained event volume affects PostgreSQL storage growth.
+- [public-url-and-metrics-token.md](public-url-and-metrics-token.md): Setting `PUBLIC_BASE_URL` behind a reverse proxy and its effect on `/docs/json`, and scraping a `METRICS_TOKEN`-protected `/metrics` from Prometheus, with defaults and failure behaviour.
 - [request-ids.md](request-ids.md): Documentation on Request ID behavior, client-supplied header validation (`x-request-id`), and traceability in responses and logs.
 - [request-lifecycle.md](request-lifecycle.md): End-to-end path of an HTTP request from connection through routing, validation, handlers, and response serialization.
 - [response-headers.md](response-headers.md): Table of which `Cache-Control`, `ETag`, and other headers each endpoint sets, and why, matched against the route code.
