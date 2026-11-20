@@ -426,10 +426,17 @@ curl -s http://localhost:3000/ | jq
   "contractId": "CDMB62RVYAXJJNYYH7K442SHSAJIXTZ6K7JANGSMQF2T7MHCTVSK75SW",
   "endpoints": [
     { "method": "GET", "path": "/health", "description": "Liveness check" },
+    { "method": "GET", "path": "/ready", "description": "Readiness check" },
     { "method": "GET", "path": "/status", "description": "Indexer progress" },
     { "method": "GET", "path": "/metrics", "description": "Prometheus metrics" },
-    { "method": "GET", "path": "/streams", "description": "List streams; filters: sender, recipient, token, limit, offset" },
-    { "method": "GET", "path": "/streams/:id", "description": "A single stream by id" }
+    { "method": "GET", "path": "/streams", "description": "List streams; filters: sender, recipient, token, limit, offset, cursor, cancelled, includeTotal" },
+    { "method": "GET", "path": "/streams/summary", "description": "Summarize streams by status" },
+    { "method": "GET", "path": "/streams/:id", "description": "A single stream by id" },
+    { "method": "GET", "path": "/streams/:id/events", "description": "Stream event history" },
+    { "method": "GET", "path": "/streams/:id/schedule", "description": "Get stream vesting schedule; parameters: points" },
+    { "method": "GET", "path": "/accounts/:address/summary", "description": "Get account stream summary" },
+    { "method": "GET", "path": "/tokens", "description": "List distinct tokens" },
+    { "method": "GET", "path": "/docs", "description": "Interactive OpenAPI documentation" }
   ]
 }
 ```
