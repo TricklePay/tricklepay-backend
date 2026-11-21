@@ -3,6 +3,7 @@
 import type { FastifyInstance } from "fastify";
 
 import { QueryTimeoutError } from "../../db.js";
+import { ifNoneMatchMatches, strongEtag } from "../../lib/etag.js";
 import { sendError } from "../../lib/response.js";
 import { parseStreamId } from "../../lib/stream-id.js";
 import {
@@ -89,12 +90,11 @@ export function registerStreamScheduleRoute(app: FastifyInstance): void {
         return sendError(reply, request, 404, "NOT_FOUND", "stream not found");
       }
 
-      const etag = `"${stream.updatedLedger}-schedule-${requestedPoints}"`;
+      const etag = strongEtag(stream.updatedLedger, "schedule", requestedPoints);
       reply.header("Cache-Control", "public, max-age=30");
       reply.header("ETag", etag);
 
-      const ifNoneMatch = request.headers["if-none-match"];
-      if (ifNoneMatch === etag) {
+      if (ifNoneMatchMatches(request.headers["if-none-match"], etag)) {
         return reply.code(304).send();
       }
 

@@ -11,6 +11,16 @@ permissions:
   contents: read
 
 jobs:
+  # Builds the production image so a broken Dockerfile (for example an
+  # install step that runs before a file it needs is copied) fails the PR
+  # instead of the next deploy.
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: docker build --tag tricklepay-backend:ci .
+
   build:
     runs-on: ubuntu-latest
     strategy:
@@ -36,12 +46,6 @@ jobs:
 
       - run: npm run build
 
-  sbom:
-    runs-on: ubuntu-latest
-    env:
-      # Pinned so the SBOM format does not drift with the runner's bundled npm.
-      # Keep in step with release.yml (docs/container-image.md#sboms).
-      NPM_SBOM_VERSION: 10.9.2
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
@@ -51,11 +55,12 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  # Unused and undeclared dependencies do not depend on the Node version, so
-  # this runs once rather than in each entry of the build matrix. Known false
-  # positives are listed with their reasons in .depcheckrc.yml.
-  depcheck:
+  sbom:
     runs-on: ubuntu-latest
+    env:
+      # Pinned so the SBOM format does not drift with the runner's bundled npm.
+      # Keep in step with release.yml (docs/container-image.md#sboms).
+      NPM_SBOM_VERSION: 10.9.2
     steps:
       - uses: actions/checkout@v4
 
@@ -76,6 +81,18 @@ jobs:
           name: sbom-npm
           path: sbom/
           if-no-files-found: error
+
+  # Unused and undeclared dependencies do not depend on the Node version, so
+  # this runs once rather than in each entry of the build matrix. Known false
+  # positives are listed with their reasons in .depcheckrc.yml.
+  depcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
           cache: npm
 
       # depcheck resolves CLI-only dependencies (tsc, tsx, prisma) through

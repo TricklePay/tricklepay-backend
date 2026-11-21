@@ -1,10 +1,9 @@
 // GET /streams: paginated, filtered list of streams with a weak ETag.
 
-import { createHash } from "node:crypto";
-
 import type { FastifyInstance } from "fastify";
 
 import { sendError } from "../../lib/response.js";
+import { ifNoneMatchMatches, weakEtagFromBody } from "../../lib/etag.js";
 import { parsePagination } from "../../lib/pagination.js";
 import { mapStreamResponse } from "../../lib/stream-view.js";
 import { parseStreamId } from "../../lib/stream-id.js";
@@ -21,16 +20,6 @@ import { ERROR_SCHEMA_ID, STREAM_LIST_RESPONSE_SCHEMA_ID } from "../../schema.js
 // Above this offset a scan gets expensive enough that callers should page
 // through results in order or narrow them with filters instead.
 const MAX_OFFSET = 10000;
-
-// Weak ETag for list responses, derived from the serialized body so it changes
-// whenever any returned field changes (streams, total, nextCursor, pagination).
-// "Weak" (W/) is correct here: the body is byte-identical between revalidations
-// for the same data, but we only guarantee semantic equivalence, matching the
-// detail route's revalidation model without a per-row version column.
-function weakEtagFromBody(body: unknown): string {
-  const digest = createHash("sha256").update(JSON.stringify(body)).digest("hex");
-  return `W/"${digest}"`;
-}
 
 type StreamStatus = "pending" | "streaming" | "completed" | "cancelled";
 
@@ -272,7 +261,7 @@ export function registerListStreamsRoute(app: FastifyInstance): void {
       const etag = weakEtagFromBody(body);
       reply.header("ETag", etag);
 
-      if (request.headers["if-none-match"] === etag) {
+      if (ifNoneMatchMatches(request.headers["if-none-match"], etag)) {
         return reply.code(304).send();
       }
 
