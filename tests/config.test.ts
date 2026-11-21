@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  DEFAULT_LAG_WARN_LEDGERS,
   DEFAULT_MAX_BACKOFF_MS,
   DEFAULT_MAX_PAGES_PER_TICK,
   DEFAULT_RATE_LIMIT_MAX,
@@ -125,6 +126,7 @@ describe("loadConfig — default values for unset optional settings", () => {
         INDEXER_START_LEDGER: undefined,
         INDEXER_BACKOFF_MAX_MS: undefined,
         INDEXER_MAX_PAGES_PER_TICK: undefined,
+        INDEXER_LAG_WARN_LEDGERS: undefined,
         STREAM_SUMMARY_CACHE_TTL_MS: undefined,
         TRUSTED_PROXIES: undefined,
         READINESS_RETRY_AFTER_SECONDS: undefined,
@@ -142,6 +144,7 @@ describe("loadConfig — default values for unset optional settings", () => {
           startLedger: 0,
           maxBackoffMs: DEFAULT_MAX_BACKOFF_MS,
           maxPagesPerTick: DEFAULT_MAX_PAGES_PER_TICK,
+          lagWarnLedgers: DEFAULT_LAG_WARN_LEDGERS,
           summaryCacheTtlMs: DEFAULT_STREAM_SUMMARY_CACHE_TTL_MS,
           bodyLimit: 1048576,
           queryStringLimit: 2048,
@@ -484,6 +487,38 @@ describe("loadConfig — INDEXER_MAX_PAGES_PER_TICK bounds", () => {
   it("rejects values that do not parse as numbers", () => {
     withEnv({ INDEXER_MAX_PAGES_PER_TICK: "many" }, () => {
       expect(() => loadConfig()).toThrow("INDEXER_MAX_PAGES_PER_TICK must be an integer");
+    });
+  });
+});
+
+describe("loadConfig — INDEXER_LAG_WARN_LEDGERS", () => {
+  it("keeps the default when omitted or blank", () => {
+    withEnv({ INDEXER_LAG_WARN_LEDGERS: undefined }, () => {
+      expect(loadConfig().lagWarnLedgers).toBe(DEFAULT_LAG_WARN_LEDGERS);
+    });
+    withEnv({ INDEXER_LAG_WARN_LEDGERS: "   " }, () => {
+      expect(loadConfig().lagWarnLedgers).toBe(DEFAULT_LAG_WARN_LEDGERS);
+    });
+  });
+
+  it("accepts a custom threshold", () => {
+    withEnv({ INDEXER_LAG_WARN_LEDGERS: "5000" }, () => {
+      expect(loadConfig().lagWarnLedgers).toBe(5000);
+    });
+  });
+
+  it("accepts zero, which disables the warning", () => {
+    withEnv({ INDEXER_LAG_WARN_LEDGERS: "0" }, () => {
+      expect(loadConfig().lagWarnLedgers).toBe(0);
+    });
+  });
+
+  it("rejects negative and non-integer values", () => {
+    withEnv({ INDEXER_LAG_WARN_LEDGERS: "-1" }, () => {
+      expect(() => loadConfig()).toThrow("INDEXER_LAG_WARN_LEDGERS must be a non-negative integer");
+    });
+    withEnv({ INDEXER_LAG_WARN_LEDGERS: "lots" }, () => {
+      expect(() => loadConfig()).toThrow("INDEXER_LAG_WARN_LEDGERS must be a non-negative integer");
     });
   });
 });

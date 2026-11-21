@@ -35,7 +35,7 @@ This document describes the end-to-end journey of an HTTP request through the Tr
                                     │
                                     ▼
 ┌────────────────────────────────────────────────────────────────────────┐
-│ 4. Route Handler (`src/routes/streams.ts`, `src/routes/status.ts`)     │
+│ 4. Route Handler (`src/routes/streams/*.ts`, `src/routes/status.ts`)   │
 │    - Parses domain filters, bounds limits, normalizes Stellar addresses│
 └───────────────────────────────────┬────────────────────────────────────┘
                                     │
