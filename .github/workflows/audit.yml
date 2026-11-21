@@ -1,14 +1,28 @@
 name: Dependency Audit
 
+# Policy (also documented in CONTRIBUTING.md):
+#
+# - Pull requests fail only on high or critical advisories that the pull
+#   request introduces: ones reported for its package-lock.json but not for
+#   the base branch's. Both lock files are audited in the same run, against
+#   the same advisory database, so an advisory published today that affects
+#   main too is not blamed on the pull request.
+# - The scheduled run (and a manual run) reports every advisory against main
+#   and fails on any high or critical one, so the existing backlog stays
+#   visible in the Actions tab without turning every pull request red.
 on:
   schedule:
     - cron: '0 0 * * *' # daily
-  push:
-    branches: [main]
+  workflow_dispatch:
   pull_request:
 
+# The audit only reads the repository and the public advisory database.
+permissions:
+  contents: read
+
 jobs:
-  audit:
+  full-report:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,9 +30,93 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
 
-      # Run audit and fail on high or critical vulnerabilities.
-      # Low and moderate vulnerabilities are reported but will not fail the build.
+      # The full list goes to the job summary; the step fails on high or
+      # critical advisories. Low and moderate ones are reported only.
       - name: Run npm audit
-        run: npm audit --audit-level=high
+        run: |
+          set +e
+          npm audit --package-lock-only > audit.txt
+          {
+            echo '### npm audit (full report)'
+            echo '```'
+            cat audit.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat audit.txt
+          npm audit --package-lock-only --audit-level=high > /dev/null
+
+  new-advisories:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: head
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # npm audit exits non-zero whenever it finds anything, so the exit code
+      # is ignored here and the JSON is checked by the next step instead.
+      - name: Audit the pull request and its base
+        run: |
+          (cd head && npm audit --package-lock-only --json > ../head.json) || true
+          (cd base && npm audit --package-lock-only --json > ../base.json) || true
+
+      - name: Fail on newly introduced high or critical advisories
+        run: |
+          node --input-type=module <<'EOF'
+          import { appendFileSync, readFileSync } from "node:fs";
+
+          const FAILING = new Set(["high", "critical"]);
+
+          // Returns a map of "package advisory-url" to advisory details. An
+          // audit that could not run (no "vulnerabilities" key) is an error,
+          // not a pass.
+          function advisories(file) {
+            const report = JSON.parse(readFileSync(file, "utf8"));
+            if (!report.vulnerabilities) {
+              throw new Error(`npm audit failed for ${file}: ${JSON.stringify(report.error ?? report)}`);
+            }
+            const found = new Map();
+            for (const vuln of Object.values(report.vulnerabilities)) {
+              for (const via of vuln.via) {
+                if (typeof via !== "object") continue;
+                found.set(`${via.name} ${via.url}`, via);
+              }
+            }
+            return found;
+          }
+
+          const head = advisories("head.json");
+          const base = advisories("base.json");
+          const introduced = [...head].filter(([key]) => !base.has(key)).map(([, via]) => via);
+          const failing = introduced.filter((via) => FAILING.has(via.severity));
+
+          const lines = [
+            "### npm audit (advisories introduced by this pull request)",
+            "",
+            `Base: ${base.size} advisories. This pull request: ${head.size}. New: ${introduced.length}.`,
+            "",
+          ];
+          if (introduced.length > 0) {
+            lines.push("| Severity | Package | Range | Advisory |", "|---|---|---|---|");
+            for (const via of introduced) {
+              lines.push(`| ${via.severity} | ${via.name} | ${via.range} | [${via.title}](${via.url}) |`);
+            }
+          }
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join("\n") + "\n");
+          console.log(lines.join("\n"));
+
+          if (failing.length > 0) {
+            console.error(`::error::${failing.length} new high or critical advisories. See the job summary.`);
+            process.exit(1);
+          }
+          EOF

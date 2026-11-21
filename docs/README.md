@@ -23,8 +23,8 @@ Listed alphabetically by file name, ignoring case.
 - [api-versioning.md](api-versioning.md): Stability guarantees, versioning policy, and change-management rules for the HTTP API.
 - [backfill-duration.md](backfill-duration.md): Explains what determines how long an indexer backfill takes, how to estimate remaining progress, and the metric that shows it.
 - [CONFIGURATION.md](CONFIGURATION.md): How configuration is loaded from the process environment and the optional `.env` file, which of the two wins when they disagree, and the variables that are read outside `loadConfig()`.
-- [connection-pool.md](connection-pool.md): How Prisma's connection pool is sized and configured through `DATABASE_URL` query parameters (`connection_limit`, `pool_timeout`), and how to choose values for a deployment.
-- [container-image.md](container-image.md): What the two-stage Dockerfile builds, what the runtime image contains, and how the container starts.
+- [container-image.md](container-image.md): What the two-stage Dockerfile builds, what the runtime image contains, and how the container starts; the base image tag policy; the CI build, health check and vulnerability scan; SBOMs; and the images published to GHCR on release tags.
+- [DATABASE.md](DATABASE.md): Supported PostgreSQL versions and compatibility requirements; this is about the database server, whereas [database-schema.md](database-schema.md) documents the tables the application creates.
 - [database-migrations.md](database-migrations.md): Prisma workflow for creating, reviewing, and applying schema migrations.
 - [database-outage-runbook.md](database-outage-runbook.md): Operator checklist for database outage symptoms, relevant metrics, automatic recovery behavior, and actions for unresolved event failures.
 - [database-schema.md](database-schema.md): PostgreSQL schema reference covering models (`Stream`, `IndexedEvent`, `FailedEvent`, `IndexerState`), field definitions, types, indexes, and persistence logic.
@@ -46,6 +46,8 @@ Listed alphabetically by file name, ignoring case.
 - [node-version-policy.md](node-version-policy.md): States the minimum supported, CI-tested, and production Node versions, and why `.nvmrc` deliberately pins the floor rather than matching the Dockerfile.
 - [openapi-client-generation.md](openapi-client-generation.md): Guide for generating a typed TypeScript client from the `/docs/json` OpenAPI document, and why amount and time fields are decimal strings rather than numbers.
 - [poll-tick-sequence.md](poll-tick-sequence.md): Mermaid sequence diagram of a single poll tick, from fetching a page of events through decoding, applying, recording failures, and saving the new position.
+- [resource-footprint.md](resource-footprint.md): Indicative deployment sizing, per-process Prisma connection usage, and how retained event volume affects PostgreSQL storage growth.
+- [public-url-and-metrics-token.md](public-url-and-metrics-token.md): Setting `PUBLIC_BASE_URL` behind a reverse proxy and its effect on `/docs/json`, and scraping a `METRICS_TOKEN`-protected `/metrics` from Prometheus, with defaults and failure behaviour.
 - [query-parameters.md](query-parameters.md): Decision record for repeated query parameters: why a parameter given more than once is rejected with `400` rather than silently using the first or last value.
 - [request-ids.md](request-ids.md): Documentation on Request ID behavior, client-supplied header validation (`x-request-id`), and traceability in responses and logs.
 - [request-lifecycle.md](request-lifecycle.md): End-to-end path of an HTTP request from connection through routing, validation, handlers, and response serialization.

@@ -203,35 +203,11 @@ export type StreamRoutesOptions = {
   summaryCacheTtlMs?: number;
 };
 
-// Mirrors the `querystring` JSON schema on GET /streams below field for
-// field, so a parameter renamed in one place without the other is a compile
-// error instead of a silently-undefined value at runtime.
-interface ListStreamsQuery {
-  ids?: string;
-  sender?: string;
-  recipient?: string;
-  token?: string;
-  limit?: string;
-  offset?: string;
-  includeTotal?: string;
-  cancelled?: string;
-  status?: StreamStatus;
-  cursor?: string;
-  minAmount?: string;
-  maxAmount?: string;
-}
-
 export async function streamRoutes(
   app: FastifyInstance,
   opts: StreamRoutesOptions = {},
 ): Promise<void> {
   const summaryCacheTtlMs = opts.summaryCacheTtlMs ?? DEFAULT_STREAM_SUMMARY_CACHE_TTL_MS;
-  let cachedSummary: { payload: SummaryPayload; createdAt: number } | null = null;
-  // When a recomputation is already in-flight, all concurrent callers wait on
-  // the same Promise instead of each running their own four aggregate queries.
-  // A failed computation is never stored; the waiting callers all receive the
-  // same rejection so no stale data leaks through.
-  let inFlightSummary: Promise<SummaryPayload> | null = null;
 
   // Ensure the shared schemas are available whether this plugin is registered
   // on a full server (which calls addSchema centrally) or a bare Fastify
