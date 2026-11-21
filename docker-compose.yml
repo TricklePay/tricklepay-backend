@@ -39,20 +39,38 @@ services:
       timeout: 5s
       retries: 5
 
-  api:
-    build: .
+  # One-shot migration service that runs prisma migrate deploy using the
+  # dedicated migration image target so the API runtime image does not need
+  # to ship dev dependencies (like the Prisma CLI).
+  migrate:
+    build:
+      context: .
+      target: migrate
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://tricklepay:tricklepay@postgres:5432/tricklepay
-      NETWORK: testnet
-      STREAM_CONTRACT_ID: ${STREAM_CONTRACT_ID}
-      PORT: 3000
-      HOST: 0.0.0.0
+      DATABASE_URL: ${DATABASE_URL:-postgresql://tricklepay:tricklepay@postgres:5432/tricklepay}
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      target: runtime
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://tricklepay:tricklepay@postgres:5432/tricklepay}
+      NETWORK: ${NETWORK:-testnet}
+      STREAM_CONTRACT_ID: ${STREAM_CONTRACT_ID:?STREAM_CONTRACT_ID must be set to the deployed Soroban stream contract address}
+      PORT: ${PORT:-3000}
+      HOST: ${HOST:-0.0.0.0}
     ports:
       - "3000:3000"
-    command: sh -c "npx prisma migrate deploy && node dist/index.js"
+    command: ["node", "dist/index.js"]
 
 volumes:
   pgdata:

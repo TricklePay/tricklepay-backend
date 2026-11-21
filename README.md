@@ -1077,7 +1077,7 @@ npm install
 For the image contents, runtime user, entrypoint, and exposed port, see
 [docs/container-image.md](docs/container-image.md).
 
-The repository includes a multi-container setup in `docker-compose.yml` that starts both the PostgreSQL database and the API service (which automatically runs pending database migrations on startup).
+The repository includes a multi-container setup in `docker-compose.yml` that starts PostgreSQL, runs pending database migrations via a dedicated `migrate` service, and starts the lean `api` service.
 
 #### Environment Variables for Docker
 
@@ -1085,7 +1085,7 @@ When running with Docker Compose, the service requires or configures the followi
 
 | Variable | Required | Description / Default |
 | --- | --- | --- |
-| `STREAM_CONTRACT_ID` | **Yes** | Deployed Soroban contract address (56 characters starting with `C`). Must be provided in `.env` or set in shell environment. |
+| `STREAM_CONTRACT_ID` | **Yes** | Deployed Soroban contract address (56 characters starting with `C`). Must be provided in `.env` or set in the shell environment. If unset, Docker Compose fails fast immediately with a clear error message. |
 | `DATABASE_URL` | Yes | Pre-configured in compose to `postgresql://tricklepay:tricklepay@postgres:5432/tricklepay`. |
 | `NETWORK` | No | Stellar network (`testnet` or `mainnet`). Default in compose: `testnet`. |
 | `PORT` | No | Container HTTP listen port. Default: `3000`. |
@@ -1101,7 +1101,19 @@ When running with Docker Compose, the service requires or configures the followi
 
    Edit `.env` and set `STREAM_CONTRACT_ID` to your deployed stream contract address (e.g., `STREAM_CONTRACT_ID=C...`).
 
-2. **Start the database and API containers:**
+   Alternatively, you can provide `STREAM_CONTRACT_ID` directly in your shell:
+   ```bash
+   export STREAM_CONTRACT_ID=CDMB62RVYAXJJNYYH7K442SHSAJIXTZ6K7JANGSMQF2T7MHCTVSK75SW
+   # or run inline with docker compose:
+   STREAM_CONTRACT_ID=CDMB62RVYAXJJNYYH7K442SHSAJIXTZ6K7JANGSMQF2T7MHCTVSK75SW docker compose up
+   ```
+
+   If `STREAM_CONTRACT_ID` is missing or unset, `docker compose up api` fails fast immediately with:
+   ```text
+   STREAM_CONTRACT_ID must be set to the deployed Soroban stream contract address
+   ```
+
+2. **Start the database, migration, and API containers:**
 
    ```bash
    docker compose up --build
@@ -1113,7 +1125,7 @@ When running with Docker Compose, the service requires or configures the followi
    docker compose up -d
    ```
 
-   The `api` container waits for the `postgres` healthcheck to pass, runs `npx prisma migrate deploy` automatically, and then starts the API service.
+   The `migrate` container waits for the `postgres` healthcheck to pass, runs `npx prisma migrate deploy` automatically to completion, and then the `api` container starts the API service.
 
 3. **Verify and view logs:**
 
@@ -1659,13 +1671,13 @@ they answer different questions:
 
 ### Migrations
 
-Apply pending Prisma migrations before the process starts serving traffic —
+Apply pending Prisma migrations before the process starts serving traffic -
 `npx prisma migrate deploy`, never `prisma migrate dev`, which is interactive.
-`docker-compose.yml` shows the pattern: the migration runs as a startup step
-ahead of `node dist/index.js`, in the same container command. On a platform
-with a dedicated pre-deploy hook or init-container step, use that instead of
-chaining commands; either way, migrations must complete before the app process
-accepts connections.
+`docker-compose.yml` shows the pattern: the migration runs as a dedicated `migrate`
+service ahead of `node dist/index.js` in the `api` service. On a platform
+with a dedicated pre-deploy hook or init-container step, use the migration image
+instead of running migrations inside the API container; either way, migrations
+must complete before the app process accepts connections.
 
 ### Resetting the local database
 
@@ -1678,7 +1690,7 @@ removing the containers:
 
 ```bash
 docker compose exec postgres psql -U tricklepay -d tricklepay -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
-docker compose exec api npx prisma migrate deploy
+docker compose run --rm migrate
 ```
 
 This drops the existing schema and then applies the Prisma migrations again,
@@ -1692,8 +1704,8 @@ docker compose up -d
 ```
 
 The `-v` flag removes the named PostgreSQL volume, so all local data is wiped.
-After startup, the API's container command runs `npx prisma migrate deploy`
-automatically before starting the app.
+After startup, Docker Compose runs the dedicated `migrate` service
+automatically before starting the `api` service.
 
 ### Graceful termination
 

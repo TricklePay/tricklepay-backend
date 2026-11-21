@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { prisma } from "../../src/db.js";
-import { parseAgeToCutoff, runPrune } from "../../src/indexer/prune.js";
+import { main as pruneMain, parseAgeToCutoff, runPrune } from "../../src/indexer/prune.js";
 import { pruneFailedEvents } from "../../src/repositories/failed-events.js";
 
 describe("parseAgeToCutoff", () => {
@@ -91,5 +91,85 @@ describe("pruneFailedEvents", () => {
     expect(countSpy).toHaveBeenCalled();
     expect(result.dryRun).toBe(true);
     expect(result.deletedCount).toBe(3);
+  });
+
+  describe("main CLI stream separation", () => {
+    it("writes usage to stderr and exits with code 1 when missing arguments", async () => {
+      const origArgv = process.argv;
+      const origExitCode = process.exitCode;
+      const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+      const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+      try {
+        process.argv = ["node", "prune.js"];
+        process.exitCode = undefined;
+
+        await pruneMain();
+
+        expect(process.exitCode).toBe(1);
+        expect(stdoutSpy).not.toHaveBeenCalled();
+        expect(stderrSpy).toHaveBeenCalled();
+        const output = stderrSpy.mock.calls.map((c) => String(c[0])).join("");
+        expect(output).toContain("Usage: tsx src/indexer/prune.ts --older-than=<age>");
+      } finally {
+        process.argv = origArgv;
+        process.exitCode = origExitCode;
+      }
+    });
+
+    it("writes formatted text to stdout and nothing to stderr when in human-readable mode", async () => {
+      const origArgv = process.argv;
+      const origExitCode = process.exitCode;
+      vi.spyOn(prisma.failedEvent, "count").mockResolvedValue(4);
+      vi.spyOn(prisma, "$disconnect").mockResolvedValue(undefined as never);
+      const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+      const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+      try {
+        process.argv = ["node", "prune.js", "--older-than=30d", "--dry-run"];
+        process.exitCode = undefined;
+
+        await pruneMain();
+
+        expect(process.exitCode).toBeUndefined();
+        expect(stderrSpy).not.toHaveBeenCalled();
+        expect(stdoutSpy).toHaveBeenCalled();
+        const output = stdoutSpy.mock.calls.map((c) => String(c[0])).join("");
+        expect(output).toContain("dry-run: 4 failed event(s)");
+      } finally {
+        process.argv = origArgv;
+        process.exitCode = origExitCode;
+      }
+    });
+
+    it("writes pure JSON to stdout and nothing to stderr when --json is provided", async () => {
+      const origArgv = process.argv;
+      const origExitCode = process.exitCode;
+      vi.spyOn(prisma.failedEvent, "count").mockResolvedValue(7);
+      vi.spyOn(prisma, "$disconnect").mockResolvedValue(undefined as never);
+      const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+      const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+      try {
+        process.argv = ["node", "prune.js", "--older-than=30d", "--dry-run", "--json"];
+        process.exitCode = undefined;
+
+        await pruneMain();
+
+        expect(process.exitCode).toBeUndefined();
+        expect(stderrSpy).not.toHaveBeenCalled();
+        expect(stdoutSpy).toHaveBeenCalledTimes(1);
+        const output = String(stdoutSpy.mock.calls[0][0]);
+        const parsed = JSON.parse(output.trim());
+        expect(parsed).toEqual({
+          deletedCount: 7,
+          cutoff: expect.any(String),
+          dryRun: true,
+        });
+      } finally {
+        process.argv = origArgv;
+        process.exitCode = origExitCode;
+      }
+    });
   });
 });

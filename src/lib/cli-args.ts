@@ -18,7 +18,17 @@ import { fileURLToPath } from "node:url";
  */
 export function isMainModule(metaUrl: string, argv1: string | undefined = process.argv[1]): boolean {
   if (!argv1) return false;
-  return fileURLToPath(metaUrl) === path.resolve(argv1);
+  try {
+    return fileURLToPath(metaUrl) === path.resolve(argv1);
+  } catch {
+    try {
+      const parsed = new URL(metaUrl);
+      const decoded = decodeURIComponent(parsed.pathname);
+      return path.resolve(decoded) === path.resolve(argv1);
+    } catch {
+      return false;
+    }
+  }
 }
 
 export const isMain = isMainModule;
