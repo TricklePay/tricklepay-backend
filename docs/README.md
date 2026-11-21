@@ -23,8 +23,8 @@ Listed alphabetically by file name, ignoring case.
 - [api-versioning.md](api-versioning.md): Stability guarantees, versioning policy, and change-management rules for the HTTP API.
 - [backfill-duration.md](backfill-duration.md): Explains what determines how long an indexer backfill takes, how to estimate remaining progress, and the metric that shows it.
 - [CONFIGURATION.md](CONFIGURATION.md): How configuration is loaded from the process environment and the optional `.env` file, which of the two wins when they disagree, and the variables that are read outside `loadConfig()`.
-- [connection-pool.md](connection-pool.md): How Prisma's connection pool is sized and configured through `DATABASE_URL` query parameters (`connection_limit`, `pool_timeout`), and how to choose values for a deployment.
-- [container-image.md](container-image.md): What the two-stage Dockerfile builds, what the runtime image contains, and how the container starts.
+- [container-image.md](container-image.md): What the two-stage Dockerfile builds, what the runtime image contains, and how the container starts; the base image tag policy; the CI build, health check and vulnerability scan; SBOMs; and the images published to GHCR on release tags.
+- [DATABASE.md](DATABASE.md): Supported PostgreSQL versions and compatibility requirements; this is about the database server, whereas [database-schema.md](database-schema.md) documents the tables the application creates.
 - [database-migrations.md](database-migrations.md): Prisma workflow for creating, reviewing, and applying schema migrations.
 - [database-outage-runbook.md](database-outage-runbook.md): Operator checklist for database outage symptoms, relevant metrics, automatic recovery behavior, and actions for unresolved event failures.
 - [database-schema.md](database-schema.md): PostgreSQL schema reference covering models (`Stream`, `IndexedEvent`, `FailedEvent`, `IndexerState`), field definitions, types, indexes, and persistence logic.

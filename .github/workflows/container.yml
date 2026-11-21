@@ -1,0 +1,181 @@
+name: Container image
+
+# Builds the Dockerfile on every change so a broken build, a file missing from
+# the runtime stage or a failing HEALTHCHECK is caught here rather than at
+# deployment, and scans the built image for vulnerabilities. Nothing is pushed:
+# images are only published by release.yml. See docs/container-image.md.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: tricklepay-backend:ci
+  # Pinned by digest so a re-tagged scanner image cannot run in CI. Bump the
+  # version and digest together (docs/container-image.md#vulnerability-scan).
+  TRIVY_IMAGE: aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c
+
+jobs:
+  smoke-test:
+    name: Build and health check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: tricklepay
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/tricklepay
+      # Any well-formed contract id will do: startup only checks the RPC is
+      # reachable, and /health does not depend on the indexer finding events.
+      STREAM_CONTRACT_ID: CDMB62RVYAXJJNYYH7K442SHSAJIXTZ6K7JANGSMQF2T7MHCTVSK75SW
+      # Seconds to wait for Docker to report the container healthy. The
+      # HEALTHCHECK's first probe runs one interval (30s) after start.
+      HEALTH_TIMEOUT_SECONDS: 180
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          push: false
+          tags: ${{ env.IMAGE }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # The container shares the runner's network so it reaches the service
+      # database on localhost, the same way the migration-check job does.
+      - name: Apply migrations with the image
+        run: docker run --rm --network host -e DATABASE_URL "$IMAGE" npx prisma migrate deploy
+
+      # The service verifies the public testnet Soroban RPC at startup, so
+      # this step needs outbound network access to soroban-testnet.stellar.org.
+      - name: Start container
+        run: |
+          docker run --detach --name tricklepay --network host \
+            -e DATABASE_URL -e STREAM_CONTRACT_ID \
+            -e NETWORK=testnet -e PORT=3000 -e HOST=0.0.0.0 \
+            "$IMAGE"
+
+      - name: Wait for healthy
+        run: |
+          deadline=$((SECONDS + HEALTH_TIMEOUT_SECONDS))
+          while :; do
+            state=$(docker inspect --format '{{.State.Status}}' tricklepay)
+            health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' tricklepay)
+            echo "state=$state health=$health"
+            case "$health" in
+              healthy)
+                curl --fail --silent --show-error http://127.0.0.1:3000/health
+                echo
+                exit 0
+                ;;
+              unhealthy)
+                echo "::error::Docker reports the container unhealthy"
+                exit 1
+                ;;
+              none)
+                echo "::error::The image declares no HEALTHCHECK"
+                exit 1
+                ;;
+            esac
+            if [ "$state" != running ]; then
+              echo "::error::The container stopped before becoming healthy (state: $state)"
+              exit 1
+            fi
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::error::The container was not healthy within ${HEALTH_TIMEOUT_SECONDS}s"
+              exit 1
+            fi
+            sleep 5
+          done
+
+      - name: Container logs
+        if: failure()
+        run: |
+          docker ps --all --filter name=tricklepay
+          docker inspect --format '{{json .State}}' tricklepay || true
+          docker logs tricklepay || true
+
+      - name: Stop container
+        if: always()
+        run: docker rm --force tricklepay || true
+
+  scan:
+    name: Vulnerability scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          push: false
+          tags: ${{ env.IMAGE }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Scans the image from the local Docker daemon. The first run writes a
+      # report at every severity, including suppressed findings, for the
+      # artifact; the second fails the job on any CRITICAL finding not listed
+      # in .trivyignore. The image SBOM comes from the same scanner.
+      - name: Scan image
+        run: |
+          mkdir -p trivy-reports sbom
+          trivy() {
+            docker run --rm \
+              -v /var/run/docker.sock:/var/run/docker.sock \
+              -v "$HOME/.cache/trivy:/root/.cache/trivy" \
+              -v "$PWD:/work" -w /work \
+              "$TRIVY_IMAGE" "$@"
+          }
+          trivy --version
+          trivy image --scanners vuln --ignorefile .trivyignore --show-suppressed \
+            --format json --output trivy-reports/trivy-report.json "$IMAGE"
+          trivy convert --format table --output trivy-reports/trivy-report.txt \
+            trivy-reports/trivy-report.json
+          trivy image --format cyclonedx --output sbom/tricklepay-backend-image.cdx.json "$IMAGE"
+          trivy image --scanners vuln --ignorefile .trivyignore --skip-db-update \
+            --severity CRITICAL --exit-code 1 "$IMAGE"
+
+      - name: Upload scan report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: trivy-report
+          path: trivy-reports/
+          if-no-files-found: warn
+
+      - name: Upload image SBOM
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sbom-image
+          path: sbom/
+          if-no-files-found: warn
