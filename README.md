@@ -25,6 +25,7 @@ For guides and technical documentation, see the [Documentation Index](docs/READM
   - [`?at=` — Historical vesting snapshots](#at--historical-vesting-snapshots)
   - [`?points=` — Vesting schedule points](#points--vesting-schedule-points)
   - [ETag and conditional requests](#etag-and-conditional-requests)
+  - [Security headers](#security-headers)
 - [Error Responses](#error-responses)
 - [Health Endpoint Semantics](#health-endpoint-semantics)
 - [Metrics](#metrics)
@@ -169,6 +170,61 @@ third-party integration, see
 [docs/openapi-client-generation.md](docs/openapi-client-generation.md). For
 exactly which `Cache-Control`, `ETag`, and other headers each endpoint sets
 and why, see [docs/response-headers.md](docs/response-headers.md).
+
+### Security headers
+
+Every response — API data, `/docs`, `/docs/json`, errors, and 404s — carries
+the same hardening headers, set by
+[`src/security-headers.ts`](src/security-headers.ts) through `@fastify/helmet`:
+
+| Header | Value |
+| --- | --- |
+| `Content-Security-Policy` | `default-src 'self'`, `script-src 'self'`, `style-src 'self' https: 'unsafe-inline'`, `img-src 'self' data:`, `frame-ancestors 'none'`, `object-src 'none'` and related directives |
+| `Referrer-Policy` | `no-referrer` |
+| `X-Content-Type-Options` | `nosniff` |
+| `Cross-Origin-Resource-Policy` | `cross-origin` |
+
+The full values and the reasoning behind each one are in
+[docs/response-headers.md](docs/response-headers.md#security-headers).
+
+**Swagger UI and the CSP.** The policy is strict except for one allowance:
+`style-src` includes `'unsafe-inline'` because Swagger UI styles the `/docs`
+page with inline `style` attributes. Scripts are not relaxed — Swagger UI loads
+them as files from `/docs/static`, so `script-src 'self'` is enough. For
+integrators this means:
+
+- The docs page cannot be embedded in an `<iframe>` on another site:
+  `frame-ancestors 'none'` blocks it. Link to `/docs` or open it in a new tab,
+  or render `/docs/json` with your own viewer instead.
+- `upgrade-insecure-requests` is deliberately left out, so `/docs` keeps
+  working over plain HTTP locally and behind a TLS-terminating proxy.
+- `Cross-Origin-Resource-Policy: cross-origin` lets other origins load the
+  responses (for example `/docs/json`); whether browser JavaScript may read
+  them is still decided by [`CORS_ORIGIN`](#cors-origin).
+
+**Interaction with `ENABLE_DOCS_UI`.** The headers are registered before the
+docs routes, so they apply whether the UI is on or off. With
+`ENABLE_DOCS_UI=false` the `/docs` page and its assets return 404 (with the
+same headers) and `/docs/json` and `/docs/yaml` are still served. The
+`'unsafe-inline'` style allowance only exists for the UI, but it stays in the
+policy either way; a deployment that never serves the UI can remove it as
+described below.
+
+**Changing the policy.** The headers are not configurable through environment
+variables. To change them, edit the options passed to `helmet` in
+`registerSecurityHeaders` in
+[`src/security-headers.ts`](src/security-headers.ts): add or adjust a directive
+under `contentSecurityPolicy.directives` (set one to `null` to drop a helmet
+default, as `upgradeInsecureRequests` does), or change `referrerPolicy` /
+`crossOriginResourcePolicy`. Then update
+[`tests/routes/security-headers.test.ts`](tests/routes/security-headers.test.ts),
+which asserts the current values, and the table in
+[docs/response-headers.md](docs/response-headers.md#security-headers). If you
+tighten `style-src`, load `/docs` in a browser and check the console for CSP
+violations — removing `'unsafe-inline'` breaks the Swagger UI layout. Headers
+can also be overridden at a reverse proxy, but a proxy that adds a second
+`Content-Security-Policy` makes the browser enforce both, so replace the
+header there rather than appending to it.
 
 ### Endpoints
 
@@ -1253,7 +1309,7 @@ current template — copy it and fill in the required values.
 | `PORT` | No | `3000` | HTTP server listen port. |
 | `HOST` | No | `0.0.0.0` | HTTP server bind address. |
 | `CORS_ORIGIN` | No | - | Allowed browser origin for the web client. Unset reflects any request origin (development default). Set to a single `https://` origin to pin the API to one frontend. Empty string disables browser access entirely. Only one origin is supported — see [CORS origin](#cors-origin). |
-| `PUBLIC_BASE_URL` | No | `http://<HOST>:<PORT>` | Base URL advertised in the generated OpenAPI document's `servers` entry. Defaults to a URL derived from `HOST` and `PORT`. |
+| `PUBLIC_BASE_URL` | No | `http://<HOST>:<PORT>` | Base URL advertised in the generated OpenAPI document's `servers` entry. Defaults to a URL derived from `HOST` and `PORT`. Set it when running behind a reverse proxy — see [docs/public-url-and-metrics-token.md](docs/public-url-and-metrics-token.md). |
 | `LOG_LEVEL` | No | `info` | Log verbosity (`trace`, `debug`, `info`, `warn`, `error`, `fatal`, `silent`). |
 | `LOG_PRETTY` | No | - | Set to `true` for human-readable development logs; requires the `pino-pretty` dev dependency. Output stays JSON when unset. |
 | `BODY_LIMIT` | No | `1048576` | Largest accepted request body in bytes. |
@@ -1262,7 +1318,7 @@ current template — copy it and fill in the required values.
 | `KEEP_ALIVE_TIMEOUT_MS` | No | `72000` | Milliseconds an idle keep-alive connection is held open after a response. Keep it above any load balancer's idle timeout. `0` disables it. See [Server timeouts](docs/CONFIGURATION.md#server-timeouts). |
 | `REQUEST_TIMEOUT_MS` | No | `30000` | Milliseconds within which a request must be received and answered; past it the client gets `408`. `0` disables it. See [Server timeouts](docs/CONFIGURATION.md#server-timeouts). |
 | `ENABLE_DOCS_UI` | No | `true` | Serve the interactive Swagger UI at `/docs`. Set to `false` to disable the page and its static assets while `/docs/json` and `/docs/yaml` stay available. Accepts `true/false` (also `1/0`, `yes/no`, `on/off`); anything else fails startup. |
-| `METRICS_TOKEN` | No | - | Bearer token required on `/metrics` when set; unset keeps the endpoint unauthenticated. Only send it over TLS and keep the recommended network restriction. |
+| `METRICS_TOKEN` | No | - | Bearer token required on `/metrics` when set; unset keeps the endpoint unauthenticated. Only send it over TLS and keep the recommended network restriction. Prometheus scrape example in [docs/public-url-and-metrics-token.md](docs/public-url-and-metrics-token.md#prometheus-scrape-example). |
 | `COMPRESSION_THRESHOLD_BYTES` | No | `1024` | Responses at least this many bytes are compressed when the client accepts `gzip` or `br`. Smaller responses are sent uncompressed. |
 | `RATE_LIMIT_MAX` | No | `100` | Maximum requests per client IP in each rate-limit window. Must be greater than zero. |
 | `RATE_LIMIT_WINDOW_MS` | No | `60000` | Length of the fixed rate-limit window in milliseconds. Must be greater than zero. |

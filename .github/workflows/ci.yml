@@ -135,7 +135,16 @@ jobs:
       - name: Verify generated client is in sync
         run: npx prisma generate
 
-      # Run the integration suite against the same database.
+      # Run the integration suite against the same database. The schema-drift
+      # test also needs an empty shadow database (SHADOW_DATABASE_URL above),
+      # created here on the service container.
+      #
+      # The server is the postgres:16 service image; createdb is the client
+      # preinstalled on ubuntu-latest (PostgreSQL 18 at the time of writing),
+      # which connects to it over TCP. createdb takes the new database's name
+      # as its only argument and has no -d option (#695): the connection
+      # flags below are all it needs, and it connects through the default
+      # "postgres" maintenance database.
       - name: Integration tests
         run: |
           PGPASSWORD=ci createdb -h localhost -U ci -d tricklepay_test tricklepay_shadow
