@@ -9,6 +9,16 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     environment: "node",
+    // Coverage is only collected when `--coverage` is passed (`npm run
+    // test:coverage`, used by CI). No thresholds are enforced yet; the first
+    // CI report is the baseline.
+    coverage: {
+      provider: "v8",
+      include: ["src/**/*.ts"],
+      exclude: ["src/generated/**"],
+      reporter: ["text", "json-summary", "json", "html"],
+      reportsDirectory: "coverage",
+    },
     projects: [
       {
         test: {

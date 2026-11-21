@@ -12,6 +12,7 @@
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
     "test": "vitest run --project unit",
+    "test:coverage": "vitest run --project unit --coverage",
     "test:integration": "vitest run --project integration",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
@@ -37,6 +38,7 @@
   "devDependencies": {
     "@apidevtools/swagger-parser": "~13.1.0",
     "@types/node": "^22.20.1",
+    "@vitest/coverage-v8": "~4.1.10",
     "depcheck": "^1.4.7",
     "pino-pretty": "^13.2.0",
     "prisma": "6.19.3",
