@@ -137,6 +137,12 @@ describe("parseCliArgs", () => {
       process.argv = original;
     }
   });
+
+  it("does not mutate the argv array it is given", () => {
+    const argv = ["--limit", "10", "--json"];
+    parseCliArgs(argv);
+    expect(argv).toEqual(["--limit", "10", "--json"]);
+  });
 });
 
 describe("wantsJsonOutput", () => {
