@@ -47,17 +47,19 @@ export async function getContractEvents(
   contractId: string,
   options: { startLedger?: number; cursor?: string; limit?: number },
 ): Promise<EventPage> {
-  const request: rpc.Server.GetEventsRequest = {
-    filters: [{ type: "contract", contractIds: [contractId] }],
-    limit: options.limit ?? EVENT_PAGE_LIMIT,
-  };
+  const filters: rpc.Api.EventFilter[] = [{ type: "contract", contractIds: [contractId] }];
+  const limit = options.limit ?? EVENT_PAGE_LIMIT;
 
-  // The RPC accepts either a cursor or a start ledger, not both.
-  if (options.cursor !== undefined) {
-    request.cursor = options.cursor;
-  } else if (options.startLedger !== undefined) {
-    request.startLedger = options.startLedger;
-  }
+  // The RPC accepts either a cursor or a start ledger, not both. The SDK types
+  // this as a union that requires one of them; the cast keeps the old
+  // behaviour of sending neither when the caller has neither yet.
+  const request = (
+    options.cursor !== undefined
+      ? { filters, cursor: options.cursor, limit }
+      : options.startLedger !== undefined
+        ? { filters, startLedger: options.startLedger, limit }
+        : { filters, limit }
+  ) as rpc.Server.GetEventsRequest;
 
   const response = await server.getEvents(request);
   return {

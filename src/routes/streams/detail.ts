@@ -3,6 +3,7 @@
 import type { FastifyInstance } from "fastify";
 
 import { QueryTimeoutError } from "../../db.js";
+import { ifNoneMatchMatches, strongEtag } from "../../lib/etag.js";
 import { sendError } from "../../lib/response.js";
 import { parseStreamId } from "../../lib/stream-id.js";
 import { parseAtTimestamp } from "../../lib/stream-query.js";
@@ -82,13 +83,12 @@ export function registerStreamDetailRoute(app: FastifyInstance): void {
 
       const etag =
         asOfTime !== undefined
-          ? `"${stream.updatedLedger}-${asOfTime}"`
-          : `"${stream.updatedLedger}"`;
+          ? strongEtag(stream.updatedLedger, asOfTime)
+          : strongEtag(stream.updatedLedger);
       reply.header("Cache-Control", "public, max-age=30");
       reply.header("ETag", etag);
 
-      const ifNoneMatch = request.headers["if-none-match"];
-      if (ifNoneMatch === etag) {
+      if (ifNoneMatchMatches(request.headers["if-none-match"], etag)) {
         return reply.code(304).send();
       }
 

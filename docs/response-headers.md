@@ -16,7 +16,7 @@ read back out of `src/routes/*.ts`, `src/health-routes.ts`,
 | `GET /health` | — | — | — | — |
 | `GET /ready` | — | — | — | — |
 | `GET /status` | `no-store` | — | — | Yes (always 200; see below) |
-| `GET /streams` | `public, max-age=30` | `W/"<sha256 of the body>"` | — | Yes — a 400 carries neither |
+| `GET /streams` | `public, max-age=30` | `W/"<sha256 of body>"` | — | Yes — a 400 carries neither |
 | `GET /streams/summary` | `public, max-age=N` (variable, see below) | — | — | Always 200 |
 | `GET /streams/:id` (also `HEAD`) | `public, max-age=30` | `"<updatedLedger>"`, or `"<updatedLedger>-<at>"` with `?at=` | — | Yes — 400/404 carry neither |
 | `GET /streams/:id/events` | `public, max-age=30` | — | — | Yes — 400/404 carry neither |
@@ -98,31 +98,32 @@ honoured by browsers when the request is actually served over HTTPS.
 
 ## `ETag` and conditional requests
 
-Three routes set `ETag`, and each replies `304` with an empty body when the
-incoming `If-None-Match` equals it, rather than re-sending a response the
-client already has. The `Cache-Control` header is set before the comparison,
-so a `304` carries it too.
+Three routes set `ETag`, and all of them build it and evaluate
+`If-None-Match` through [`src/lib/etag.ts`](../src/lib/etag.ts), so the rules
+below hold on every one of them:
 
-- **`GET /streams/:id` and `GET /streams/:id/schedule`** set a strong `ETag`
-  derived from the stream's `updatedLedger` — the ledger of the last event
-  actually applied to that stream — plus any request-specific input that
-  changes the response (`?at=` for the stream view, the point count for the
-  schedule). Nothing is recomputed to produce it beyond the row lookup.
-- **`GET /streams`** sets a weak `ETag`, `W/"<hex sha256>"`, computed over the
-  JSON response body (`streams`, `total` when requested, `nextCursor`,
-  `limit`, and `offset`). A list has no single version column to derive a tag
-  from, so the body is built and hashed on every request; what the `304`
-  saves is the transfer, not the database query. Any change to any returned
-  field changes the tag, and so do the derived figures (`vested`,
-  `withdrawable`, `progress`, …), which move with the clock — a list with an
-  active stream in it therefore revalidates only within the same second. It
-  is weak because the guarantee is semantic equivalence, and it is computed
-  before compression, so it is the same whichever `Content-Encoding` the
-  response is sent with.
+- **`GET /streams/:id` and `GET /streams/:id/schedule`** use a strong tag
+  (`strongEtag`) derived from the stream's `updatedLedger` — the ledger of the
+  last event actually applied to that stream — plus any request-specific input
+  that changes the response (`?at=` for the stream view, the point count for
+  the schedule).
+- **`GET /streams`** uses a weak tag (`weakEtagFromBody`): a SHA-256 of the
+  serialized response body, so it changes whenever any returned field
+  (streams, `total`, `nextCursor`, pagination) does. A list has no single
+  version column to derive a tag from, and the body hash only promises
+  semantic equivalence, hence `W/`.
+
+`ifNoneMatchMatches` applies RFC 9110 weak comparison: `*` matches any current
+representation, a comma-separated list matches if any entry does, and the weak
+and strong forms of the same opaque value are equal. Entries that are not
+valid entity-tags are ignored, so a malformed header never yields a `304`. On
+a match the route replies `304` with an empty body rather than re-sending a
+response the client already has.
 
 No other endpoint sets `ETag`: `/streams/:id/events`, `/streams/summary`,
-`/tokens`, and `/accounts/:address/summary` don't send one, so a client
-revalidates them only by refetching after `max-age` expires.
+`/tokens`, and `/accounts/:address/summary` return collections or aggregates
+that don't reduce to one stream's `updatedLedger` and have not needed
+revalidation.
 
 ## `X-Indexer-Lag-Ledgers`
 

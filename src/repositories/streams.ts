@@ -299,6 +299,13 @@ function whereFromFilter(filter: StreamFilter, now?: bigint): Prisma.StreamWhere
     };
   }
 
+  if (filter.minAmount !== undefined || filter.maxAmount !== undefined) {
+    where.totalAmount = {
+      ...(filter.minAmount === undefined ? {} : { gte: decimal(filter.minAmount) }),
+      ...(filter.maxAmount === undefined ? {} : { lte: decimal(filter.maxAmount) }),
+    };
+  }
+
   // Apply status filter using the same predicates as the summary endpoint
   if (filter.status && now !== undefined) {
     const statusFilter = statusWhereFilter(filter.status, now);

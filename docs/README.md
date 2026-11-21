@@ -27,9 +27,7 @@ Listed alphabetically by file name, ignoring case.
 - [DATABASE.md](DATABASE.md): Supported PostgreSQL versions and compatibility requirements; this is about the database server, whereas [database-schema.md](database-schema.md) documents the tables the application creates.
 - [database-migrations.md](database-migrations.md): Prisma workflow for creating, reviewing, and applying schema migrations.
 - [database-outage-runbook.md](database-outage-runbook.md): Operator checklist for database outage symptoms, relevant metrics, automatic recovery behavior, and actions for unresolved event failures.
-- [database-schema.md](database-schema.md): PostgreSQL schema reference covering models (`Stream`, `IndexedEvent`, `FailedEvent`, `IndexerState`), field definitions, types, indexes, and persistence logic.
-- [DATABASE.md](DATABASE.md): Supported PostgreSQL versions and compatibility requirements; this is about the database server, whereas [database-schema.md](database-schema.md) documents the tables the application creates.
-- [debugging-a-stream.md](debugging-a-stream.md): Queries to list a stream's event history, compare it against its stored row, and spot a gap or an over-counted balance.
+- [dependency-updates.md](dependency-updates.md): How Dependabot groups and limits version updates without delaying security updates, and what the weekly canary build against the latest dependency versions does when it fails.
 - [derived-figures.md](derived-figures.md): How `vested`, `withdrawable`, `locked`, and `progress` are computed on demand and why they agree with the smart contract.
 - [endpoint-failure-modes.md](endpoint-failure-modes.md): Every API failure mode, the HTTP status it returns, and its machine-readable error code.
 - [event-replay.md](event-replay.md): Operator guide for the event replay recovery CLI tool (`npm run replay-failed-events`), detailing how to inspect, dry-run, and reprocess failed events.
@@ -55,6 +53,7 @@ Listed alphabetically by file name, ignoring case.
 - [resource-footprint.md](resource-footprint.md): Indicative deployment sizing, per-process Prisma connection usage, and how retained event volume affects PostgreSQL storage growth.
 - [response-headers.md](response-headers.md): Table of which `Cache-Control`, `ETag`, and other headers each endpoint sets, and why, matched against the route code.
 - [shutdown-ordering.md](shutdown-ordering.md): Ordered `SIGTERM`/`SIGINT` shutdown sequence and why each step must complete before the next.
+- [test-coverage.md](test-coverage.md): How unit test coverage is measured and reported in CI, and the recorded baseline figures.
 
 ## When to add a new document here
 
