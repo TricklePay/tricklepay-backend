@@ -5,8 +5,8 @@
 // route references them with $ref. @fastify/swagger picks them up from the
 // store and emits them as named OpenAPI components.
 //
-// Every `*_SCHEMA_ID` exported from `./schema.ts` must have its schema listed
-// here exactly once; `tests/schema-registration.test.ts` enforces that (#713).
+// Every `*_SCHEMA_ID` exported from `./schema.ts` must appear here exactly
+// once; `tests/schema-registration.test.ts` enforces this (#713).
 // ---------------------------------------------------------------------------
 
 import type { FastifyInstance } from "fastify";
@@ -28,26 +28,6 @@ import {
 } from "./schema.js";
 
 /** Every shared schema, in registration order. */
-export const SHARED_SCHEMAS = [
-  streamViewSchema,
-  streamListResponseSchema,
-  streamSummaryResponseSchema,
-  streamScheduleResponseSchema,
-  streamEventSchema,
-  streamEventHistoryResponseSchema,
-  tokenSummarySchema,
-  tokenListResponseSchema,
-  accountStreamSummarySchema,
-  accountSummaryResponseSchema,
-  indexerStatusSchema,
-  apiErrorSchema,
-  apiIndexSchema,
-] as const;
-
-/**
- * Every shared schema, in registration order. Schemas referenced by others
- * with $ref (e.g. StreamView from StreamListResponse) come first.
- */
 export const SHARED_SCHEMAS = [
   streamViewSchema,
   streamListResponseSchema,

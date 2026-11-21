@@ -36,7 +36,7 @@
     "pino": "^9.6.0"
   },
   "devDependencies": {
-    "@apidevtools/swagger-parser": "^13.1.0",
+    "@apidevtools/swagger-parser": "~13.1.0",
     "@types/node": "^22.20.1",
     "@vitest/coverage-v8": "~4.1.10",
     "depcheck": "^1.4.7",
