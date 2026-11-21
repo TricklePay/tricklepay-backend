@@ -120,6 +120,55 @@ valid entity-tags are ignored, so a malformed header never yields a `304`. On
 a match the route replies `304` with an empty body rather than re-sending a
 response the client already has.
 
-No other endpoint sets `ETag`: `/streams/:id/events`, `/tokens`, and
-`/accounts/:address/summary` return collections or aggregates that don't
-reduce to one stream's `updatedLedger` and have not needed revalidation.
+No other endpoint sets `ETag`: `/streams/:id/events`, `/streams/summary`,
+`/tokens`, and `/accounts/:address/summary` return collections or aggregates
+that don't reduce to one stream's `updatedLedger` and have not needed
+revalidation.
+
+## `X-Indexer-Lag-Ledgers`
+
+[`src/indexer-lag-hook.ts`](../src/indexer-lag-hook.ts) adds
+`X-Indexer-Lag-Ledgers: <n>` in an `onSend` hook, so a client can see how
+fresh the data is without a separate `/status` call. `<n>` is
+`max(0, chainLedger - lastLedger)` — the same figure `GET /status` reports
+as `lagLedgers` (see [indexer-lag.md](indexer-lag.md)).
+
+- **Which responses carry it.** Every `GET` response, whatever its status
+  (including `304`, `400`, and `404`), except paths starting with `/health`
+  or `/ready` and the exact path `/metrics`. `HEAD`
+  requests (including `HEAD /streams/:id`) never carry it, because the hook
+  only acts on `GET`.
+- **When it is omitted.** Before the indexer's first poll, when there is no
+  recorded position yet, and when the position cannot be read (for example
+  during a database outage); the response is otherwise unaffected.
+- **Caching.** The value is read from `IndexerState` and cached in-process
+  for 2 seconds, so it can trail `/status` by that much. It describes the lag
+  at the moment the response was produced: a copy served from an HTTP cache
+  under `Cache-Control: public, max-age=30` carries the value from when it
+  was stored, up to 30 seconds old. Use `GET /status` (`no-store`) when the
+  current figure matters.
+- **Browsers.** It is not in the CORS exposed headers, so browser JavaScript
+  on another origin cannot read it — see
+  [CORS origin](../README.md#cors-origin).
+
+## Compression: `Content-Encoding` and `Vary`
+
+`@fastify/compress` is registered globally in
+[`src/server.ts`](../src/server.ts). A response is compressed when all of
+these hold:
+
+- the request's `Accept-Encoding` names an encoding the plugin supports
+  (`br`, `gzip`, or `deflate`; the client's preference order is respected),
+  and the request does not carry `x-no-compression`;
+- the body is at least `COMPRESSION_THRESHOLD_BYTES` (default `1024`; see
+  the [configuration table](../README.md#configuration));
+- the content type is compressible (JSON and text, so every API response),
+  and the status is not `206`.
+
+A compressed response carries `Content-Encoding: <encoding>`, `Vary:
+accept-encoding` (appended to any existing `Vary`), and a `Content-Length`
+for the compressed bytes. Responses below the threshold, or for clients that
+don't ask for compression, are sent as-is with neither `Content-Encoding` nor
+the `Vary` entry, so small responses such as `/health` and single-stream
+lookups are usually uncompressed. Compression happens after the route has set
+`ETag` and `Cache-Control`, so neither depends on the encoding.
