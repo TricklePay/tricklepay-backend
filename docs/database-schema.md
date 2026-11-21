@@ -88,7 +88,7 @@ A row is written during the indexer's polling tick in `src/indexer/poller.ts` (`
    ```
 3. **Idempotency**: Inserting with `skipDuplicates: true` keyed by `eventId` guarantees that re-polling or replaying pages that were already processed will not fail with unique constraint violations or duplicate audit entries.
 4. **Resilience**: If writing to `IndexedEvent` encounters a database error, the failure is caught and logged as a warning (`could not persist indexed-event record`) so that an audit log issue does not abort or block the primary stream state mutation.
-5. **Query Path**: Stored rows are queried through `listIndexedEvents(streamId)` in `src/repositories/indexed-events.ts` to power the `GET /streams/:id/events` route defined in `src/routes/streams.ts`.
+5. **Query Path**: Stored rows are queried through `listIndexedEvents(streamId)` in `src/repositories/indexed-events.ts` to power the `GET /streams/:id/events` route defined in `src/routes/streams/events.ts`.
 
 ---
 

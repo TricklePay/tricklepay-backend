@@ -78,6 +78,10 @@ export class Poller {
   // Unix timestamp (ms) of when the next poll will fire. Set just before each
   // sleep so /status and metrics can report it to operators during backoff.
   private nextPollAtMs = 0;
+  // Whether the last lag reading was above the warning threshold. The warning
+  // is logged when the lag crosses the threshold rather than on every page, so
+  // a long backfill or a stall produces one line instead of one per tick.
+  private lagWarned = false;
   private readonly log: Logger;
 
   constructor(
@@ -367,8 +371,31 @@ export class Poller {
     // reporting a negative lag if the RPC response is briefly stale.
     const lag = Math.max(0, page.latestLedger - nextState.lastLedger);
     indexerLagLedgers.set(lag);
+    this.reportLag(lag, nextState.lastLedger, page.latestLedger);
 
     return nextState;
+  }
+
+  // Logs once when the lag rises above the configured threshold, and once more
+  // when it falls back to or below it. The metric shows the figure; this puts
+  // a line in the logs for anyone reading them during an incident.
+  private reportLag(lag: number, lastLedger: number, chainLedger: number): void {
+    const threshold = this.config.lagWarnLedgers;
+    if (threshold <= 0) return;
+
+    if (lag > threshold && !this.lagWarned) {
+      this.lagWarned = true;
+      this.log.warn(
+        { lagLedgers: lag, threshold, lastLedger, chainLedger },
+        "indexer has fallen behind the chain head",
+      );
+    } else if (lag <= threshold && this.lagWarned) {
+      this.lagWarned = false;
+      this.log.info(
+        { lagLedgers: lag, threshold, lastLedger, chainLedger },
+        "indexer lag is back within the warning threshold",
+      );
+    }
   }
 }
 

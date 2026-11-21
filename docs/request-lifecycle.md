@@ -21,7 +21,7 @@ This document describes the end-to-end journey of an HTTP request through the Tr
                                     ▼
 ┌────────────────────────────────────────────────────────────────────────┐
 │ 2. CORS & Proxy Layer (`@fastify/cors` & `src/proxy.ts`)               │
-│    - Validates Origin against `CORS_ORIGIN` allowlist                  │
+│    - Matches Origin against `CORS_ORIGIN` (unset/blank/exact origin)   │
 │    - Determines trusted client IP via `trustProxy` configuration       │
 └───────────────────────────────────┬────────────────────────────────────┘
                                     │
@@ -35,7 +35,7 @@ This document describes the end-to-end journey of an HTTP request through the Tr
                                     │
                                     ▼
 ┌────────────────────────────────────────────────────────────────────────┐
-│ 4. Route Handler (`src/routes/streams.ts`, `src/routes/status.ts`)     │
+│ 4. Route Handler (`src/routes/streams/*.ts`, `src/routes/status.ts`)   │
 │    - Parses domain filters, bounds limits, normalizes Stellar addresses│
 └───────────────────────────────────┬────────────────────────────────────┘
                                     │
@@ -82,7 +82,13 @@ This document describes the end-to-end journey of an HTTP request through the Tr
 - **Output**: Request ID is set in the outgoing response header and attached to all logger instances as `reqId`.
 
 ### Layer 2: CORS & Proxy Evaluation (`src/server.ts`, `src/proxy.ts`)
-- **Action**: Evaluates client Origin header against `CORS_ORIGIN`. Evaluates peer IP against `trustedProxies` to securely resolve `X-Forwarded-For` without IP spoofing vulnerabilities.
+- **Action**: Evaluates the client `Origin` header against `CORS_ORIGIN`, which `buildServer` reads directly from the environment (it is not part of `loadConfig()`). Evaluates peer IP against `trustedProxies` to securely resolve `X-Forwarded-For` without IP spoofing vulnerabilities.
+- **CORS cases**: the value is trimmed, then:
+  - **Unset** — the request's `Origin` is reflected, so any origin is allowed.
+  - **Blank** (`CORS_ORIGIN=` or whitespace only) — browser access is disabled: no `Access-Control-Allow-Origin` header is sent, so browsers block every cross-origin request.
+  - **Any other value** — a single origin compared to `Origin` as an exact, case-sensitive string with no normalisation. It must be scheme, host and port only, exactly as a browser sends it (`https://app.example.com`): a trailing slash, a path, an explicit default port (`:443`) or different casing never matches.
+  - Requests with no `Origin` header (curl, server-to-server) are not affected in any case.
+- **Failure**: A disallowed origin is not rejected by the server — the request is still routed and answered, just without `Access-Control-Allow-Origin`, and the browser refuses to expose the response to the page. See [`.env.example`](../.env.example) and the README's [CORS origin](../README.md#cors-origin) section for recommended values.
 
 ### Layer 3: Query Parsing and Schema Validation (`src/server.ts`, `src/schema.ts`)
 - **Action**: Custom `querystringParser` checks length against `QUERY_STRING_LIMIT`. Fastify validates query parameters (`limit`, `offset`, `includeTotal`, `cancelled`) and path parameters (`id`) against JSON schemas.

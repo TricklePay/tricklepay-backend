@@ -32,6 +32,10 @@ export default defineConfig({
         test: {
           name: "integration",
           include: ["tests/integration/**/*.test.ts"],
+          // Every file shares the one DATABASE_URL, and some clean up with a
+          // table-wide deleteMany, so files running in parallel delete each
+          // other's rows mid-test. Run them one at a time.
+          fileParallelism: false,
         },
       },
     ],
