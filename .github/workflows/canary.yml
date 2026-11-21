@@ -1,0 +1,90 @@
+name: Canary (latest dependencies)
+
+# The regular CI installs the versions pinned in package-lock.json, so it only
+# shows that today's lockfile works. This job runs `npm update` in a throwaway
+# checkout first, so it exercises the newest versions package.json allows and
+# warns about breakage before a Dependabot pull request arrives. It never
+# commits or pushes; the updated lockfile is discarded with the runner. See
+# docs/dependency-updates.md.
+
+on:
+  schedule:
+    - cron: "0 5 * * 1" # weekly, Monday 05:00 UTC, ahead of Dependabot
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: canary
+  cancel-in-progress: true
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Nothing in this job may push, so no token is left in .git/config.
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - run: npm ci
+
+      - name: List the updates being tested
+        run: |
+          {
+            echo "## Node ${{ matrix.node-version }}: packages moved by npm update"
+            echo
+            echo '```'
+            npm outdated || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Moves every dependency to the newest version its package.json range
+      # allows, and reruns postinstall (prisma generate) against it.
+      - run: npm update
+
+      - name: Typecheck
+        run: npm run typecheck || { echo "::error title=Canary typecheck failed::npm run typecheck fails on Node ${{ matrix.node-version }} with the latest dependency versions"; exit 1; }
+
+      - name: Unit tests
+        run: npm test || { echo "::error title=Canary tests failed::npm test fails on Node ${{ matrix.node-version }} with the latest dependency versions"; exit 1; }
+
+      - name: Build
+        run: npm run build || { echo "::error title=Canary build failed::npm run build fails on Node ${{ matrix.node-version }} with the latest dependency versions"; exit 1; }
+
+  # Turns a failure into an open issue, so it is seen even when nobody checks
+  # the Actions tab. Repeated failures comment on the same issue instead of
+  # opening new ones; close the issue once the breakage is dealt with.
+  report-failure:
+    needs: canary
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TITLE: "Canary build failing with the latest dependency versions"
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Open or update the tracking issue
+        run: |
+          body="The weekly canary build failed after \`npm update\`: ${RUN_URL}
+
+          The job summary lists the packages that moved, and the failing step is annotated. Check whether the breakage comes from one of them and pin or fix it before the matching Dependabot pull request lands."
+
+          existing=$(gh issue list --state open --search "\"${TITLE}\" in:title" --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "Still failing: ${RUN_URL}"
+          else
+            gh issue create --title "$TITLE" --body "$body"
+          fi

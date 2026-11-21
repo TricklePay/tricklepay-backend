@@ -75,6 +75,7 @@ const config: Config = {
   startLedger: 0,
   maxBackoffMs: 60000,
   maxPagesPerTick: 1000,
+  lagWarnLedgers: 1000,
   bodyLimit: 1048576,
   queryStringLimit: 2048,
   compressionThresholdBytes: 1024,
@@ -717,4 +718,65 @@ describe("Poller", () => {
     expect(indexerState.saveIndexerPosition).toHaveBeenCalled();
   });
 
+  describe("lag warning", () => {
+    // A logger that keeps what it writes, so the tests can count the lines
+    // rather than trusting that a call to log.warn reached the output.
+    function capturingLogger() {
+      const lines: { msg: string; lagLedgers?: number; threshold?: number }[] = [];
+      const logger = pino({ level: "info" }, { write: (line: string) => lines.push(JSON.parse(line)) });
+      return { logger, lines };
+    }
+
+    const LAG_WARNING = "indexer has fallen behind the chain head";
+    const START = { startLedger: 56000000, lastLedger: 55999999 };
+
+    it("warns once when the lag crosses the threshold, not on every tick", async () => {
+      const { logger, lines } = capturingLogger();
+      const poller = new Poller(server, { ...config, lagWarnLedgers: 1000 }, logger);
+      chain.getContractEvents.mockResolvedValue(pageOf(captured.events));
+
+      let position = await poller.tick(START);
+      position = await poller.tick(position);
+      await poller.tick(position);
+
+      const warnings = lines.filter((l) => l.msg === LAG_WARNING);
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toMatchObject({ lagLedgers: CHAIN_HEAD - LAST_APPLIED, threshold: 1000 });
+    });
+
+    it("logs the recovery and warns again if the indexer falls behind a second time", async () => {
+      const { logger, lines } = capturingLogger();
+      const poller = new Poller(server, { ...config, lagWarnLedgers: 1000 }, logger);
+
+      chain.getContractEvents.mockResolvedValue(pageOf(captured.events));
+      let position = await poller.tick(START);
+      chain.getContractEvents.mockResolvedValue(pageOf(captured.events, LAST_APPLIED + 10));
+      position = await poller.tick(position);
+      chain.getContractEvents.mockResolvedValue(pageOf(captured.events));
+      await poller.tick(position);
+
+      expect(lines.filter((l) => l.msg === LAG_WARNING)).toHaveLength(2);
+      expect(lines.filter((l) => l.msg === "indexer lag is back within the warning threshold")).toHaveLength(1);
+    });
+
+    it("stays quiet while the lag is within the threshold", async () => {
+      const { logger, lines } = capturingLogger();
+      const poller = new Poller(server, { ...config, lagWarnLedgers: 1000 }, logger);
+      chain.getContractEvents.mockResolvedValue(pageOf(captured.events, LAST_APPLIED + 1000));
+
+      await poller.tick(START);
+
+      expect(lines.filter((l) => l.msg === LAG_WARNING)).toHaveLength(0);
+    });
+
+    it("never warns when the threshold is zero", async () => {
+      const { logger, lines } = capturingLogger();
+      const poller = new Poller(server, { ...config, lagWarnLedgers: 0 }, logger);
+      chain.getContractEvents.mockResolvedValue(pageOf(captured.events));
+
+      await poller.tick(START);
+
+      expect(lines.filter((l) => l.msg === LAG_WARNING)).toHaveLength(0);
+    });
+  });
 });

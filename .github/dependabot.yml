@@ -1,0 +1,84 @@
+# Dependabot configuration. See docs/dependency-updates.md.
+#
+# Version updates are grouped and arrive weekly, with a small cap on open pull
+# requests per ecosystem. Security updates are not affected by any of that:
+# every group below is scoped to `version-updates`, so a security fix is opened
+# as its own pull request as soon as the advisory is published, without
+# waiting for the weekly schedule, and it does not count towards
+# `open-pull-requests-limit`. (Security updates still need "Dependabot
+# security updates" enabled in the repository settings.)
+
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+    ignore:
+      # @types/node tracks the Node major the service supports; moving it is
+      # part of a Node upgrade (docs/node-version-policy.md), not a routine bump.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+    groups:
+      # prisma and @prisma/client are pinned to the same exact version and
+      # must move together, so they always share one pull request.
+      prisma:
+        applies-to: version-updates
+        patterns:
+          - "prisma"
+          - "@prisma/*"
+      production:
+        applies-to: version-updates
+        dependency-type: production
+        update-types: ["minor", "patch"]
+      development:
+        applies-to: version-updates
+        dependency-type: development
+        update-types: ["minor", "patch"]
+      # Majors not covered by a group above still arrive one pull request per
+      # package, so each breaking change is reviewed on its own.
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "chore(docker)"
+    ignore:
+      # The production Node major is changed together with the CI matrix
+      # (docs/node-version-policy.md); Dependabot keeps the 22.x image current.
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
+    groups:
+      docker-images:
+        applies-to: version-updates
+        patterns:
+          - "*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "ci(deps)"
+    groups:
+      github-actions:
+        applies-to: version-updates
+        patterns:
+          - "*"

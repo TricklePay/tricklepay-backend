@@ -1,0 +1,130 @@
+name: Release image
+
+# Builds the container image for a version tag, pushes it to GHCR with OCI
+# labels, and records the pushed digest and the SBOMs on the GitHub release,
+# so deployments can pin ghcr.io/<owner>/<repo>@sha256:... instead of a
+# mutable tag. See docs/container-image.md#published-images.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write # create or edit the release and upload its assets
+  packages: write # push to ghcr.io
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Same pins as container.yml and ci.yml; bump them together.
+  TRIVY_IMAGE: aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c
+  NPM_SBOM_VERSION: 10.9.2
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # GHCR image names must be lowercase.
+      - name: Image name
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Tags: the full version (1.2.3), major.minor (1.2, not for
+      # pre-releases), the git tag itself, and latest for stable releases.
+      # Labels: org.opencontainers.image.source, .revision and .version, among
+      # others, derived from the repository, commit and tag.
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=ref,event=tag
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          pull: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Generate SBOMs
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p sbom
+          npx --yes "npm@$NPM_SBOM_VERSION" sbom --sbom-format cyclonedx --sbom-type application \
+            --package-lock-only > sbom/tricklepay-backend-npm.cdx.json
+          docker pull "$IMAGE@$DIGEST"
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$PWD:/work" -w /work \
+            "$TRIVY_IMAGE" image --format cyclonedx \
+            --output sbom/tricklepay-backend-image.cdx.json "$IMAGE@$DIGEST"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sbom
+          path: sbom/
+          if-no-files-found: error
+
+      # Creates the release with generated notes if it does not exist yet, or
+      # appends to the notes of one drafted by hand. A re-run with the same
+      # digest leaves the notes alone.
+      - name: Publish release notes and SBOMs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          cat > image-notes.md <<EOF
+          ## Container image
+
+          Pin deployments to the digest rather than a tag:
+
+          \`\`\`text
+          $IMAGE@$DIGEST
+          \`\`\`
+
+          Tags: $(sed 's/.*://' <<< "$TAGS" | paste -sd, - | sed 's/,/, /g')
+
+          The CycloneDX SBOMs for the npm dependencies and the image are attached below.
+          EOF
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release view "$TAG" --json body --jq .body > notes.md
+            if ! grep -qF "$DIGEST" notes.md; then
+              printf '\n\n' >> notes.md
+              cat image-notes.md >> notes.md
+              gh release edit "$TAG" --notes-file notes.md
+            fi
+          else
+            prerelease=()
+            [[ "$TAG" == *-* ]] && prerelease=(--prerelease)
+            gh release create "$TAG" --verify-tag --generate-notes \
+              --notes-file image-notes.md "${prerelease[@]}"
+          fi
+
+          gh release upload "$TAG" sbom/*.cdx.json --clobber

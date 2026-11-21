@@ -25,6 +25,7 @@ For guides and technical documentation, see the [Documentation Index](docs/READM
   - [`?at=` — Historical vesting snapshots](#at--historical-vesting-snapshots)
   - [`?points=` — Vesting schedule points](#points--vesting-schedule-points)
   - [ETag and conditional requests](#etag-and-conditional-requests)
+  - [Security headers](#security-headers)
 - [Error Responses](#error-responses)
 - [Health Endpoint Semantics](#health-endpoint-semantics)
 - [Metrics](#metrics)
@@ -170,6 +171,61 @@ third-party integration, see
 exactly which `Cache-Control`, `ETag`, and other headers each endpoint sets
 and why, see [docs/response-headers.md](docs/response-headers.md).
 
+### Security headers
+
+Every response — API data, `/docs`, `/docs/json`, errors, and 404s — carries
+the same hardening headers, set by
+[`src/security-headers.ts`](src/security-headers.ts) through `@fastify/helmet`:
+
+| Header | Value |
+| --- | --- |
+| `Content-Security-Policy` | `default-src 'self'`, `script-src 'self'`, `style-src 'self' https: 'unsafe-inline'`, `img-src 'self' data:`, `frame-ancestors 'none'`, `object-src 'none'` and related directives |
+| `Referrer-Policy` | `no-referrer` |
+| `X-Content-Type-Options` | `nosniff` |
+| `Cross-Origin-Resource-Policy` | `cross-origin` |
+
+The full values and the reasoning behind each one are in
+[docs/response-headers.md](docs/response-headers.md#security-headers).
+
+**Swagger UI and the CSP.** The policy is strict except for one allowance:
+`style-src` includes `'unsafe-inline'` because Swagger UI styles the `/docs`
+page with inline `style` attributes. Scripts are not relaxed — Swagger UI loads
+them as files from `/docs/static`, so `script-src 'self'` is enough. For
+integrators this means:
+
+- The docs page cannot be embedded in an `<iframe>` on another site:
+  `frame-ancestors 'none'` blocks it. Link to `/docs` or open it in a new tab,
+  or render `/docs/json` with your own viewer instead.
+- `upgrade-insecure-requests` is deliberately left out, so `/docs` keeps
+  working over plain HTTP locally and behind a TLS-terminating proxy.
+- `Cross-Origin-Resource-Policy: cross-origin` lets other origins load the
+  responses (for example `/docs/json`); whether browser JavaScript may read
+  them is still decided by [`CORS_ORIGIN`](#cors-origin).
+
+**Interaction with `ENABLE_DOCS_UI`.** The headers are registered before the
+docs routes, so they apply whether the UI is on or off. With
+`ENABLE_DOCS_UI=false` the `/docs` page and its assets return 404 (with the
+same headers) and `/docs/json` and `/docs/yaml` are still served. The
+`'unsafe-inline'` style allowance only exists for the UI, but it stays in the
+policy either way; a deployment that never serves the UI can remove it as
+described below.
+
+**Changing the policy.** The headers are not configurable through environment
+variables. To change them, edit the options passed to `helmet` in
+`registerSecurityHeaders` in
+[`src/security-headers.ts`](src/security-headers.ts): add or adjust a directive
+under `contentSecurityPolicy.directives` (set one to `null` to drop a helmet
+default, as `upgradeInsecureRequests` does), or change `referrerPolicy` /
+`crossOriginResourcePolicy`. Then update
+[`tests/routes/security-headers.test.ts`](tests/routes/security-headers.test.ts),
+which asserts the current values, and the table in
+[docs/response-headers.md](docs/response-headers.md#security-headers). If you
+tighten `style-src`, load `/docs` in a browser and check the console for CSP
+violations — removing `'unsafe-inline'` breaks the Swagger UI layout. Headers
+can also be overridden at a reverse proxy, but a proxy that adds a second
+`Content-Security-Policy` makes the browser enforce both, so replace the
+header there rather than appending to it.
+
 ### Endpoints
 
 | Method | Path | Description |
@@ -178,7 +234,7 @@ and why, see [docs/response-headers.md](docs/response-headers.md).
 | `GET` | `/health` | Liveness check. Returns 200 with the service version; performs no database read. |
 | `GET` | `/ready` | Readiness check. Verifies database connectivity and that the indexer has made progress — its stored `lastLedger` must be greater than 0, meaning a ledger has been processed (no event needs to have been applied). Returns 503 with a `Retry-After` header when the database is unavailable or the indexer has not yet processed a ledger. |
 | `GET` | `/status` | Indexer progress against the chain. Response includes `Cache-Control: no-store` to prevent stale lag readings. |
-| `GET` | `/streams` | List streams. Query params: `sender`, `recipient`, `token`, `limit`, `offset`, `includeTotal`, `cancelled`, `cursor`. Address filters accept lowercase and padded spellings and are normalized before matching. `total` is only included when `includeTotal=true`; `cancelled` filters by cancellation status when given, and is omitted to return both. Repeating a parameter is rejected with `400` — see [Query parameters](#query-parameters). |
+| `GET` | `/streams` | List streams. Query params: `sender`, `recipient`, `token`, `status`, `minAmount`, `maxAmount`, `limit`, `offset`, `includeTotal`, `cancelled`, `cursor` — see [Filter parameters](#filter-parameters). Address filters accept lowercase and padded spellings and are normalized before matching. `total` is only included when `includeTotal=true`; `cancelled` filters by cancellation status when given, and is omitted to return both. Repeating a parameter is rejected with `400` — see [Query parameters](#query-parameters). |
 | `GET` | `/streams/summary` | Aggregate counts and exact total amounts per status (`pending`, `streaming`, `completed`, `cancelled`). Useful for dashboard overview displays without fetching individual streams. The response is cached in-process for the window set by `STREAM_SUMMARY_CACHE_TTL_MS` (2 seconds by default) — see [Stream Summary Endpoint](#stream-summary-endpoint) for the cache headers. |
 | `GET` | `/streams/{id}` | A single stream by id. Also available as `HEAD`. Optional `?at=<unix seconds>` to compute derived figures at a specific point in time instead of now. Accepts 0 to uint64 max. Responds `304` to a matching `If-None-Match`. |
 | `GET` | `/streams/{id}/events` | A single stream's indexed event history, in ascending chain order. Optional `kind` filter (`created`, `withdrawn`, `cancelled`). |
@@ -191,6 +247,42 @@ Each stream is returned with its stored fields plus derived `vested`,
 `withdrawable`, `locked`, `progress`, and `status` (`pending`, `streaming`,
 `completed`, or `cancelled`). `progress` is vesting progress in basis points
 (0–10000).
+
+### Filter parameters
+
+`GET /streams` narrows its results with the following query parameters. Every
+filter is optional, single-valued, and combines with the others as an
+intersection (AND).
+
+| Parameter | Type | Unit | Validation | Description |
+|-----------|------|------|------------|-------------|
+| `sender` | string | - | Stellar address | Only streams created by this address. |
+| `recipient` | string | - | Stellar address | Only streams paying this address. |
+| `token` | string | - | Contract address | Only streams of this token. |
+| `status` | string | - | `pending`, `streaming`, `completed`, or `cancelled` | Only streams in this lifecycle status, evaluated against the current time. |
+| `cancelled` | boolean | - | `true` or `false` | Only cancelled (or only uncancelled) streams. |
+| `minAmount` | string | token base units | Non-negative decimal integer (digits only, no sign, decimal point, or exponent); up to uint128 | Only streams whose `totalAmount` is **greater than or equal to** this value. |
+| `maxAmount` | string | token base units | Non-negative decimal integer (digits only, no sign, decimal point, or exponent); up to uint128 | Only streams whose `totalAmount` is **less than or equal to** this value. |
+
+**Amount filters.** `minAmount` and `maxAmount` compare against the stored
+`totalAmount` in the token's smallest unit (for a 7-decimal token,
+`10000000` is 1 whole token), not in display units. Pass them as strings of
+digits so values beyond 2^53 stay exact; surrounding whitespace is trimmed.
+Anything else — a negative number, a decimal such as `1.5`, `1e6`, or an empty
+value — is rejected with `400 VALIDATION_ERROR` (`invalid minAmount (must be
+non-negative integer)`, or the same for `maxAmount`). Both bounds are
+inclusive. A `minAmount` greater than `maxAmount` is not an error; it simply
+matches no streams. For a cancelled stream `totalAmount` is frozen to the
+amount vested at cancellation, so the filters see that reduced figure.
+
+```bash
+# Streaming payments between 1 and 10 whole tokens (7-decimal token),
+# from one sender
+curl -s "http://localhost:3000/streams?sender=GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN&status=streaming&minAmount=10000000&maxAmount=100000000" | jq
+
+# Only large streams (at least 1,000,000 base units), with the total count
+curl -s "http://localhost:3000/streams?minAmount=1000000&includeTotal=true" | jq '.total'
+```
 
 ### Pagination Parameters
 
@@ -367,12 +459,13 @@ Each point has three fields, all decimal strings:
 
 ### ETag and conditional requests
 
-`GET /streams/:id` and `GET /streams/:id/schedule` both set an `ETag` response header and honour the `If-None-Match` request header for conditional GET / HEAD requests.
+`GET /streams`, `GET /streams/:id` and `GET /streams/:id/schedule` set an `ETag` response header and honour the `If-None-Match` request header for conditional GET / HEAD requests. All three build the tag and evaluate `If-None-Match` through the shared helpers in `src/lib/etag.ts`.
 
 **How ETags are formed:**
 
 | Route | `ETag` value |
 |-------|-------------|
+| `GET /streams` | `W/"<sha256 of the response body>"` |
 | `GET /streams/:id` (no `?at=`) | `"<updatedLedger>"` |
 | `GET /streams/:id?at=<ts>` | `"<updatedLedger>-<ts>"` |
 | `GET /streams/:id/schedule?points=<n>` | `"<updatedLedger>-schedule-<n>"` |
@@ -401,7 +494,13 @@ curl -si -H 'If-None-Match: "200-schedule-50"' \
 HTTP/1.1 304 Not Modified
 ```
 
-**When a 304 is returned:** the server checks the incoming `If-None-Match` value against the ETag it would have produced for the current database state. If they match exactly the response body is omitted and `304 Not Modified` is returned, saving the round-trip data. A mismatched `If-None-Match` (or no header at all) always produces a full `200` response.
+**When a 304 is returned:** the server compares the incoming `If-None-Match` header with the ETag it would have produced for the current database state, using RFC 9110 weak comparison. It returns `304 Not Modified` with no body when:
+
+- the header is `*`;
+- any entry in a comma-separated list matches (`W/"a", W/"b", "200"`); or
+- an entry is the weak or strong form of the current tag (`W/"200"` matches `"200"`).
+
+Entries that are not valid entity-tags (for example an unquoted `200`) are ignored. A header with no matching entry, or no header at all, always produces a full `200` response.
 
 **Caveat:** `?at=` and `?points=` are both encoded into the ETag, so changing either parameter on the same stream id produces a different ETag even when `updatedLedger` has not advanced. A client caching both `?at=1735689600` and the bare URL for stream 42 will hold two separate cache entries and must send the right `If-None-Match` for each request variant.
 
@@ -476,7 +575,7 @@ curl -s http://localhost:3000/status | jq
 }
 ```
 
-**`GET /streams`** — list, optionally filtered by `sender`, `recipient`, or `token`
+**`GET /streams`** — list, optionally filtered by `sender`, `recipient`, `token`, `status`, `cancelled`, `minAmount`, or `maxAmount` (see [Filter parameters](#filter-parameters))
 ```bash
 curl -s "http://localhost:3000/streams?limit=1" | jq
 ```
@@ -1253,22 +1352,28 @@ current template — copy it and fill in the required values.
 | `PORT` | No | `3000` | HTTP server listen port. |
 | `HOST` | No | `0.0.0.0` | HTTP server bind address. |
 | `CORS_ORIGIN` | No | - | Allowed browser origin for the web client. Unset reflects any request origin (development default). Set to a single `https://` origin to pin the API to one frontend. Empty string disables browser access entirely. Only one origin is supported — see [CORS origin](#cors-origin). |
-| `PUBLIC_BASE_URL` | No | `http://<HOST>:<PORT>` | Base URL advertised in the generated OpenAPI document's `servers` entry. Defaults to a URL derived from `HOST` and `PORT`. |
+| `PUBLIC_BASE_URL` | No | `http://<HOST>:<PORT>` | Base URL advertised in the generated OpenAPI document's `servers` entry. Defaults to a URL derived from `HOST` and `PORT`. Set it when running behind a reverse proxy — see [docs/public-url-and-metrics-token.md](docs/public-url-and-metrics-token.md). |
 | `LOG_LEVEL` | No | `info` | Log verbosity (`trace`, `debug`, `info`, `warn`, `error`, `fatal`, `silent`). |
 | `LOG_PRETTY` | No | - | Set to `true` for human-readable development logs; requires the `pino-pretty` dev dependency. Output stays JSON when unset. |
 | `BODY_LIMIT` | No | `1048576` | Largest accepted request body in bytes. |
 | `QUERY_STRING_LIMIT` | No | `2048` | Longest accepted URL query string in bytes. |
+| `CONNECTION_TIMEOUT_MS` | No | `10000` | Milliseconds a connection may sit with no bytes moving while a request is in flight before it is closed. `0` disables it. See [Server timeouts](docs/CONFIGURATION.md#server-timeouts). |
+| `KEEP_ALIVE_TIMEOUT_MS` | No | `72000` | Milliseconds an idle keep-alive connection is held open after a response. Keep it above any load balancer's idle timeout. `0` disables it. See [Server timeouts](docs/CONFIGURATION.md#server-timeouts). |
+| `REQUEST_TIMEOUT_MS` | No | `30000` | Milliseconds within which a request must be received and answered; past it the client gets `408`. `0` disables it. See [Server timeouts](docs/CONFIGURATION.md#server-timeouts). |
 | `ENABLE_DOCS_UI` | No | `true` | Serve the interactive Swagger UI at `/docs`. Set to `false` to disable the page and its static assets while `/docs/json` and `/docs/yaml` stay available. Accepts `true/false` (also `1/0`, `yes/no`, `on/off`); anything else fails startup. |
-| `METRICS_TOKEN` | No | - | Bearer token required on `/metrics` when set; unset keeps the endpoint unauthenticated. Only send it over TLS and keep the recommended network restriction. |
+| `METRICS_TOKEN` | No | - | Bearer token required on `/metrics` when set; unset keeps the endpoint unauthenticated. Only send it over TLS and keep the recommended network restriction. Prometheus scrape example in [docs/public-url-and-metrics-token.md](docs/public-url-and-metrics-token.md#prometheus-scrape-example). |
 | `COMPRESSION_THRESHOLD_BYTES` | No | `1024` | Responses at least this many bytes are compressed when the client accepts `gzip` or `br`. Smaller responses are sent uncompressed. |
 | `RATE_LIMIT_MAX` | No | `100` | Maximum requests per client IP in each rate-limit window. Must be greater than zero. |
 | `RATE_LIMIT_WINDOW_MS` | No | `60000` | Length of the fixed rate-limit window in milliseconds. Must be greater than zero. |
+| `RATE_LIMIT_ALLOWLIST` | No | - | Client addresses that bypass the rate limiter entirely (never counted, never sent a `429`). Comma-separated list of IPv4/IPv6 addresses or IPv4 CIDR blocks, e.g. `10.0.0.5,10.0.1.0/24,::1`; whitespace around entries is ignored. IPv6 CIDR blocks are not supported, and an invalid entry or a prefix outside `0`–`32` fails startup. Matched against the resolved client address, so behind a proxy it only works together with `TRUSTED_PROXIES`. Unset or empty exempts no one. See [docs/request-size-limits.md](docs/request-size-limits.md). |
 | `TRUSTED_PROXIES` | No | - | Comma-separated list of trusted reverse-proxy addresses or IPv4 CIDR blocks. Forwarded headers are ignored when unset. |
 | `READINESS_RETRY_AFTER_SECONDS` | No | `5` | Seconds advertised in the `Retry-After` header when `GET /ready` returns 503, so orchestrators and load balancers know when to probe again. |
+| `READY_MAX_STALENESS_MS` | No | `0` | Maximum age in milliseconds of the indexer position before `GET /ready` returns 503 with `indexer position is stale`. `0` disables the staleness check. |
 | `INDEXER_POLL_INTERVAL_MS` | No | `5000` | Milliseconds between polls of the chain. |
 | `INDEXER_BACKOFF_MAX_MS` | No | `60000` | Maximum poll retry delay (ms) on RPC failures. |
 | `INDEXER_START_LEDGER` | No | `0` | Ledger to begin indexing from. `0` starts at the chain's latest ledger. |
 | `INDEXER_MAX_PAGES_PER_TICK` | No | `1000` | Maximum number of event pages fetched per poll tick. |
+| `INDEXER_LAG_WARN_LEDGERS` | No | `1000` | Log a warning when the indexer falls more than this many ledgers behind the chain head. Logged once when the lag crosses the threshold and once when it recovers, not on every tick. `0` disables the warning. |
 | `STREAM_SUMMARY_CACHE_TTL_MS` | No | `2000` | Summary endpoint cache window in milliseconds. Set to `0` to disable caching. |
 
 ### Switching to a different contract
