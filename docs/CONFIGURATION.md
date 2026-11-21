@@ -117,3 +117,21 @@ Every other variable in the README table is resolved and validated by `loadConfi
 - `STREAM_CONTRACT_ID` must parse as a Soroban contract address, and `SOROBAN_RPC_URL` may only use plain HTTP against a loopback host (see [local-network.md](local-network.md#plain-http-is-only-allowed-for-local-rpc-hosts)).
 - Numeric variables must be non-negative integers; `RATE_LIMIT_MAX` and `RATE_LIMIT_WINDOW_MS` must be greater than zero, and `INDEXER_POLL_INTERVAL_MS` must be at least 1000.
 - `ENABLE_DOCS_UI` accepts only explicit boolean spellings (`true`/`false`, `1`/`0`, `yes`/`no`, `on`/`off`); anything else fails startup.
+
+---
+
+## Server timeouts
+
+Three settings bound how long the HTTP server holds a connection open. All three are in milliseconds, all three accept `0` to disable that timeout, and the defaults live beside each other in [`src/config.ts`](../src/config.ts). `buildServer` passes them to Fastify, which applies them to the underlying Node `http.Server`.
+
+| Variable | Default | Node setting | What it bounds |
+| --- | --- | --- | --- |
+| `CONNECTION_TIMEOUT_MS` | `10000` (10 s) | `server.timeout` | **Socket inactivity while a request is in flight.** If no bytes are read or written on the connection for this long, the socket is destroyed. The timer resets on every chunk, so a slow but steady upload or response is not cut off. |
+| `KEEP_ALIVE_TIMEOUT_MS` | `72000` (72 s) | `server.keepAliveTimeout` | **Idle time between requests on a keep-alive connection.** After a response finishes, the connection is held open this long for the client's next request, then closed. |
+| `REQUEST_TIMEOUT_MS` | `30000` (30 s) | `server.requestTimeout`, plus an `onRequest` hook | **Total time for one request.** Node answers `408` and closes the connection when the client has not finished sending the request within this window; the service's own hook also answers `408` (`{"code": …, "error": "request timeout"}`) when the handler has not replied within it. |
+
+How they interact:
+
+- **One applies at a time on a connection.** While a request is being received or handled, `CONNECTION_TIMEOUT_MS` (idle) and `REQUEST_TIMEOUT_MS` (total) both run; once the response has been sent and the connection is waiting for the next request, `KEEP_ALIVE_TIMEOUT_MS` takes over in place of the idle timeout.
+- **A silent handler is limited by the smaller of the two in-flight timeouts.** A handler that writes nothing moves no bytes, so with the defaults its connection is closed by `CONNECTION_TIMEOUT_MS` after 10 s, before the 30 s `REQUEST_TIMEOUT_MS` would send a `408`. Raise `CONNECTION_TIMEOUT_MS` to at least `REQUEST_TIMEOUT_MS` if clients should always receive the `408` body rather than a dropped connection.
+- **Keep-alive must outlast the load balancer.** A proxy or load balancer that reuses upstream connections must close an idle one before this service does; otherwise it can send a request on a socket the server is closing at that moment and turn it into a `502`. `72000` sits above the common 60 s idle timeout (for example, the AWS ALB default). If the load balancer in front of the service uses a longer idle timeout, raise `KEEP_ALIVE_TIMEOUT_MS` above it.

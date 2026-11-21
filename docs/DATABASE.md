@@ -7,7 +7,7 @@ To ensure full compatibility with TricklePay backend migrations, Prisma ORM quer
 ## 1. Minimum Supported Database Version
 
 * **Minimum Supported Version**: **PostgreSQL 16**. Older releases are not exercised by CI and are not supported.
-* **Tested versions**: PostgreSQL 16 (CI, via `.github/workflows/ci.yml`) and PostgreSQL 17 (local development and the integration suite, via `docker-compose.yml`).
+* **Tested versions**: PostgreSQL **16** and **17**. The `migration-check` job in `.github/workflows/ci.yml` runs as a matrix over both, applying every migration and running the integration suite against each. Each entry is named after its version, for example `migration-check (Postgres 17)`, so a failure shows which version broke. When adding or dropping a version, change the `postgres-version` matrix and this list together.
 * **Compose image**: Both the `postgres` and `postgres-test` services in `docker-compose.yml` use `postgres:17-alpine`.
 
 To confirm the version of a deployed database, run `SELECT version();`.

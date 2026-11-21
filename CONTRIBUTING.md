@@ -68,6 +68,17 @@ This script will run type checking, unit tests, and the build step in order, exi
 - **Unit Testing**: Add comprehensive unit tests under `tests/` covering domain logic, error conditions, and edge cases.
 - **Error Handling**: Use structured `ApiErrorCode` and sanitize sensitive error information.
 
+### Dependency Audit Policy
+
+The `Dependency Audit` workflow (`.github/workflows/audit.yml`) runs `npm audit` in two modes:
+
+- **Pull requests** fail only on **high or critical advisories that the pull request introduces**. The workflow audits the pull request's `package-lock.json` and the base branch's in the same run, and fails if the pull request has a high or critical advisory the base does not. Advisories already present on `main` are listed in the job summary but do not fail the check. If your pull request adds or upgrades a dependency and the check fails, upgrade or replace that dependency rather than ignoring the result.
+- **The daily scheduled run** (also runnable by hand from the Actions tab) reports the full list of advisories against `main` in its job summary and fails on any high or critical one, so the existing backlog stays visible. Fixing that backlog belongs in a dedicated pull request.
+
+### Workflow Permissions
+
+Every workflow declares `permissions: contents: read` at the top level. A job that needs more (for example, writing a commit status) must request exactly that in its own `permissions` block.
+
 ---
 
 ## Code Conventions

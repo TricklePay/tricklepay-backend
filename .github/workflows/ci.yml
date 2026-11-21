@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
 
+# Every job only reads the repository. A job that needs more must request it
+# in its own permissions block rather than widening this default.
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -25,16 +30,75 @@ jobs:
 
       - run: npm run typecheck
 
-      - run: npm test
+      # The JUnit report is written outside the checkout so it never shows up
+      # as an untracked file, and is uploaded below whether or not tests pass.
+      - run: npm test -- --reporter=default --reporter=junit --outputFile.junit="$RUNNER_TEMP/test-results/unit.xml"
 
       - run: npm run build
 
-  migration-check:
+  sbom:
     runs-on: ubuntu-latest
+    env:
+      # Pinned so the SBOM format does not drift with the runner's bundled npm.
+      # Keep in step with release.yml (docs/container-image.md#sboms).
+      NPM_SBOM_VERSION: 10.9.2
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results-node-${{ matrix.node-version }}
+          path: ${{ runner.temp }}/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # Unused and undeclared dependencies do not depend on the Node version, so
+  # this runs once rather than in each entry of the build matrix. Known false
+  # positives are listed with their reasons in .depcheckrc.yml.
+  depcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Reads package-lock.json only, so no install is needed. Dev
+      # dependencies are included because the runtime image ships them.
+      - name: Generate npm SBOM (CycloneDX)
+        run: |
+          mkdir -p sbom
+          npx --yes "npm@$NPM_SBOM_VERSION" sbom --sbom-format cyclonedx --sbom-type application \
+            --package-lock-only > sbom/tricklepay-backend-npm.cdx.json
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sbom-npm
+          path: sbom/
+          if-no-files-found: error
+          cache: npm
+
+      # depcheck resolves CLI-only dependencies (tsc, tsx, prisma) through
+      # their installed bin entries, so it needs node_modules in place.
+      - run: npm ci
+
+      - run: npm run depcheck
+
+  migration-check:
+    name: migration-check (Postgres ${{ matrix.postgres-version }})
+    runs-on: ubuntu-latest
+
+    # Each version runs to completion, so a failure on one does not hide
+    # whether the other passes.
+    strategy:
+      fail-fast: false
+      matrix:
+        # Keep in step with the tested versions in docs/DATABASE.md.
+        postgres-version: [16, 17]
 
     services:
       postgres:
-        image: postgres:16
+        image: postgres:${{ matrix.postgres-version }}
         env:
           POSTGRES_USER: ci
           POSTGRES_PASSWORD: ci
@@ -71,8 +135,34 @@ jobs:
       - name: Verify generated client is in sync
         run: npx prisma generate
 
-      # Run the integration suite against the same database.
+      # Run the integration suite against the same database. The schema-drift
+      # test also needs an empty shadow database (SHADOW_DATABASE_URL above),
+      # created here on the service container.
+      #
+      # The server is the postgres:16 service image; createdb is the client
+      # preinstalled on ubuntu-latest (PostgreSQL 18 at the time of writing),
+      # which connects to it over TCP. createdb takes the new database's name
+      # as its only argument and has no -d option (#695): the connection
+      # flags below are all it needs, and it connects through the default
+      # "postgres" maintenance database.
       - name: Integration tests
         run: |
           PGPASSWORD=ci createdb -h localhost -U ci -d tricklepay_test tricklepay_shadow
-          npx vitest run --project integration
+          npx vitest run --project integration --reporter=default --reporter=junit --outputFile.junit="$RUNNER_TEMP/test-results/integration.xml"
+
+      # The database's own log is often the only explanation for a flaky
+      # integration failure, and it is gone once the service container stops.
+      - name: Collect Postgres logs
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/test-results"
+          docker logs "${{ job.services.postgres.id }}" > "$RUNNER_TEMP/test-results/postgres.log" 2>&1 || true
+
+      - name: Upload test results and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-results-postgres-${{ matrix.postgres-version }}
+          path: ${{ runner.temp }}/test-results/
+          if-no-files-found: ignore
+          retention-days: 7

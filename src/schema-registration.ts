@@ -27,6 +27,23 @@ import {
   tokenSummarySchema,
 } from "./schema.js";
 
+/** Every shared schema, in registration order. */
+export const SHARED_SCHEMAS = [
+  streamViewSchema,
+  streamListResponseSchema,
+  streamSummaryResponseSchema,
+  streamScheduleResponseSchema,
+  streamEventSchema,
+  streamEventHistoryResponseSchema,
+  tokenSummarySchema,
+  tokenListResponseSchema,
+  accountStreamSummarySchema,
+  accountSummaryResponseSchema,
+  indexerStatusSchema,
+  apiErrorSchema,
+  apiIndexSchema,
+] as const;
+
 /**
  * Every shared schema, in registration order. Schemas referenced by others
  * with $ref (e.g. StreamView from StreamListResponse) come first.
