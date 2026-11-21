@@ -74,6 +74,11 @@ export const DEFAULT_MAX_BACKOFF_MS = 60000;
 // that a normal catch-up drains in one tick.
 export const DEFAULT_MAX_PAGES_PER_TICK = 1000;
 
+// Default lag, in ledgers, above which the indexer logs a warning that it has
+// fallen behind the chain head. At roughly five seconds a ledger this is about
+// an hour and a half. 0 disables the warning; the lag metric is unaffected.
+export const DEFAULT_LAG_WARN_LEDGERS = 1000;
+
 // Summary aggregates are expensive and commonly polled, so cache them briefly.
 export const DEFAULT_STREAM_SUMMARY_CACHE_TTL_MS = 2_000;
 
@@ -244,6 +249,8 @@ export interface Config {
   readonly startLedger: number;
   readonly maxBackoffMs: number;
   readonly maxPagesPerTick: number;
+  // Lag in ledgers above which the indexer logs a warning. 0 disables it.
+  readonly lagWarnLedgers: number;
   readonly summaryCacheTtlMs: number;
   readonly bodyLimit: number;
   readonly queryStringLimit: number;
@@ -319,6 +326,7 @@ export function loadConfig(): Config {
       DEFAULT_MAX_PAGES_PER_TICK,
       1,
     ),
+    lagWarnLedgers: integer("INDEXER_LAG_WARN_LEDGERS", DEFAULT_LAG_WARN_LEDGERS),
     summaryCacheTtlMs: integer(
       "STREAM_SUMMARY_CACHE_TTL_MS",
       DEFAULT_STREAM_SUMMARY_CACHE_TTL_MS,
@@ -418,6 +426,7 @@ export function describeConfig(config: Config): LoggedConfig {
     startLedger: config.startLedger,
     maxBackoffMs: config.maxBackoffMs,
     maxPagesPerTick: config.maxPagesPerTick,
+    lagWarnLedgers: config.lagWarnLedgers,
     summaryCacheTtlMs: config.summaryCacheTtlMs,
     bodyLimit: config.bodyLimit,
     queryStringLimit: config.queryStringLimit,
