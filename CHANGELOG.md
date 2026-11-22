@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `READINESS_RETRY_AFTER_SECONDS` environment variable: `Retry-After` header value (in seconds) on 503 responses from `/ready`. Default 5 (#638).
 - `STREAM_SUMMARY_CACHE_TTL_MS` environment variable: cache duration for `GET /streams/summary` responses. Default 2000ms (#648).
 - `METRICS_TOKEN` environment variable: optional bearer token for `/metrics` endpoint authentication. When unset, `/metrics` remains unauthenticated (#662).
+- `ADMIN_TOKEN` environment variable: optional bearer token for admin endpoints. When set, enables `POST /admin/replay` for triggering failed event replay via API. When unset, admin endpoints are disabled (#736).
 - Response compression: gzip and brotli encoding for responses at or above `COMPRESSION_THRESHOLD_BYTES` (#601).
 - Security headers: `Content-Security-Policy`, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` on all responses including `/docs` (#520).
 - CI builds the container image and waits for its `HEALTHCHECK` to report healthy against a PostgreSQL service (#702).

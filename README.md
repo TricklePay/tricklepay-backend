@@ -241,7 +241,8 @@ header there rather than appending to it.
 | `GET` | `/streams/{id}/schedule` | Evenly spaced vesting curve points for charting, with the cliff step included. Optional `?points=<2–100>` (default 50). May return fewer points than requested for very short streams (zero-duration). Responds `304` to a matching `If-None-Match`. |
 | `GET` | `/accounts/{address}/summary` | Incoming and outgoing stream counts and amount totals for a single Stellar address. |
 | `GET` | `/tokens` | Each distinct streamed token, with its stream count and total escrowed amount. |
-| `GET` | `/tokens` | Each distinct streamed token, with its stream count and total escrowed amount. |
+| `GET` | `/metrics` | Prometheus metrics. Optional bearer authentication via `METRICS_TOKEN`. |
+| `POST` | `/admin/replay` | Trigger failed event replay (admin). Requires bearer authentication via `ADMIN_TOKEN`. Only registered when `ADMIN_TOKEN` is set. See [docs/event-replay.md](docs/event-replay.md#admin-api-endpoint). |
 
 Each stream is returned with its stored fields plus derived `vested`,
 `withdrawable`, `locked`, `progress`, and `status` (`pending`, `streaming`,
@@ -1362,6 +1363,7 @@ current template — copy it and fill in the required values.
 | `REQUEST_TIMEOUT_MS` | No | `30000` | Milliseconds within which a request must be received and answered; past it the client gets `408`. `0` disables it. See [Server timeouts](docs/CONFIGURATION.md#server-timeouts). |
 | `ENABLE_DOCS_UI` | No | `true` | Serve the interactive Swagger UI at `/docs`. Set to `false` to disable the page and its static assets while `/docs/json` and `/docs/yaml` stay available. Accepts `true/false` (also `1/0`, `yes/no`, `on/off`); anything else fails startup. |
 | `METRICS_TOKEN` | No | - | Bearer token required on `/metrics` when set; unset keeps the endpoint unauthenticated. Only send it over TLS and keep the recommended network restriction. Prometheus scrape example in [docs/public-url-and-metrics-token.md](docs/public-url-and-metrics-token.md#prometheus-scrape-example). |
+| `ADMIN_TOKEN` | No | - | Bearer token required on admin endpoints (`POST /admin/replay`) when set. When unset or empty, admin endpoints are not registered. Allows remote triggering of failed event replay from orchestration tools. See [docs/event-replay.md](docs/event-replay.md#admin-api-endpoint). |
 | `COMPRESSION_THRESHOLD_BYTES` | No | `1024` | Responses at least this many bytes are compressed when the client accepts `gzip` or `br`. Smaller responses are sent uncompressed. |
 | `RATE_LIMIT_MAX` | No | `100` | Maximum requests per client IP in each rate-limit window. Must be greater than zero. |
 | `RATE_LIMIT_WINDOW_MS` | No | `60000` | Length of the fixed rate-limit window in milliseconds. Must be greater than zero. |
