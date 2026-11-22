@@ -39,6 +39,7 @@ Listed alphabetically by file name, ignoring case.
 - [indexer-stalled-runbook.md](indexer-stalled-runbook.md): Operator checklist for diagnosing a stalled indexer using `/status`, `/metrics`, and application logs, followed by ordered recovery steps.
 - [indexer-start-ledger.md](indexer-start-ledger.md): Guide for choosing the `INDEXER_START_LEDGER` configuration value for new deployments, explaining the trade-offs between backfill duration and historical data completeness.
 - [INDEXER_VERIFICATION.md](INDEXER_VERIFICATION.md): Procedure for comparing the indexed database state with on-chain state to detect drift caused by missed events or reorgs.
+- [load-testing.md](load-testing.md): Guide for running the load test script that seeds 100,000 streams and benchmarks query performance (list, filters, cursor pagination, aggregations) with recorded p95 latencies and advisory thresholds.
 - [local-network.md](local-network.md): Configuration and setup for running the indexer and API against a local Stellar/Soroban development network.
 - [logging.md](logging.md): Pino log structure, severity levels, standard fields, and how request logs are correlated.
 - [node-version-policy.md](node-version-policy.md): States the minimum supported, CI-tested, and production Node versions, and why `.nvmrc` deliberately pins the floor rather than matching the Dockerfile.
