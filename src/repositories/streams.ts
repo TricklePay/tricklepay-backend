@@ -335,13 +335,58 @@ function whereFromFilter(filter: StreamFilter, now?: bigint): Prisma.StreamWhere
   if (filter.recipient) where.recipient = filter.recipient;
   if (filter.token) where.token = filter.token;
   if (filter.cancelled !== undefined) where.cancelled = filter.cancelled;
-  if (filter.ids !== undefined || filter.cursor !== undefined) {
-    where.streamId = {
-      // PostgreSQL BIGINT cannot store the upper half of uint64. Those valid
-      // contract ids cannot match a row, so omit them before binding parameters.
-      ...(filter.ids === undefined ? {} : { in: filter.ids.filter((id) => id <= 9223372036854775807n) }),
-      ...(filter.cursor === undefined ? {} : { lt: filter.cursor }),
-    };
+
+  // Handle cursor-based pagination with sort awareness
+  if (filter.cursor) {
+    const cursorData = decodeCursor(filter.cursor);
+    if (cursorData) {
+      const sortKey = filter.sortKey ?? cursorData.sortKey ?? "streamId";
+      const sortDirection = filter.sortDirection ?? cursorData.sortDirection ?? "desc";
+
+      // Build the cursor condition based on the sort key
+      if (sortKey === "streamId") {
+        where.streamId = sortDirection === "desc" ? { lt: cursorData.streamId } : { gt: cursorData.streamId };
+      } else if (cursorData.sortValue !== undefined) {
+        // For compound sort (sortKey + streamId tiebreaker), use OR condition
+        const sortValueBigInt = sortKey === "totalAmount"
+          ? BigInt(cursorData.sortValue)
+          : sortKey === "createdLedger"
+            ? Number(cursorData.sortValue)
+            : BigInt(cursorData.sortValue);
+
+        const sortField = sortKey === "totalAmount"
+          ? "totalAmount"
+          : sortKey === "createdLedger"
+            ? "createdLedger"
+            : "endTime";
+
+        const sortValueDecimal = sortKey === "totalAmount" || sortKey === "endTime"
+          ? decimal(sortValueBigInt as bigint)
+          : sortValueBigInt;
+
+        if (sortDirection === "desc") {
+          where.OR = [
+            { [sortField]: { lt: sortValueDecimal } },
+            {
+              [sortField]: sortValueDecimal,
+              streamId: { lt: cursorData.streamId },
+            },
+          ];
+        } else {
+          where.OR = [
+            { [sortField]: { gt: sortValueDecimal } },
+            {
+              [sortField]: sortValueDecimal,
+              streamId: { gt: cursorData.streamId },
+            },
+          ];
+        }
+      }
+    }
+  } else if (filter.ids !== undefined) {
+    // PostgreSQL BIGINT cannot store the upper half of uint64. Those valid
+    // contract ids cannot match a row, so omit them before binding parameters.
+    where.streamId = { in: filter.ids.filter((id) => id <= 9223372036854775807n) };
   }
 
   if (filter.minAmount !== undefined || filter.maxAmount !== undefined) {
@@ -364,10 +409,24 @@ export function orderByFromFilter(
   filter: StreamFilter,
 ): Prisma.StreamOrderByWithRelationInput[] {
   const orderBy: Prisma.StreamOrderByWithRelationInput[] = [];
+
+  // Address-based ordering (legacy behavior)
   if (filter.sender) orderBy.push({ sender: "asc" });
   else if (filter.recipient) orderBy.push({ recipient: "asc" });
   else if (filter.token) orderBy.push({ token: "asc" });
-  orderBy.push({ streamId: "desc" });
+
+  // Apply custom sort if specified
+  if (filter.sortKey && filter.sortKey !== "streamId") {
+    const direction = filter.sortDirection ?? "desc";
+    orderBy.push({ [filter.sortKey]: direction });
+  }
+
+  // streamId is always the final tiebreaker
+  const streamIdDirection = filter.sortKey && filter.sortKey !== "streamId"
+    ? filter.sortDirection ?? "desc"
+    : filter.sortDirection ?? "desc";
+  orderBy.push({ streamId: streamIdDirection });
+
   return orderBy;
 }
 
@@ -410,7 +469,22 @@ export async function listStreams(filter: StreamFilter, now?: bigint): Promise<S
 
   const streams = rows.slice(0, limit);
   const last = streams[streams.length - 1];
-  return { streams, nextCursor: encodeCursor(last.streamId) };
+
+  // Encode cursor with sort information
+  const sortKey = filter.sortKey ?? "streamId";
+  const sortDirection = filter.sortDirection ?? "desc";
+  const sortValue = sortKey === "endTime"
+    ? last.endTime
+    : sortKey === "totalAmount"
+      ? BigInt(last.totalAmount.toString())
+      : sortKey === "createdLedger"
+        ? last.createdLedger
+        : undefined;
+
+  return {
+    streams,
+    nextCursor: encodeCursor(last.streamId, sortKey, sortDirection, sortValue),
+  };
 }
 
 // Total number of streams matching the filter, ignoring limit and offset, so a

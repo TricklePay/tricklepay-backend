@@ -39,6 +39,8 @@ interface ListStreamsQuery {
   cursor?: string;
   minAmount?: string;
   maxAmount?: string;
+  sort?: string;
+  sortDirection?: "asc" | "desc";
 }
 
 export function registerListStreamsRoute(app: FastifyInstance): void {
@@ -135,6 +137,23 @@ export function registerListStreamsRoute(app: FastifyInstance): void {
               description: "Filter streams with total amount less than or equal to this value (non-negative integer string).",
               examples: ["10000000"],
             },
+            sort: {
+              type: "string",
+              enum: ["streamId", "endTime", "totalAmount", "createdLedger"],
+              description:
+                "Sort key for server-side ordering. streamId (default): descending stream id, " +
+                "endTime: stream end time, totalAmount: total stream amount, createdLedger: ledger where stream was created. " +
+                "Cursors encode the sort key for stable pagination. " +
+                "Performance note: streamId uses existing compound indexes when combined with sender/recipient/token filters. " +
+                "Other sort keys may require full table scans on large datasets without dedicated indexes.",
+              examples: ["endTime"],
+            },
+            sortDirection: {
+              type: "string",
+              enum: ["asc", "desc"],
+              description: "Sort direction. Defaults to desc. Applies to the sort key; streamId tiebreaker follows the same direction.",
+              examples: ["desc"],
+            },
           },
           additionalProperties: false,
         },
@@ -150,13 +169,36 @@ export function registerListStreamsRoute(app: FastifyInstance): void {
 
       const { limit, offset } = parsePagination(query);
 
-      let cursor: bigint | undefined;
+      let cursor: string | undefined;
       if (query.cursor !== undefined) {
         const decoded = decodeCursor(query.cursor);
         if (decoded === null) {
           return sendError(reply, request, 400, "VALIDATION_ERROR", "invalid cursor");
         }
-        cursor = decoded;
+        cursor = query.cursor;
+      }
+
+      // Validate and parse sort parameters
+      let sortKey: "streamId" | "endTime" | "totalAmount" | "createdLedger" | undefined;
+      if (query.sort !== undefined) {
+        if (!["streamId", "endTime", "totalAmount", "createdLedger"].includes(query.sort)) {
+          return sendError(
+            reply,
+            request,
+            400,
+            "VALIDATION_ERROR",
+            "sort must be one of: streamId, endTime, totalAmount, createdLedger",
+          );
+        }
+        sortKey = query.sort as "streamId" | "endTime" | "totalAmount" | "createdLedger";
+      }
+
+      let sortDirection: "asc" | "desc" | undefined;
+      if (query.sortDirection !== undefined) {
+        if (!["asc", "desc"].includes(query.sortDirection)) {
+          return sendError(reply, request, 400, "VALIDATION_ERROR", "sortDirection must be asc or desc");
+        }
+        sortDirection = query.sortDirection;
       }
 
       const usingCursor = cursor !== undefined;
@@ -178,9 +220,11 @@ export function registerListStreamsRoute(app: FastifyInstance): void {
         token?: string;
         cancelled?: boolean;
         status?: "pending" | "streaming" | "completed" | "cancelled";
-        cursor?: bigint;
+        cursor?: string;
         minAmount?: bigint;
         maxAmount?: bigint;
+        sortKey?: "streamId" | "endTime" | "totalAmount" | "createdLedger";
+        sortDirection?: "asc" | "desc";
       } = {};
       if (query.ids !== undefined) {
         const parts = query.ids.split(",");
@@ -219,6 +263,10 @@ export function registerListStreamsRoute(app: FastifyInstance): void {
       }
 
       filter.cursor = cursor;
+      
+      // Set sort parameters
+      filter.sortKey = sortKey;
+      filter.sortDirection = sortDirection;
       
       // Parse amount filters
       const minAmount = parseAmount(query.minAmount);
