@@ -68,6 +68,9 @@ export interface CancellationInput {
 // and was correctly ignored.
 export type ApplyResult = "applied" | "duplicate" | "missing";
 
+export type SortKey = "streamId" | "endTime" | "totalAmount" | "createdLedger";
+export type SortDirection = "asc" | "desc";
+
 export interface StreamFilter {
   ids?: bigint[];
   sender?: string;
@@ -75,11 +78,13 @@ export interface StreamFilter {
   token?: string;
   cancelled?: boolean;
   status?: "pending" | "streaming" | "completed" | "cancelled";
-  cursor?: bigint;
+  cursor?: string;
   limit?: number;
   offset?: number;
   minAmount?: bigint;
   maxAmount?: bigint;
+  sortKey?: SortKey;
+  sortDirection?: SortDirection;
 }
 
 export interface StreamListResult {
@@ -87,18 +92,58 @@ export interface StreamListResult {
   nextCursor?: string;
 }
 
-export function encodeCursor(streamId: bigint): string {
-  const payload = JSON.stringify({ streamId: streamId.toString() });
+interface CursorData {
+  streamId: bigint;
+  sortKey?: SortKey;
+  sortDirection?: SortDirection;
+  sortValue?: string;
+}
+
+export function encodeCursor(
+  streamId: bigint,
+  sortKey?: SortKey,
+  sortDirection?: SortDirection,
+  sortValue?: bigint | number,
+): string {
+  const data: CursorData = {
+    streamId,
+    ...(sortKey && { sortKey }),
+    ...(sortDirection && { sortDirection }),
+    ...(sortValue !== undefined && { sortValue: sortValue.toString() }),
+  };
+  const payload = JSON.stringify(data);
   return Buffer.from(payload, "utf8").toString("base64url");
 }
 
-export function decodeCursor(raw: string): bigint | null {
+export function decodeCursor(raw: string): CursorData | null {
   try {
     const decoded = Buffer.from(raw, "base64url").toString("utf8");
     const parsed = JSON.parse(decoded);
     if (parsed && typeof parsed.streamId === "string") {
-      const value = BigInt(parsed.streamId);
-      if (value >= 0n) return value;
+      const streamId = BigInt(parsed.streamId);
+      if (streamId < 0n) return null;
+
+      const result: CursorData = { streamId };
+
+      if (parsed.sortKey) {
+        if (!["streamId", "endTime", "totalAmount", "createdLedger"].includes(parsed.sortKey)) {
+          return null;
+        }
+        result.sortKey = parsed.sortKey;
+      }
+
+      if (parsed.sortDirection) {
+        if (!["asc", "desc"].includes(parsed.sortDirection)) {
+          return null;
+        }
+        result.sortDirection = parsed.sortDirection;
+      }
+
+      if (parsed.sortValue !== undefined) {
+        result.sortValue = parsed.sortValue;
+      }
+
+      return result;
     }
   } catch {
     // fall through to null

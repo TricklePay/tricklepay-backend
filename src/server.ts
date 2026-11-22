@@ -217,7 +217,9 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
   }
 
   // Add X-Indexer-Lag-Ledgers header to read responses.
-  registerIndexerLagHook(app);
+  registerIndexerLagHook(app, {
+    stalenessThresholdMs: config?.readyMaxStalenessMs ?? DEFAULT_READY_MAX_STALENESS_MS,
+  });
 
   // Record every response against the Prometheus counters and histograms.
   await registerMetricsPlugin(app);
@@ -251,6 +253,8 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
   void app.register(cors, {
     origin: corsOrigin,
     allowedHeaders: ["*"],
+    // Expose custom response headers to clients, including those added by hooks.
+    exposedHeaders: ["X-Indexer-Lag-Ledgers", "X-Data-Stale"],
   });
 
   // Compress responses at or above the configured threshold when the client
