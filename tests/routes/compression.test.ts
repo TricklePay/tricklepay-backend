@@ -29,6 +29,8 @@ async function serverWithBody(body: string, thresholdBytes?: number): Promise<Fa
   );
   app.get("/payload", async (_request, reply) => {
     reply.header("content-type", "application/json");
+    // Set a stable ETag so we can test conditional requests across encodings
+    reply.header("etag", '"test-payload-v1"');
     return body;
   });
   await app.ready();
