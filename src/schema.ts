@@ -374,6 +374,11 @@ export const streamEventSchema = {
       nullable: true,
       description: "Ledger close time, in Unix seconds, for the event.",
     },
+    cumulativeWithdrawn: {
+      type: "string",
+      nullable: true,
+      description: "Running total of withdrawn tokens up to and including this event (uint128, decimal string). Only present when cumulative=true is requested.",
+    },
   },
 } as const;
 
