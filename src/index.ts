@@ -16,6 +16,8 @@ import { statusRoutes } from "./routes/status.js";
 
 import { streamRoutes } from "./routes/streams.js";
 
+import { streamUpdateRoutes } from "./routes/stream-updates.js";
+
 import { buildServer } from "./server.js";
 
 import { createShutdown } from "./shutdown.js";
@@ -28,6 +30,7 @@ async function main(): Promise<void> {
   const app = await buildServer(config);
   await app.register(rootRoutes(config));
   await app.register(streamRoutes);
+  await app.register(streamUpdateRoutes);
   await app.register(statusRoutes);
   await app.register(metricsRoutes);
 
