@@ -201,10 +201,20 @@ Routes that read from the database import their data through a repository functi
    Write concise, descriptive commit messages matching conventional commit format:
    `feat(<scope>): description (#issue)` or `docs(<scope>): description (#issue)`.
 
-3. **Open a Pull Request:**
+3. **Update CHANGELOG.md:**
+   If your pull request changes the API surface (routes, schemas, response shapes) or configuration options (environment variables, command-line flags), add an entry under the `[Unreleased]` section in `CHANGELOG.md`. Follow the [Keep a Changelog](https://keepachangelog.com/) format:
+   - Use `### Added` for new endpoints, query parameters, response fields, or config variables.
+   - Use `### Changed` for breaking changes or behaviour modifications.
+   - Use `### Fixed` for bug fixes.
+   - Use `### Removed` for deleted endpoints or deprecated config.
+   
+   Internal refactors, test additions, or doc-only changes that have no observable effect on the API or config may skip the CHANGELOG by applying the `no-changelog` label to the pull request.
+
+4. **Open a Pull Request:**
    - Push your branch to `origin`.
    - Open a PR against the `main` branch.
    - Include `Closes #<ISSUE_NUMBER>` in the PR description to link and automatically close relevant issues.
+   - The `CHANGELOG check` workflow will verify that API or config changes include a CHANGELOG entry (or the `no-changelog` label is present).
 
 ---
 

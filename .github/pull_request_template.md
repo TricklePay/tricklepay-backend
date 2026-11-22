@@ -21,3 +21,4 @@ the scenario covered (e.g. "npm test -- tests/indexer/apply.test.ts").
 - [ ] `npm run build` passes
 - [ ] The change is covered by tests (or the reason it can't be is explained above)
 - [ ] Documentation updated when behaviour changed
+- [ ] CHANGELOG.md updated for API or config changes (or `no-changelog` label applied)
