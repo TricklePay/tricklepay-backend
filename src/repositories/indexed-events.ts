@@ -9,7 +9,7 @@
 // functions rather than calling the database client directly.
 
 import type { Prisma } from "@prisma/client";
-import { prisma, withQueryTimeout } from "../db.js";
+import { prisma, withQueryTimeout, measureRepositoryCall } from "../db.js";
 import type { StreamEvent } from "../chain/events.js";
 
 export type IndexedEventKind = "created" | "withdrawn" | "cancelled";
@@ -39,6 +39,7 @@ export async function listIndexedEvents(
   streamId: bigint,
   kind?: IndexedEventKind,
 ): Promise<IndexedEventRecord[]> {
+  return measureRepositoryCall("listIndexedEvents", async () => {
   const where: Prisma.IndexedEventWhereInput = {
     streamId: streamId.toString(),
   };
@@ -52,6 +53,7 @@ export async function listIndexedEvents(
     }),
   );
   return rows as unknown as IndexedEventRecord[];
+  });
 }
 
 export function indexedEventFromDecoded(event: StreamEvent): IndexedEventRecord {
@@ -79,10 +81,12 @@ export async function recordIndexedEvent(
   record: IndexedEventRecord,
   tx?: Prisma.TransactionClient,
 ): Promise<void> {
-  const db = tx ?? prisma;
-  await db.indexedEvent.createMany({
-    data: record as unknown as Prisma.IndexedEventCreateManyInput,
-    skipDuplicates: true,
+  return measureRepositoryCall("recordIndexedEvent", () => {
+    const db = tx ?? prisma;
+    return db.indexedEvent.createMany({
+      data: record as unknown as Prisma.IndexedEventCreateManyInput,
+      skipDuplicates: true,
+    });
   });
 }
 

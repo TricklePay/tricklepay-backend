@@ -8,7 +8,7 @@
 // writes to the indexer_state table in PostgreSQL must flow through these
 // functions rather than calling the database client directly.
 
-import { prisma, withQueryTimeout } from "../db.js";
+import { prisma, withQueryTimeout, measureRepositoryCall } from "../db.js";
 
 // Fixed key for the single indexer-state row. There is one indexed contract, so
 // one row of bookkeeping.
@@ -42,6 +42,7 @@ export function hasIndexerProgress(position: StoredPosition | null): boolean {
 }
 
 export async function getIndexerPosition(): Promise<StoredPosition | null> {
+  return measureRepositoryCall("getIndexerPosition", async () => {
   const state = await withQueryTimeout(
     prisma.indexerState.findUnique({ where: { id: STATE_ID } }),
   );
@@ -52,15 +53,18 @@ export async function getIndexerPosition(): Promise<StoredPosition | null> {
     cursor: state.cursor,
     updatedAt: state.updatedAt,
   };
+  });
 }
 
 // Writes the position reached by a completed poll. `lastLedger` is expected to
 // move forward only; the caller carries it across ticks and raises it as
 // events are applied, so a poll that applied nothing leaves it where it was.
 export async function saveIndexerPosition(position: IndexerPosition): Promise<void> {
-  await prisma.indexerState.upsert({
-    where: { id: STATE_ID },
-    create: { id: STATE_ID, ...position },
-    update: position,
-  });
+  return measureRepositoryCall("saveIndexerPosition", () =>
+    prisma.indexerState.upsert({
+      where: { id: STATE_ID },
+      create: { id: STATE_ID, ...position },
+      update: position,
+    })
+  );
 }
