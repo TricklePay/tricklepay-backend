@@ -1,6 +1,6 @@
 # TricklePay Backend
 
-Indexer and read API for TricklePay token streams on Stellar.
+Indexer and read API for TricklePay token streams on Stellar
 
 This service has two halves that run in one process:
 
@@ -22,12 +22,17 @@ For guides and technical documentation, see the [Documentation Index](docs/READM
 - [Database schema](#database-schema)
 - [Glossary](#glossary)
 - [API](#api)
+  - [`?at=` — Historical vesting snapshots](#at--historical-vesting-snapshots)
+  - [`?points=` — Vesting schedule points](#points--vesting-schedule-points)
+  - [ETag and conditional requests](#etag-and-conditional-requests)
+  - [Security headers](#security-headers)
 - [Error Responses](#error-responses)
 - [Health Endpoint Semantics](#health-endpoint-semantics)
 - [Metrics](#metrics)
 - [Running locally](#running-locally)
 - [Testing](#testing)
 - [Configuration](#configuration)
+  - [CORS origin](#cors-origin)
 - [Deployment](#deployment)
 - [Contributing](#contributing)
 - [Project structure](#project-structure)
@@ -44,7 +49,7 @@ sender, recipient, token, total, and the `startTime`/`endTime`/`cliffTime`
 schedule, with `withdrawn` at zero and `cancelled` false by definition — while
 `Withdrawn` and `Cancelled` carry the deltas that move one. So the indexer
 writes each event straight to Postgres: one query per event and no chain
-round-trip. That is what makes a backfill cheap, since an historical event costs
+round-trip. That is what makes a backfill so cheap, since an historical event costs
 a database write rather than an RPC simulation.
 
 Applying an event twice therefore has to be harmless, because the indexer saves
@@ -95,6 +100,8 @@ Comprehensive technical documentation and operational guides are maintained in t
 - [docs/README.md](docs/README.md): Index of all documentation guides and specifications.
 - [docs/database-schema.md](docs/database-schema.md): Complete schema documentation for all PostgreSQL models and audit tables.
 - [docs/event-replay.md](docs/event-replay.md): Operator guide for running the failed event replay recovery CLI.
+- [docs/debugging-a-stream.md](docs/debugging-a-stream.md): Queries to reconstruct a single stream from its event history and spot a gap or duplicate.
+- [docs/poll-tick-sequence.md](docs/poll-tick-sequence.md): Sequence diagram of a single poll tick, from fetching events to saving the indexer's position.
 - [docs/failed-events-retention.md](docs/failed-events-retention.md): Retention policy and maintenance procedures for failed event records.
 - [docs/glossary.md](docs/glossary.md): Terminology definitions for domain and indexer concepts.
 
@@ -141,6 +148,10 @@ The service exposes a REST API for querying indexed stream data and checking sys
 
 The specification is **generated automatically** from route schemas defined in the codebase. When you add or modify an endpoint in `src/routes/`, the OpenAPI document updates accordingly. The generation is handled by `@fastify/swagger` and `@fastify/swagger-ui`.
 
+Set `ENABLE_DOCS_UI=false` to disable only the interactive page: `/docs` and its static assets return 404, while `/docs/json` and `/docs/yaml` keep serving the machine-readable document.
+
+The document's `info.contact` entry points readers at the project repository, and its `servers` entry is built from configuration: it uses `PUBLIC_BASE_URL` when set, otherwise a URL derived from `HOST` and `PORT`, so generated clients get a sensible base URL to default to.
+
 **Accessing the specification:**
 
 ```bash
@@ -154,15 +165,124 @@ curl http://localhost:3000/docs/json > openapi.json
 curl http://localhost:3000/docs/yaml > openapi.yaml
 ```
 
+For generating a typed TypeScript client from `/docs/json` for a frontend or
+third-party integration, see
+[docs/openapi-client-generation.md](docs/openapi-client-generation.md). For
+exactly which `Cache-Control`, `ETag`, and other headers each endpoint sets
+and why, see [docs/response-headers.md](docs/response-headers.md).
+
+### Security headers
+
+Every response — API data, `/docs`, `/docs/json`, errors, and 404s — carries
+the same hardening headers, set by
+[`src/security-headers.ts`](src/security-headers.ts) through `@fastify/helmet`:
+
+| Header | Value |
+| --- | --- |
+| `Content-Security-Policy` | `default-src 'self'`, `script-src 'self'`, `style-src 'self' https: 'unsafe-inline'`, `img-src 'self' data:`, `frame-ancestors 'none'`, `object-src 'none'` and related directives |
+| `Referrer-Policy` | `no-referrer` |
+| `X-Content-Type-Options` | `nosniff` |
+| `Cross-Origin-Resource-Policy` | `cross-origin` |
+
+The full values and the reasoning behind each one are in
+[docs/response-headers.md](docs/response-headers.md#security-headers).
+
+**Swagger UI and the CSP.** The policy is strict except for one allowance:
+`style-src` includes `'unsafe-inline'` because Swagger UI styles the `/docs`
+page with inline `style` attributes. Scripts are not relaxed — Swagger UI loads
+them as files from `/docs/static`, so `script-src 'self'` is enough. For
+integrators this means:
+
+- The docs page cannot be embedded in an `<iframe>` on another site:
+  `frame-ancestors 'none'` blocks it. Link to `/docs` or open it in a new tab,
+  or render `/docs/json` with your own viewer instead.
+- `upgrade-insecure-requests` is deliberately left out, so `/docs` keeps
+  working over plain HTTP locally and behind a TLS-terminating proxy.
+- `Cross-Origin-Resource-Policy: cross-origin` lets other origins load the
+  responses (for example `/docs/json`); whether browser JavaScript may read
+  them is still decided by [`CORS_ORIGIN`](#cors-origin).
+
+**Interaction with `ENABLE_DOCS_UI`.** The headers are registered before the
+docs routes, so they apply whether the UI is on or off. With
+`ENABLE_DOCS_UI=false` the `/docs` page and its assets return 404 (with the
+same headers) and `/docs/json` and `/docs/yaml` are still served. The
+`'unsafe-inline'` style allowance only exists for the UI, but it stays in the
+policy either way; a deployment that never serves the UI can remove it as
+described below.
+
+**Changing the policy.** The headers are not configurable through environment
+variables. To change them, edit the options passed to `helmet` in
+`registerSecurityHeaders` in
+[`src/security-headers.ts`](src/security-headers.ts): add or adjust a directive
+under `contentSecurityPolicy.directives` (set one to `null` to drop a helmet
+default, as `upgradeInsecureRequests` does), or change `referrerPolicy` /
+`crossOriginResourcePolicy`. Then update
+[`tests/routes/security-headers.test.ts`](tests/routes/security-headers.test.ts),
+which asserts the current values, and the table in
+[docs/response-headers.md](docs/response-headers.md#security-headers). If you
+tighten `style-src`, load `/docs` in a browser and check the console for CSP
+violations — removing `'unsafe-inline'` breaks the Swagger UI layout. Headers
+can also be overridden at a reverse proxy, but a proxy that adds a second
+`Content-Security-Policy` makes the browser enforce both, so replace the
+header there rather than appending to it.
+
 ### Endpoints
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `GET` | `/` | Service index: name, version, and a list of endpoints. |
+| `GET` | `/` | Service index: `name`, `description`, `network`, `contractId`, and a list of endpoints. Performs no database read. |
 | `GET` | `/health` | Liveness check. Returns 200 with the service version; performs no database read. |
-| `GET` | `/ready` | Readiness check. Verifies database connectivity and reports indexer lag; returns 503 when the database is unavailable. |
+| `GET` | `/ready` | Readiness check. Verifies database connectivity and that the indexer has made progress — its stored `lastLedger` must be greater than 0, meaning a ledger has been processed (no event needs to have been applied). Returns 503 with a `Retry-After` header when the database is unavailable or the indexer has not yet processed a ledger. |
 | `GET` | `/status` | Indexer progress against the chain. Response includes `Cache-Control: no-store` to prevent stale lag readings. |
-| `GET` | `/streams` | List streams. Query params: `sender`, `recipient`, `token`, `limit`, `offset`, `includeTotal`, `cancelled`, `cursor`. Address filters accept lowercase and padded spellings and are normalized before matching. `total` is only included when `includeTotal=true`; `cancelled` filters by cancellation status when given, and is omitted to return both. |
+| `GET` | `/streams` | List streams. Query params: `sender`, `recipient`, `token`, `status`, `minAmount`, `maxAmount`, `limit`, `offset`, `includeTotal`, `cancelled`, `cursor` — see [Filter parameters](#filter-parameters). Address filters accept lowercase and padded spellings and are normalized before matching. `total` is only included when `includeTotal=true`; `cancelled` filters by cancellation status when given, and is omitted to return both. Repeating a parameter is rejected with `400` — see [Query parameters](#query-parameters). |
+| `GET` | `/streams/summary` | Aggregate counts and exact total amounts per status (`pending`, `streaming`, `completed`, `cancelled`). Useful for dashboard overview displays without fetching individual streams. The response is cached in-process for the window set by `STREAM_SUMMARY_CACHE_TTL_MS` (2 seconds by default) — see [Stream Summary Endpoint](#stream-summary-endpoint) for the cache headers. |
+| `GET` | `/streams/{id}` | A single stream by id. Also available as `HEAD`. Optional `?at=<unix seconds>` to compute derived figures at a specific point in time instead of now. Accepts 0 to uint64 max. Responds `304` to a matching `If-None-Match`. |
+| `GET` | `/streams/{id}/events` | A single stream's indexed event history, in ascending chain order. Optional `kind` filter (`created`, `withdrawn`, `cancelled`). |
+| `GET` | `/streams/{id}/schedule` | Evenly spaced vesting curve points for charting, with the cliff step included. Optional `?points=<2–100>` (default 50). May return fewer points than requested for very short streams (zero-duration). Responds `304` to a matching `If-None-Match`. |
+| `GET` | `/accounts/{address}/summary` | Incoming and outgoing stream counts and amount totals for a single Stellar address. |
+| `GET` | `/tokens` | Each distinct streamed token, with its stream count and total escrowed amount. |
+| `GET` | `/tokens` | Each distinct streamed token, with its stream count and total escrowed amount. |
+
+Each stream is returned with its stored fields plus derived `vested`,
+`withdrawable`, `locked`, `progress`, and `status` (`pending`, `streaming`,
+`completed`, or `cancelled`). `progress` is vesting progress in basis points
+(0–10000).
+
+### Filter parameters
+
+`GET /streams` narrows its results with the following query parameters. Every
+filter is optional, single-valued, and combines with the others as an
+intersection (AND).
+
+| Parameter | Type | Unit | Validation | Description |
+|-----------|------|------|------------|-------------|
+| `sender` | string | - | Stellar address | Only streams created by this address. |
+| `recipient` | string | - | Stellar address | Only streams paying this address. |
+| `token` | string | - | Contract address | Only streams of this token. |
+| `status` | string | - | `pending`, `streaming`, `completed`, or `cancelled` | Only streams in this lifecycle status, evaluated against the current time. |
+| `cancelled` | boolean | - | `true` or `false` | Only cancelled (or only uncancelled) streams. |
+| `minAmount` | string | token base units | Non-negative decimal integer (digits only, no sign, decimal point, or exponent); up to uint128 | Only streams whose `totalAmount` is **greater than or equal to** this value. |
+| `maxAmount` | string | token base units | Non-negative decimal integer (digits only, no sign, decimal point, or exponent); up to uint128 | Only streams whose `totalAmount` is **less than or equal to** this value. |
+
+**Amount filters.** `minAmount` and `maxAmount` compare against the stored
+`totalAmount` in the token's smallest unit (for a 7-decimal token,
+`10000000` is 1 whole token), not in display units. Pass them as strings of
+digits so values beyond 2^53 stay exact; surrounding whitespace is trimmed.
+Anything else — a negative number, a decimal such as `1.5`, `1e6`, or an empty
+value — is rejected with `400 VALIDATION_ERROR` (`invalid minAmount (must be
+non-negative integer)`, or the same for `maxAmount`). Both bounds are
+inclusive. A `minAmount` greater than `maxAmount` is not an error; it simply
+matches no streams. For a cancelled stream `totalAmount` is frozen to the
+amount vested at cancellation, so the filters see that reduced figure.
+
+```bash
+# Streaming payments between 1 and 10 whole tokens (7-decimal token),
+# from one sender
+curl -s "http://localhost:3000/streams?sender=GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN&status=streaming&minAmount=10000000&maxAmount=100000000" | jq
+
+# Only large streams (at least 1,000,000 base units), with the total count
+curl -s "http://localhost:3000/streams?minAmount=1000000&includeTotal=true" | jq '.total'
+```
 
 ### Pagination Parameters
 
@@ -176,15 +296,529 @@ The `GET /streams` endpoint supports pagination through the following query para
 | `includeTotal` | boolean | false | - | When `true`, includes the total count of matching streams |
 
 **Note:** When `cursor` is provided, `offset` is ignored and offset ceiling checks are skipped. Use cursor-based pagination for stable results under concurrent inserts.
-| `GET` | `/streams/summary` | Aggregate counts and exact total amounts per status (`pending`, `streaming`, `completed`, `cancelled`). Useful for dashboard overview displays without fetching individual streams. Response is cached for 30 seconds. |
-| `GET` | `/streams/:id` | A single stream by id. |
-| `GET` | `/metrics` | Prometheus metrics. |
 
-Each stream is returned with its stored fields plus derived `vested`,
-`withdrawable`, `locked`, `progress`, and `status` (`pending`, `streaming`,
-`completed`, or `cancelled`). `progress` is vesting progress in basis points
-(0–10000).
+**Revalidation:** `GET /streams` responses carry a weak `ETag` derived from the response body. Send it back in an `If-None-Match` header to receive `304 Not Modified` with no body when nothing changed, saving bandwidth on repeat polls. The `ETag` changes whenever any returned field changes (streams, `total`, `nextCursor`, or pagination).
 
+#### offset vs. cursor: why the results can differ
+
+`offset` pages by position — "skip N rows, then take the next `limit`" —
+against a list ordered by stream id descending (newest first; see the
+`/streams` endpoint description above for the full ordering rule when an
+address filter is applied). That position shifts under you if a row is
+inserted or removed between requests, because the set of rows that exists
+"before" a given position has changed.
+
+Concretely: with streams `101`–`105` already indexed, a client fetches
+`?limit=2&offset=0` and gets `[105, 104]` (newest first). Before it asks for
+the next page, stream `106` is indexed. The client then fetches
+`?limit=2&offset=2`, expecting to continue with `[103, 102]`, but `106` is
+now the newest row and has pushed everything down by one position: position 2
+is stream `104` again. The response is `[104, 103]` — **`104` is returned
+twice, and `106` is never returned at all**, because the client had already
+moved past the position it would have appeared in. A deletion between
+requests has the opposite effect: everything shifts up by one, and a row gets
+skipped instead of repeated.
+
+`cursor` pages by value instead of position: the response's `nextCursor`
+encodes the id of the last stream already returned, and the next request
+asks for rows strictly before that id (`streamId < cursor`, same descending
+order). A newly inserted stream gets a newer id than anything already paged
+past, so it never falls inside a window that has already been returned, and a
+cancelled or otherwise-unchanged stream never moves relative to the cursor.
+Pagination is therefore stable under concurrent inserts, at the cost of not
+being able to jump to an arbitrary page — only "next."
+
+**Prefer `cursor` whenever you are paging through more than one page of
+results**, especially for a backfill, export, or anything long-running enough
+for the table to change underneath it. `offset` is fine for a single page, or
+for jumping to a known position (e.g. a UI page number) where occasionally
+seeing a duplicate or missing row at the boundary is acceptable.
+
+#### Why offset is capped at 10,000
+
+An `offset` that large forces Postgres to scan and discard that many rows
+before it can return the page, which gets slow as the offset grows — exactly
+the kind of scan a client doing bulk pagination should not be doing anyway.
+Requests with `offset` over 10,000 are rejected with `400 VALIDATION_ERROR`
+instead of being served slowly; `cursor`-based pagination has no such ceiling
+because it is a keyset lookup (`streamId < cursor`) that stays fast regardless
+of how many pages precede it.
+
+#### Following `nextCursor` to fetch every page
+
+```ts
+let cursor: string | undefined;
+const allStreams = [];
+
+do {
+  const url = new URL("http://localhost:3000/streams");
+  url.searchParams.set("limit", "100");
+  if (cursor) url.searchParams.set("cursor", cursor);
+
+  const page = await fetch(url).then((r) => r.json());
+  allStreams.push(...page.streams);
+  cursor = page.nextCursor; // undefined once the last page is reached
+} while (cursor);
+```
+
+`nextCursor` is present only when another page follows; its absence from the
+response is the end-of-results signal, not an empty `streams` array (the last
+page can still hold up to `limit` rows).
+
+### Query parameters
+
+Filter parameters are single-valued. Repeating one — `?sender=A&sender=B` — is
+rejected with `400 VALIDATION_ERROR` instead of silently keeping the last value,
+because a silent last-wins rule hides client mistakes and is a known
+parameter-pollution footgun. The same applies when the repeated values are
+identical, and when the second spelling is percent-encoded (for example
+`?sender=A&%73ender=B`). See
+[docs/query-parameters.md](docs/query-parameters.md) for the decision record.
+
+### `?at=` — Historical vesting snapshots
+
+`GET /streams/:id` accepts an optional `?at=<unix seconds>` query parameter. When supplied, all derived figures — `vested`, `withdrawable`, `locked`, `progress`, and `status` — are computed at that timestamp instead of the current wall-clock time. The stored fields (`totalAmount`, `withdrawn`, `startTime`, `endTime`, `cliffTime`, `cancelled`) are unchanged; only the time-dependent fields differ.
+
+**Accepted range:** any integer from `0` to `18446744073709551615` (uint64 max). Values outside this range, non-integer strings, and empty strings return `400 VALIDATION_ERROR`. There is no lower bound enforced by the server — passing a timestamp before the stream started simply returns `vested: "0"`.
+
+**Typical uses:**
+
+- Verifying what a recipient could have withdrawn at a past moment (e.g. a dispute over a cancelled stream).
+- Showing a historical chart point without pulling a full schedule.
+- Regression testing vesting math against known timestamps.
+
+```bash
+# What was vested at the start of 2025?
+curl -s "http://localhost:3000/streams/42?at=1735689600" | jq '.vested,.status'
+"0"
+"pending"
+
+# What is vested right now (default behaviour, no ?at)?
+curl -s "http://localhost:3000/streams/42" | jq '.vested,.status'
+"50000000000000"
+"streaming"
+
+# What will be vested after the stream has fully completed?
+curl -s "http://localhost:3000/streams/42?at=1767225600" | jq '.vested,.status'
+"100000000000000"
+"completed"
+```
+
+**ETag behaviour with `?at=`:** The `ETag` for a request with `?at=` is `"<updatedLedger>-<at>"`, distinct from the bare `"<updatedLedger>"` for the same stream without the parameter. This ensures that two requests for the same stream at different timestamps produce separate cache entries and that a stale `If-None-Match` from a plain request cannot match a timestamped one.
+
+### `?points=` — Vesting schedule points
+
+`GET /streams/:id/schedule` returns evenly spaced points along a stream's vesting curve, suitable for rendering a chart. The optional `?points=<n>` parameter controls how many sample points are returned.
+
+| Parameter | Type | Default | Range | Description |
+|-----------|------|---------|-------|-------------|
+| `points` | integer | 50 | 2–100 | Desired number of points in the returned curve. |
+
+Values below 2 are clamped up to 2; values above 100 are clamped down to 100. A non-integer or empty string returns `400 VALIDATION_ERROR`.
+
+**How points are distributed:**
+
+The endpoint spreads `points` timestamps evenly from `startTime` to `endTime`. For streams that have a cliff (`cliffTime` strictly between `startTime` and `endTime`), the cliff timestamp replaces the nearest interior sample so the vesting step is always visible regardless of the requested count.
+
+**Zero-duration streams:** When `startTime == endTime` the stream cannot be subdivided, so the endpoint returns a single point regardless of how many are requested. This is the only case where the response may contain fewer points than requested.
+
+```bash
+# Default: 50 evenly spaced points
+curl -s "http://localhost:3000/streams/42/schedule" | jq '.points | length'
+50
+
+# Minimal two-point curve (start and end only)
+curl -s "http://localhost:3000/streams/42/schedule?points=2" | jq
+{
+  "points": [
+    { "time": "1735689600", "amount": "0", "vested": "0" },
+    { "time": "1767225600", "amount": "100000000000000", "vested": "100000000000000" }
+  ]
+}
+
+# Three points — cliff replaces the nearest interior sample
+curl -s "http://localhost:3000/streams/42/schedule?points=3" | jq
+{
+  "points": [
+    { "time": "1735689600", "amount": "0", "vested": "0" },
+    { "time": "1740000000", "amount": "13668188736681", "vested": "13668188736681" },
+    { "time": "1767225600", "amount": "100000000000000", "vested": "100000000000000" }
+  ]
+}
+```
+
+Each point has three fields, all decimal strings:
+
+| Field | Description |
+|-------|-------------|
+| `time` | Unix timestamp in seconds for this sample. |
+| `amount` | Cumulative vested amount at this timestamp (token base units). |
+| `vested` | Same as `amount`; included for consistency with the stream view. |
+
+**Note:** The schedule is computed from the stored fields and the vesting formula — it does not vary with the current time. The `amount` at each point is what would be vested if a user queried the stream at exactly that second, not the amount vested as of now.
+
+### ETag and conditional requests
+
+`GET /streams`, `GET /streams/:id` and `GET /streams/:id/schedule` set an `ETag` response header and honour the `If-None-Match` request header for conditional GET / HEAD requests. All three build the tag and evaluate `If-None-Match` through the shared helpers in `src/lib/etag.ts`.
+
+**How ETags are formed:**
+
+| Route | `ETag` value |
+|-------|-------------|
+| `GET /streams` | `W/"<sha256 of the response body>"` |
+| `GET /streams/:id` (no `?at=`) | `"<updatedLedger>"` |
+| `GET /streams/:id?at=<ts>` | `"<updatedLedger>-<ts>"` |
+| `GET /streams/:id/schedule?points=<n>` | `"<updatedLedger>-schedule-<n>"` |
+
+`updatedLedger` is the ledger sequence of the last event applied to that stream. It advances whenever a `Withdrawn` or `Cancelled` event is indexed for the stream, and never otherwise.
+
+**Revalidation flow:**
+
+```bash
+# First request — server returns 200 and the ETag
+curl -si http://localhost:3000/streams/42 | grep -E "HTTP|ETag"
+HTTP/1.1 200 OK
+ETag: "200"
+
+# Second request — send the ETag back; server returns 304 with no body
+curl -si -H 'If-None-Match: "200"' http://localhost:3000/streams/42 | grep "HTTP"
+HTTP/1.1 304 Not Modified
+
+# Same for the schedule route
+curl -si http://localhost:3000/streams/42/schedule?points=50 | grep -E "HTTP|ETag"
+HTTP/1.1 200 OK
+ETag: "200-schedule-50"
+
+curl -si -H 'If-None-Match: "200-schedule-50"' \
+  "http://localhost:3000/streams/42/schedule?points=50" | grep "HTTP"
+HTTP/1.1 304 Not Modified
+```
+
+**When a 304 is returned:** the server compares the incoming `If-None-Match` header with the ETag it would have produced for the current database state, using RFC 9110 weak comparison. It returns `304 Not Modified` with no body when:
+
+- the header is `*`;
+- any entry in a comma-separated list matches (`W/"a", W/"b", "200"`); or
+- an entry is the weak or strong form of the current tag (`W/"200"` matches `"200"`).
+
+Entries that are not valid entity-tags (for example an unquoted `200`) are ignored. A header with no matching entry, or no header at all, always produces a full `200` response.
+
+**Caveat:** `?at=` and `?points=` are both encoded into the ETag, so changing either parameter on the same stream id produces a different ETag even when `updatedLedger` has not advanced. A client caching both `?at=1735689600` and the bare URL for stream 42 will hold two separate cache entries and must send the right `If-None-Match` for each request variant.
+
+**Error responses never carry an ETag.** The `ETag` header (and `Cache-Control`) is set only after the stream is found and validated. A `400 VALIDATION_ERROR` or `404 NOT_FOUND` response carries neither header.
+
+### Example Requests
+
+A copy-paste `curl` call and a trimmed response for every endpoint, against
+a local instance on the default port. Amounts (`uint128`) and times and ids
+(`uint64`) are always decimal strings, never JSON numbers — see
+[Data Types and Precision](#stream-summary-endpoint) below for why.
+
+**`GET /`**
+```bash
+curl -s http://localhost:3000/ | jq
+```
+```json
+{
+  "name": "tricklepay-backend",
+  "description": "Indexer and read API for TricklePay token streams",
+  "network": "testnet",
+  "contractId": "CDMB62RVYAXJJNYYH7K442SHSAJIXTZ6K7JANGSMQF2T7MHCTVSK75SW",
+  "endpoints": [
+    { "method": "GET", "path": "/health", "description": "Liveness check" },
+    { "method": "GET", "path": "/ready", "description": "Readiness check" },
+    { "method": "GET", "path": "/status", "description": "Indexer progress" },
+    { "method": "GET", "path": "/metrics", "description": "Prometheus metrics" },
+    { "method": "GET", "path": "/streams", "description": "List streams; filters: sender, recipient, token, limit, offset, cursor, cancelled, includeTotal" },
+    { "method": "GET", "path": "/streams/summary", "description": "Summarize streams by status" },
+    { "method": "GET", "path": "/streams/:id", "description": "A single stream by id" },
+    { "method": "GET", "path": "/streams/:id/events", "description": "Stream event history" },
+    { "method": "GET", "path": "/streams/:id/schedule", "description": "Get stream vesting schedule; parameters: points" },
+    { "method": "GET", "path": "/accounts/:address/summary", "description": "Get account stream summary" },
+    { "method": "GET", "path": "/tokens", "description": "List distinct tokens" },
+    { "method": "GET", "path": "/docs", "description": "Interactive OpenAPI documentation" }
+  ]
+}
+```
+
+**`GET /health`**
+```bash
+curl -s http://localhost:3000/health | jq
+```
+```json
+{ "status": "ok", "version": "0.1.0" }
+```
+
+**`GET /ready`**
+```bash
+curl -s http://localhost:3000/ready | jq
+```
+```json
+{ "status": "ready", "database": "up", "indexer": { "lagLedgers": 1234 } }
+```
+
+**`GET /status`**
+```bash
+curl -s http://localhost:3000/status | jq
+```
+```json
+{
+  "indexer": {
+    "initialized": true,
+    "startLedger": 0,
+    "lastLedger": 56290013,
+    "cursor": "0241763764928512000-0000000001",
+    "updatedAt": "2025-11-14T03:00:00.000Z"
+  },
+  "chain": { "latestLedger": 56999999 },
+  "lagLedgers": 709986,
+  "failedEventCount": 0
+}
+```
+
+**`GET /streams`** — list, optionally filtered by `sender`, `recipient`, `token`, `status`, `cancelled`, `minAmount`, or `maxAmount` (see [Filter parameters](#filter-parameters))
+```bash
+curl -s "http://localhost:3000/streams?limit=1" | jq
+```
+```json
+{
+  "streams": [
+    {
+      "id": "42",
+      "sender": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+      "recipient": "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H",
+      "token": "CBFS2HT4TIHTMWA5ZND6FEC27BRRA4V6JWOD7JIIDZVSPVAM7EJ2LZS7",
+      "totalAmount": "100000000000000",
+      "withdrawn": "25000000000000",
+      "vested": "50000000000000",
+      "withdrawable": "25000000000000",
+      "locked": "50000000000000",
+      "progress": 5000,
+      "startTime": "1735689600",
+      "endTime": "1767225600",
+      "cliffTime": "1740000000",
+      "cancelled": false,
+      "status": "streaming",
+      "createdLedger": 100,
+      "updatedLedger": 200
+    }
+  ],
+  "limit": 1,
+  "offset": 0,
+  "nextCursor": "eyJzdHJlYW1JZCI6IjQyIn0"
+}
+```
+
+**`GET /streams/summary`**
+```bash
+curl -s http://localhost:3000/streams/summary | jq
+```
+```json
+{
+  "pending": { "count": 42, "totalAmount": "1000000000000000", "withdrawn": "0" },
+  "streaming": { "count": 123, "totalAmount": "5000000000000000", "withdrawn": "1250000000000000" },
+  "completed": { "count": 89, "totalAmount": "3000000000000000", "withdrawn": "3000000000000000" },
+  "cancelled": { "count": 5, "totalAmount": "250000000000000", "withdrawn": "100000000000000" }
+}
+```
+
+**`GET /streams/:id`**
+```bash
+curl -s http://localhost:3000/streams/42 | jq
+```
+```json
+{
+  "id": "42",
+  "sender": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+  "recipient": "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H",
+  "token": "CBFS2HT4TIHTMWA5ZND6FEC27BRRA4V6JWOD7JIIDZVSPVAM7EJ2LZS7",
+  "totalAmount": "100000000000000",
+  "withdrawn": "25000000000000",
+  "vested": "50000000000000",
+  "withdrawable": "25000000000000",
+  "locked": "50000000000000",
+  "progress": 5000,
+  "startTime": "1735689600",
+  "endTime": "1767225600",
+  "cliffTime": "1740000000",
+  "cancelled": false,
+  "status": "streaming",
+  "createdLedger": 100,
+  "updatedLedger": 200
+}
+```
+
+**`GET /streams/:id/events`**
+```bash
+curl -s http://localhost:3000/streams/42/events | jq
+```
+```json
+[
+  {
+    "eventId": "0000000000000000000000000000000000000001-0000000000000001",
+    "kind": "created",
+    "streamId": "42",
+    "ledger": 123456,
+    "txHash": "66f7505577a417f4c1187fb8a8eeb6f3737f848d5f0b3b20c5a6c57ab7d659d1",
+    "sender": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+    "recipient": "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H",
+    "token": "CBFS2HT4TIHTMWA5ZND6FEC27BRRA4V6JWOD7JIIDZVSPVAM7EJ2LZS7",
+    "totalAmount": "100000000000000",
+    "amount": null,
+    "recipientAmount": null,
+    "senderRefund": null,
+    "startTime": "1735689600",
+    "endTime": "1767225600",
+    "cliffTime": "1740000000",
+    "closedAt": "1735689600"
+  }
+]
+```
+
+**`GET /streams/:id/schedule`**
+```bash
+curl -s "http://localhost:3000/streams/42/schedule?points=3" | jq
+```
+```json
+{
+  "points": [
+    { "time": "1735689600", "amount": "0", "vested": "0" },
+    { "time": "1740000000", "amount": "13668188736681", "vested": "13668188736681" },
+    { "time": "1767225600", "amount": "100000000000000", "vested": "100000000000000" }
+  ]
+}
+```
+
+**`GET /accounts/:address/summary`**
+```bash
+curl -s http://localhost:3000/accounts/GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN/summary | jq
+```
+```json
+{
+  "incoming": {
+    "count": 3,
+    "totalAmount": "100000000000000",
+    "total": "100000000000000",
+    "withdrawn": "25000000000000",
+    "vested": "50000000000000",
+    "withdrawable": "25000000000000"
+  },
+  "outgoing": {
+    "count": 1,
+    "totalAmount": "40000000000000",
+    "total": "40000000000000",
+    "withdrawn": "10000000000000",
+    "vested": "20000000000000",
+    "withdrawable": "10000000000000"
+  }
+}
+```
+
+**`GET /tokens`**
+```bash
+curl -s http://localhost:3000/tokens | jq
+```
+```json
+[
+  {
+    "token": "CBFS2HT4TIHTMWA5ZND6FEC27BRRA4V6JWOD7JIIDZVSPVAM7EJ2LZS7",
+    "count": 12,
+    "total": "1000000000000000"
+  }
+]
+```
+
+**`GET /metrics`**
+```bash
+curl -s http://localhost:3000/metrics
+```
+```text
+# HELP tricklepay_indexer_lag_ledgers Gap between the chain's latest ledger and the highest ledger the indexer has applied
+# TYPE tricklepay_indexer_lag_ledgers gauge
+tricklepay_indexer_lag_ledgers 709986
+```
+
+### Pagination Parameters
+
+The `GET /streams` endpoint supports pagination through the following query parameters:
+
+| Parameter | Type | Default | Maximum | Description |
+|-----------|------|---------|---------|-------------|
+| `limit` | integer | 50 | 100 | Maximum number of streams to return per page |
+| `offset` | integer | 0 | 10,000 | Zero-based index of the first stream to return |
+| `cursor` | string | - | - | Opaque cursor from a previous response for stable pagination |
+| `includeTotal` | boolean | false | - | When `true`, includes the total count of matching streams |
+
+**Note:** When `cursor` is provided, `offset` is ignored and offset ceiling checks are skipped. Use cursor-based pagination for stable results under concurrent inserts.
+
+**Revalidation:** `GET /streams` responses carry a weak `ETag` derived from the response body. Send it back in an `If-None-Match` header to receive `304 Not Modified` with no body when nothing changed, saving bandwidth on repeat polls. The `ETag` changes whenever any returned field changes (streams, `total`, `nextCursor`, or pagination).
+When `cursor` is provided, `offset` is ignored and the offset ceiling check
+below is skipped.
+
+#### offset vs. cursor: why the results can differ
+
+`offset` pages by position — "skip N rows, then take the next `limit`" —
+against a list ordered by stream id descending (newest first; see the
+`/streams` endpoint description above for the full ordering rule when an
+address filter is applied). That position shifts under you if a row is
+inserted or removed between requests, because the set of rows that exists
+"before" a given position has changed.
+
+Concretely: with streams `101`–`105` already indexed, a client fetches
+`?limit=2&offset=0` and gets `[105, 104]` (newest first). Before it asks for
+the next page, stream `106` is indexed. The client then fetches
+`?limit=2&offset=2`, expecting to continue with `[103, 102]`, but `106` is
+now the newest row and has pushed everything down by one position: position 2
+is stream `104` again. The response is `[104, 103]` — **`104` is returned
+twice, and `106` is never returned at all**, because the client had already
+moved past the position it would have appeared in. A deletion between
+requests has the opposite effect: everything shifts up by one, and a row gets
+skipped instead of repeated.
+
+`cursor` pages by value instead of position: the response's `nextCursor`
+encodes the id of the last stream already returned, and the next request
+asks for rows strictly before that id (`streamId < cursor`, same descending
+order). A newly inserted stream gets a newer id than anything already paged
+past, so it never falls inside a window that has already been returned, and a
+cancelled or otherwise-unchanged stream never moves relative to the cursor.
+Pagination is therefore stable under concurrent inserts, at the cost of not
+being able to jump to an arbitrary page — only "next."
+
+**Prefer `cursor` whenever you are paging through more than one page of
+results**, especially for a backfill, export, or anything long-running enough
+for the table to change underneath it. `offset` is fine for a single page, or
+for jumping to a known position (e.g. a UI page number) where occasionally
+seeing a duplicate or missing row at the boundary is acceptable.
+
+#### Why offset is capped at 10,000
+
+An `offset` that large forces Postgres to scan and discard that many rows
+before it can return the page, which gets slow as the offset grows — exactly
+the kind of scan a client doing bulk pagination should not be doing anyway.
+Requests with `offset` over 10,000 are rejected with `400 VALIDATION_ERROR`
+instead of being served slowly; `cursor`-based pagination has no such ceiling
+because it is a keyset lookup (`streamId < cursor`) that stays fast regardless
+of how many pages precede it.
+
+#### Following `nextCursor` to fetch every page
+
+```ts
+let cursor: string | undefined;
+const allStreams = [];
+
+do {
+  const url = new URL("http://localhost:3000/streams");
+  url.searchParams.set("limit", "100");
+  if (cursor) url.searchParams.set("cursor", cursor);
+
+  const page = await fetch(url).then((r) => r.json());
+  allStreams.push(...page.streams);
+  cursor = page.nextCursor; // undefined once the last page is reached
+} while (cursor);
+```
+
+`nextCursor` is present only when another page follows; its absence from the
+response is the end-of-results signal, not an empty `streams` array (the last
+page can still hold up to `limit` rows).
 ### Stream Summary Endpoint
 
 The `/streams/summary` endpoint returns aggregate counts and exact total amounts grouped by lifecycle status. It is designed for dashboard overview displays where individual stream details are not needed.
@@ -204,7 +838,7 @@ The `/streams/summary` endpoint returns aggregate counts and exact total amounts
 }
 ```
 
-All amounts are exact integer base units encoded as strings (not JSON numbers) to preserve full 128-bit precision. The response is cached for 30 seconds (`Cache-Control: public, max-age=30`).
+All amounts are exact integer base units encoded as strings (not JSON numbers) to preserve full 128-bit precision. The response is held in-process for the window set by `STREAM_SUMMARY_CACHE_TTL_MS` (`0` disables caching); `Cache-Control: public, max-age=N` reports the seconds left in that window, so `N` counts down as the cached entry ages — the full window immediately after a fresh computation, `0` at the end of it — and a client's copy never outlives the server's.
 
 **Data Types and Precision**
 - **Amounts** (`totalAmount`, `withdrawn`, `vested`, `withdrawable`, `locked`) are returned as strings holding integer base units.
@@ -219,6 +853,7 @@ separate figures, because only the distance between them means anything:
 {
   "indexer": {
     "initialized": true,
+    "startLedger": 0,
     "lastLedger": 56290013,
     "cursor": "0241763764928512000-0000000001",
     "updatedAt": "2025-11-14T03:00:00.000Z"
@@ -298,6 +933,21 @@ curl -s http://localhost:3000/streams/invalid | jq
 
 ## Health Endpoint Semantics
 
+`/health` is a liveness probe: it returns 200 with the service version and
+performs no database read, so it stays green even when dependencies are down.
+
+`/ready` is a readiness probe and reflects whether the service has usable
+data, not merely whether dependencies answer. It verifies database
+connectivity and that the indexer has made progress — specifically, that
+`IndexerState.lastLedger` is greater than 0, meaning the indexer has
+processed at least one ledger. That is a statement about ledgers, not
+events: the first successful poll records a position even when it finds no
+events, so an instance on a quiet chain becomes ready once that first poll
+has succeeded. An instance whose position is still missing, or still at 0,
+returns 503, so traffic is not routed to an instance that would serve an
+empty list. Liveness is unaffected: `/health` continues to return 200
+regardless of indexer progress.
+
 The service exposes two health endpoints that answer different questions. Wire them to separate probes in your orchestration platform.
 
 ### Liveness — `GET /health`
@@ -314,7 +964,7 @@ The service exposes two health endpoints that answer different questions. Wire t
 ```json
 {
   "status": "ok",
-  "version": "1.0.0"
+  "version": "0.1.0"
 }
 ```
 
@@ -324,7 +974,7 @@ The service exposes two health endpoints that answer different questions. Wire t
 
 **What it checks:**
 1. Database connectivity (can reach Postgres)
-2. Indexer lag (how far behind the chain)
+2. Indexer progress (`IndexerState.lastLedger` is greater than 0)
 
 **What it does NOT check:**
 - Chain connectivity
@@ -341,7 +991,7 @@ The service exposes two health endpoints that answer different questions. Wire t
 }
 ```
 
-**Response (unhealthy):**
+**Response (unhealthy — database down):**
 ```json
 {
   "status": "not_ready",
@@ -350,6 +1000,17 @@ The service exposes two health endpoints that answer different questions. Wire t
 }
 ```
 
+**Response (unhealthy — indexer has not made progress):**
+```json
+{
+  "status": "not_ready",
+  "database": "up",
+  "error": "indexer has not made progress"
+}
+```
+
+Every 503 response also carries a `Retry-After` header whose value is the number of seconds to wait before probing again, so orchestrators and load balancers can pace their checks — for example while a long backfill is still running. The value defaults to 5 seconds and is configurable via `READINESS_RETRY_AFTER_SECONDS`. A ready (200) response does not include the header.
+
 **Intended use:** This is a **readiness probe**. Use it to determine whether the instance should receive traffic. If this returns 503, take the instance out of load-balancer rotation — the process is fine, but a dependency isn't. Do NOT restart the container on a readiness failure; wait for the dependency to recover.
 
 ### Why Separate Probes?
@@ -357,7 +1018,7 @@ The service exposes two health endpoints that answer different questions. Wire t
 | Probe | Fires When | Action |
 |-------|------------|--------|
 | Liveness (`/health`) | Process is unresponsive | Restart container |
-| Readiness (`/ready`) | Database unreachable | Remove from rotation, do not restart |
+| Readiness (`/ready`) | Database unreachable, or the indexer has not yet processed a ledger | Remove from rotation, do not restart |
 
 ## Metrics
 
@@ -402,7 +1063,7 @@ sum(rate(tricklepay_http_requests_total{status=~"5.."}[5m])) / sum(rate(tricklep
 
 ## Running locally
 
-Requires **Node.js 20.12 or later**, Docker, and the deployed contract id. The minimum is Node 20.12 because the service uses the built-in `node:` protocol imports and native fetch, which are only fully stable from that release onward — older versions will fail at install or startup. The `engines.node` field in [package.json](package.json) encodes this requirement (`>=20.12`), and the repository also includes a `.nvmrc` pinned to `20.12.0` so `nvm use` drops you onto the right version automatically.
+Requires **Node.js 20.12 or later**, Docker, and the deployed contract id. The minimum is Node 20.12 because the service uses the built-in `node:` protocol imports and native fetch, which are only fully stable from that release onward — older versions will fail at install or startup. The `engines.node` field in [package.json](package.json) encodes this requirement (`>=20.12`), and the repository also includes a `.nvmrc` pinned to `20.12.0` so `nvm use` drops you onto the right version automatically. Production runs on a newer Node than this floor; see [docs/node-version-policy.md](docs/node-version-policy.md) for the minimum, tested, and production versions and why they differ.
 
 ```bash
 nvm use
@@ -412,6 +1073,9 @@ npm install
 ```
 
 ### Running with Docker Compose
+
+For the image contents, runtime user, entrypoint, and exposed port, see
+[docs/container-image.md](docs/container-image.md).
 
 The repository includes a multi-container setup in `docker-compose.yml` that starts both the PostgreSQL database and the API service (which automatically runs pending database migrations on startup).
 
@@ -491,6 +1155,38 @@ docker run -d \
 The API listens on `http://localhost:3000`.
 For instructions on pointing the indexer and API to a standalone or containerized local Soroban RPC node, see [Running Against a Local Network](docs/local-network.md).
 
+#### Test database (for integration tests)
+
+The integration suite (`npm run test:integration`) needs a real Postgres
+instance, and pointing it at the same database as development risks wiping
+local data (`beforeAll` clears the `Stream` table before the suite runs).
+`docker-compose.yml` includes an opt-in `postgres-test` service, kept out of
+the default `docker compose up` by a `test` profile, with its own container
+name, port (`5433`, not `5432`) and volume (`pgdata-test`, not `pgdata`), so
+it can never collide with or be mistaken for the development database:
+
+```bash
+docker compose --profile test up -d postgres-test
+DATABASE_URL=postgresql://tricklepay_test:tricklepay_test@localhost:5433/tricklepay_test \
+  npx prisma migrate deploy
+docker compose exec postgres-test createdb -U tricklepay_test tricklepay_shadow
+DATABASE_URL=postgresql://tricklepay_test:tricklepay_test@localhost:5433/tricklepay_test \
+SHADOW_DATABASE_URL=postgresql://tricklepay_test:tricklepay_test@localhost:5433/tricklepay_shadow \
+  npx vitest run --project integration
+```
+
+The integration project also checks that every migration produces the current
+`prisma/schema.prisma` model. `SHADOW_DATABASE_URL` must name a separate,
+disposable Postgres database because Prisma resets it while applying the
+migration history; never point it at the integration or development database.
+If the check finds drift, the failure includes Prisma's generated SQL.
+
+Stop it independently of the development database with:
+
+```bash
+docker compose --profile test down -v   # -v also drops the pgdata-test volume
+```
+
 ## Failed events table
 
 The `FailedEvent` table is the indexer's operator-facing safety net. When an
@@ -501,6 +1197,7 @@ rest of the page can continue without stopping indexing. Each row stores:
 - `kind`: the decoded event kind, or `"unknown"` if decoding failed first
 - `streamId`: the target stream, when available, encoded as a string
 - `ledger`: the ledger in which the event was observed
+- `txHash`: the transaction hash when available; null for older rows or unavailable hashes
 - `error`: the most recent exception text from the failed attempt
 - `failureCount`: how many times this event has failed
 - `firstFailedAt` / `lastFailedAt`: timestamps for the first and latest failure
@@ -516,7 +1213,7 @@ replay command as a dry run:
 
 ```bash
 # see the oldest unresolved failures first
-psql "$DATABASE_URL" -c 'SELECT "eventId", "kind", "streamId", "ledger", "failureCount", "error" FROM "FailedEvent" ORDER BY "ledger" ASC LIMIT 20;'
+psql "$DATABASE_URL" -c 'SELECT "eventId", "kind", "streamId", "ledger", "txHash", "failureCount", "error" FROM "FailedEvent" ORDER BY "ledger" ASC LIMIT 20;'
 
 # count unresolved failures
 psql "$DATABASE_URL" -c 'SELECT COUNT(*) FROM "FailedEvent";'
@@ -563,7 +1260,14 @@ cannot stall the rest.
 
 ## Contributing
 
-For instructions on setting up your local environment, running required checks (`npm run typecheck`, `npm test`, `npm run build`), and submitting pull requests, see [CONTRIBUTING.md](CONTRIBUTING.md).
+For instructions on setting up your local environment, running required checks (`./scripts/check.sh`), and submitting pull requests, see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+Before opening a pull request, run the local checks script to ensure everything passes:
+
+```bash
+./scripts/check.sh
+```
+This script runs the typecheck, tests, and build in order. It will exit non-zero on the first failure.
 
 For global contributor guidelines across the organization, refer to the shared [TricklePay Documentation Guide](https://github.com/TricklePay/tricklepay-docs).
 
@@ -589,6 +1293,21 @@ nor a network connection:
 npm test          # single run, as CI does it
 npm run test:watch
 ```
+
+The integration suite (`npm run test:integration`) is opt-in and needs a real
+Postgres database; see [Test database (for integration
+tests)](#test-database-for-integration-tests) for how to start one without
+touching development data.
+
+### Unused dependency check
+
+Run `npm run depcheck` to scan for dependencies that are not imported anywhere in the codebase. This helps keep the dependency tree lean and reduces install time and audit surface.
+
+```bash
+npm run depcheck
+```
+
+The command uses [depcheck](https://github.com/depcheck/depcheck) and reports both unused dependencies and missing dependencies (imports that are not declared in package.json). Address any findings by either removing the unused dependency or adding the missing one.
 
 They cover the parts of the service that have to agree with something outside
 it: `lib/vesting.ts`, which mirrors the contract's vesting math case for case,
@@ -629,18 +1348,108 @@ current template — copy it and fill in the required values.
 | `DATABASE_URL` | **Yes** | - | Postgres connection string. |
 | `STREAM_CONTRACT_ID` | **Yes** | - | Deployed Soroban contract address. |
 | `NETWORK` | No | `testnet` | Stellar network (`testnet` or `mainnet`). |
-| `SOROBAN_RPC_URL` | No | *network dependent* | Soroban RPC endpoint. Defaults to the public endpoint for the selected network. |
+| `SOROBAN_RPC_URL` | No | *network dependent* | Soroban RPC endpoint. Defaults to the public endpoint for the selected network. Plain `http://` is only accepted for `localhost`, `127.0.0.0/8`, or `::1`/`[::1]`; any other host must use `https://` or startup fails — see [Plain HTTP is only allowed for local RPC hosts](docs/local-network.md#plain-http-is-only-allowed-for-local-rpc-hosts). |
 | `PORT` | No | `3000` | HTTP server listen port. |
 | `HOST` | No | `0.0.0.0` | HTTP server bind address. |
-| `CORS_ORIGIN` | No | - | Allowed browser origin for the web client. |
-| `LOG_LEVEL` | No | `info` | Log verbosity (`trace`, `debug`, `info`, `warn`, `error`, `fatal`). |
+| `CORS_ORIGIN` | No | - | Allowed browser origin for the web client. Unset reflects any request origin (development default). Set to a single `https://` origin to pin the API to one frontend. Empty string disables browser access entirely. Only one origin is supported — see [CORS origin](#cors-origin). |
+| `PUBLIC_BASE_URL` | No | `http://<HOST>:<PORT>` | Base URL advertised in the generated OpenAPI document's `servers` entry. Defaults to a URL derived from `HOST` and `PORT`. Set it when running behind a reverse proxy — see [docs/public-url-and-metrics-token.md](docs/public-url-and-metrics-token.md). |
+| `LOG_LEVEL` | No | `info` | Log verbosity (`trace`, `debug`, `info`, `warn`, `error`, `fatal`, `silent`). |
+| `LOG_PRETTY` | No | - | Set to `true` for human-readable development logs; requires the `pino-pretty` dev dependency. Output stays JSON when unset. |
 | `BODY_LIMIT` | No | `1048576` | Largest accepted request body in bytes. |
 | `QUERY_STRING_LIMIT` | No | `2048` | Longest accepted URL query string in bytes. |
+| `CONNECTION_TIMEOUT_MS` | No | `10000` | Milliseconds a connection may sit with no bytes moving while a request is in flight before it is closed. `0` disables it. See [Server timeouts](docs/CONFIGURATION.md#server-timeouts). |
+| `KEEP_ALIVE_TIMEOUT_MS` | No | `72000` | Milliseconds an idle keep-alive connection is held open after a response. Keep it above any load balancer's idle timeout. `0` disables it. See [Server timeouts](docs/CONFIGURATION.md#server-timeouts). |
+| `REQUEST_TIMEOUT_MS` | No | `30000` | Milliseconds within which a request must be received and answered; past it the client gets `408`. `0` disables it. See [Server timeouts](docs/CONFIGURATION.md#server-timeouts). |
+| `ENABLE_DOCS_UI` | No | `true` | Serve the interactive Swagger UI at `/docs`. Set to `false` to disable the page and its static assets while `/docs/json` and `/docs/yaml` stay available. Accepts `true/false` (also `1/0`, `yes/no`, `on/off`); anything else fails startup. |
+| `METRICS_TOKEN` | No | - | Bearer token required on `/metrics` when set; unset keeps the endpoint unauthenticated. Only send it over TLS and keep the recommended network restriction. Prometheus scrape example in [docs/public-url-and-metrics-token.md](docs/public-url-and-metrics-token.md#prometheus-scrape-example). |
+| `COMPRESSION_THRESHOLD_BYTES` | No | `1024` | Responses at least this many bytes are compressed when the client accepts `gzip` or `br`. Smaller responses are sent uncompressed. |
+| `RATE_LIMIT_MAX` | No | `100` | Maximum requests per client IP in each rate-limit window. Must be greater than zero. |
+| `RATE_LIMIT_WINDOW_MS` | No | `60000` | Length of the fixed rate-limit window in milliseconds. Must be greater than zero. |
+| `RATE_LIMIT_ALLOWLIST` | No | - | Client addresses that bypass the rate limiter entirely (never counted, never sent a `429`). Comma-separated list of IPv4/IPv6 addresses or IPv4 CIDR blocks, e.g. `10.0.0.5,10.0.1.0/24,::1`; whitespace around entries is ignored. IPv6 CIDR blocks are not supported, and an invalid entry or a prefix outside `0`–`32` fails startup. Matched against the resolved client address, so behind a proxy it only works together with `TRUSTED_PROXIES`. Unset or empty exempts no one. See [docs/request-size-limits.md](docs/request-size-limits.md). |
 | `TRUSTED_PROXIES` | No | - | Comma-separated list of trusted reverse-proxy addresses or IPv4 CIDR blocks. Forwarded headers are ignored when unset. |
+| `READINESS_RETRY_AFTER_SECONDS` | No | `5` | Seconds advertised in the `Retry-After` header when `GET /ready` returns 503, so orchestrators and load balancers know when to probe again. |
+| `READY_MAX_STALENESS_MS` | No | `0` | Maximum age in milliseconds of the indexer position before `GET /ready` returns 503 with `indexer position is stale`. `0` disables the staleness check. |
 | `INDEXER_POLL_INTERVAL_MS` | No | `5000` | Milliseconds between polls of the chain. |
 | `INDEXER_BACKOFF_MAX_MS` | No | `60000` | Maximum poll retry delay (ms) on RPC failures. |
 | `INDEXER_START_LEDGER` | No | `0` | Ledger to begin indexing from. `0` starts at the chain's latest ledger. |
 | `INDEXER_MAX_PAGES_PER_TICK` | No | `1000` | Maximum number of event pages fetched per poll tick. |
+| `INDEXER_LAG_WARN_LEDGERS` | No | `1000` | Log a warning when the indexer falls more than this many ledgers behind the chain head. Logged once when the lag crosses the threshold and once when it recovers, not on every tick. `0` disables the warning. |
+| `STREAM_SUMMARY_CACHE_TTL_MS` | No | `2000` | Summary endpoint cache window in milliseconds. Set to `0` to disable caching. |
+
+### Switching to a different contract
+
+`STREAM_CONTRACT_ID` and `INDEXER_START_LEDGER` must be changed together, and
+the previous contract's indexed state must be cleared. Skipping either step
+leaves the service serving stale or mismatched data.
+
+**Why both variables change together:** The indexer resumes from its saved
+cursor on every restart, not from `INDEXER_START_LEDGER` (that value only
+applies when there is no saved position at all, see
+[`IndexerState`](#database-schema)). Changing only `STREAM_CONTRACT_ID` while
+a cursor from the old contract is still saved makes the indexer resume at the
+old contract's ledger position and poll the new contract's RPC for events at
+that position, which is very unlikely to make sense: the new contract was
+most likely deployed at a different, usually later, ledger, and its events
+start from there.
+
+**Why the previous contract's indexed state must be cleared:** `Stream`,
+`IndexedEvent`, and `FailedEvent` all hold rows keyed by data from the old
+contract (`streamId`, `eventId`) with no column recording which contract they
+came from. Leaving them in place after switching means `/streams` and the
+summary endpoint keep serving the old contract's streams alongside (or
+instead of, depending on ID collisions) the new contract's, and the old
+contract's unresolved `FailedEvent` rows keep showing up in
+[failed-event replay](#failed-event-replay) for a contract the service no
+longer indexes.
+
+**Steps:**
+
+1. Stop the service, or at minimum stop the indexer poller, so nothing writes
+   new rows while you clear the old contract's state.
+2. Clear the previously indexed state. Unlike
+   [resetting the local database](#resetting-the-local-database), this must
+   preserve the Prisma migration history. From a machine with `DATABASE_URL`
+   set to the target database:
+   ```bash
+   echo 'TRUNCATE TABLE "Stream", "IndexedEvent", "FailedEvent", "IndexerState";' | \
+     npx prisma db execute --schema prisma/schema.prisma --stdin
+   ```
+   `IndexerState` is included because its saved cursor and ledger position
+   belong to the old contract; truncating it is what makes
+   `INDEXER_START_LEDGER` take effect again on the next startup, per the
+   explanation above.
+3. Set `STREAM_CONTRACT_ID` to the new contract's address (56 characters,
+   starting with `C`).
+4. Choose `INDEXER_START_LEDGER`:
+   - If you know the ledger the new contract was deployed or initialized at,
+     use that ledger (or slightly before it, to be safe against an
+     off-by-one). Starting earlier than necessary only costs extra RPC calls
+     during backfill; starting later risks silently skipping real events.
+   - If you don't know it, use `0`, which starts indexing from the chain's
+     current latest ledger. This misses any events the new contract already
+     emitted before the switch (acceptable when switching to a freshly
+     deployed contract with no prior history; not appropriate when migrating
+     onto a contract that already has activity you need indexed).
+   - The service validates this at startup and refuses to start if
+     `INDEXER_START_LEDGER` is beyond the chain's current head, since no
+     event could ever satisfy that position (see [index.ts](src/index.ts)).
+5. Restart the service.
+
+### Printing the effective configuration
+
+Diagnosing a configuration problem means reasoning about defaults and
+precedence across the table above. `npm run print-config` resolves the same
+`Config` the server would load and prints it as JSON, in the current
+environment, without starting the server:
+
+```
+npm run print-config
+```
+
+`databaseUrl` is redacted (`"[redacted]"`) whenever it carries embedded
+credentials (`postgresql://user:pass@host/db`), so the output is safe to
+paste into a bug report or a chat message. A connection string with no
+embedded credentials is printed as-is.
 
 ### Trusted proxies
 
@@ -666,6 +1475,35 @@ address. A direct client therefore cannot spoof the address recorded in logs
 and request metadata. Behind a load balancer or ingress that terminates
 connections, set this to that proxy's address so the original client address
 is preserved.
+
+### CORS origin
+
+`CORS_ORIGIN` controls the `Access-Control-Allow-Origin` header returned to browsers. The service uses `@fastify/cors` and interprets the value as follows:
+
+| `CORS_ORIGIN` value | Behaviour |
+|---------------------|-----------|
+| Unset (variable absent) | Reflects the request's `Origin` back — any origin is allowed. Safe for local development; not recommended for production because any website can call the API from a browser. |
+| Empty string (`""`) | Disables CORS entirely: no `Access-Control-Allow-Origin` header is set, so browsers block every cross-origin request. Use this when the API should not be callable from a browser at all. |
+| A URL string (e.g. `https://app.example.com`) | Only requests from that exact origin are allowed. All other origins receive no `Access-Control-Allow-Origin` header, which browsers treat as a refusal. |
+
+**Accepted format:** a single `https://` URL with no trailing slash, exactly as a browser sends in the `Origin` header. The match is case-sensitive and exact — `https://app.example.com` does not match `https://app.example.com/` (trailing slash) or `https://App.Example.Com` (different casing).
+
+**One origin only:** the setting does not accept a comma-separated list, a wildcard, or a regular expression. If you need to allow several origins, put a reverse proxy in front of the service and handle the CORS logic there.
+
+**What browsers can read:** when an origin is allowed, `@fastify/cors` sets `Access-Control-Allow-Origin` to the matched origin. No additional headers are explicitly exposed, so browsers can access only the [CORS-safelisted response headers](https://developer.mozilla.org/en-US/docs/Glossary/CORS-safelisted_response_header) (`Cache-Control`, `Content-Language`, `Content-Length`, `Content-Type`, `Expires`, `Last-Modified`, `Pragma`). Custom headers such as `ETag`, `x-request-id`, and `X-Indexer-Lag-Ledgers` are **not** exposed by default and cannot be read from browser JavaScript.
+
+**Preflight requests:** browsers send an `OPTIONS` preflight before cross-origin requests that use non-simple methods or headers. The plugin answers these with `204 No Content` and the appropriate `Access-Control-Allow-Methods` and `Access-Control-Allow-Headers` headers.
+
+```
+# Development — any origin (unset, leave this line absent or commented out)
+# CORS_ORIGIN=
+
+# Production — pin to the deployed frontend
+CORS_ORIGIN=https://app.example.com
+
+# No browser access allowed
+CORS_ORIGIN=
+```
 
 ### Logging
 
@@ -696,7 +1534,9 @@ parsing step.
 **Log levels**
 
 The valid values for `LOG_LEVEL` are `trace`, `debug`, `info`, `warn`,
-`error`, and `fatal`. The default is `info`, which logs normal operational
+`error`, `fatal`, and `silent`; the spelling is case-insensitive, and any
+other value is rejected at startup with an error that names the variable and
+lists these levels. The default is `info`, which logs normal operational
 events — server start, poll ticks, and stream writes — without the
 high-frequency trace output. Use `debug` or `trace` in development when
 tracing a specific behaviour:
@@ -712,6 +1552,47 @@ LOG_LEVEL=trace npm start
 ```json
 {"level":30,"time":1731550800123,"pid":42,"hostname":"worker-1","module":"indexer","msg":"poll complete","lastLedger":56290013,"newEvents":3}
 ```
+
+**Startup configuration line**
+
+The resolved configuration comes from three places — the defaults in
+`src/config.ts`, a `.env` file, and the ambient environment — so the process
+logs what it actually started with as its first line, before anything that
+depends on those values can fail:
+
+```json
+{"level":30,"time":1731550800001,"pid":42,"hostname":"worker-1","msg":"effective configuration","config":{"port":3000,"host":"0.0.0.0","databaseUrl":"postgresql://***:***@db.internal:5432/tricklepay?schema=public","network":"testnet","networkPassphrase":"Test SDF Network ; September 2015","rpcUrl":"https://soroban-testnet.stellar.org","contractId":"CDMB6…","pollIntervalMs":5000,"startLedger":0,"maxBackoffMs":60000,"maxPagesPerTick":1000,"bodyLimit":1048576,"queryStringLimit":2048,"trustedProxies":[]}}
+```
+
+Every field of the `Config` type appears. `DATABASE_URL` is the only one
+carrying a secret: its user and password are replaced with `***`, leaving the
+host, port, database, and parameters, which are what identify the database the
+service is pointed at. A value that cannot be parsed as a URL is logged as
+`[unparseable, redacted]`, since there is no way to tell which part of it is
+the credential.
+
+**Readable logs in development**
+
+Newline-delimited JSON is what a log shipper wants, not what a developer wants
+to read. Set `LOG_PRETTY=true` to route the same records through
+[`pino-pretty`](https://github.com/pinojs/pino-pretty) instead:
+
+```bash
+LOG_PRETTY=true npm run dev
+```
+
+```text
+[12:40:00.123] INFO: poll complete
+    module: "indexer"
+    lastLedger: 56290013
+    newEvents: 3
+```
+
+`pino-pretty` is a dev dependency, so it is absent from a production install
+(`npm ci --omit=dev`, the Docker image). Nothing changes there unless the
+variable is set: when it is set and the package cannot be found, the service
+logs a warning naming `LOG_PRETTY` and keeps emitting JSON rather than failing
+to start.
 
 ### Metrics & alerting
 
@@ -766,11 +1647,15 @@ they answer different questions:
   soon as the process is up and performs no database read. A liveness probe
   should restart the container if this stops responding — it means the process
   itself is wedged.
-- **Readiness — `GET /ready`.** Checks the database connection and returns
-  `200` with the current indexer lag when it succeeds, or
-  `503 {"status":"not_ready","database":"down"}` when Postgres is unreachable.
-  A readiness probe should take the instance out of load-balancer rotation on a
-  503 without restarting it — the process is fine, a dependency isn't.
+- **Readiness — `GET /ready`.** Checks the database connection and that the
+  indexer has processed at least one ledger, then returns `200` with the
+  current indexer lag when it succeeds, `503 {"status":"not_ready","database":"down"}`
+  when Postgres is unreachable, or `503 {"status":"not_ready","database":"up"}`
+  when the indexer has not yet processed a ledger. The 503 carries a `Retry-After`
+  header (seconds, configurable via `READINESS_RETRY_AFTER_SECONDS`) so probes
+  can pace themselves; a 200 does not. A readiness probe should take the
+  instance out of load-balancer rotation on a 503 without restarting it — the
+  process is fine, a dependency isn't.
 
 ### Migrations
 

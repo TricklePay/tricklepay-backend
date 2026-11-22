@@ -14,6 +14,8 @@ import {
   countStreams,
   getStream,
   listStreams,
+  orderByFromFilter,
+  statusWhere,
   upsertStream,
   type StreamFilter,
   type UpsertStreamInput,
@@ -53,6 +55,7 @@ describe("failed events repository", () => {
       kind: "withdrawn",
       streamId: 99n,
       ledger: 321,
+      txHash: "0xabc",
     } as any;
 
     await recordFailedEvent(
@@ -64,8 +67,10 @@ describe("failed events repository", () => {
         where: { eventId: event.id },
         create: expect.objectContaining({
           eventId: event.id,
+          txHash: "0xabc",
           error: "insufficient balance",
         }),
+        update: expect.objectContaining({ txHash: "0xabc" }),
       }),
     );
   });
@@ -88,10 +93,12 @@ describe("failed events repository", () => {
         kind: "created",
         streamId: "7",
         ledger: 123,
+        txHash: null,
         error: "stream missing",
         failureCount: 1,
       },
       update: {
+        txHash: undefined,
         error: "stream missing",
         failureCount: { increment: 1 },
       },
@@ -123,6 +130,7 @@ describe("failed events repository", () => {
       kind: "withdrawn",
       streamId: "99",
       ledger: 321,
+      txHash: "0xabc",
       error: "insufficient balance",
     });
   });
@@ -360,5 +368,192 @@ describe("streams repository bounded reads (#221)", () => {
     vi.advanceTimersByTime(DEFAULT_QUERY_TIMEOUT_MS + 1);
 
     await assertion;
+  });
+});
+
+describe("streams repository ordering", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("applies default ordering by streamId desc when no specific filter is provided", async () => {
+    const spy = vi.spyOn(prisma.stream, "findMany").mockResolvedValue([]);
+    await listStreams({});
+    expect(spy).toHaveBeenCalledOnce();
+    const args = spy.mock.calls[0][0]!;
+    expect(args.orderBy).toEqual([{ streamId: "desc" }]);
+  });
+
+  it("applies primary sender asc ordering with streamId desc tie-breaker when sender filter is set", async () => {
+    const spy = vi.spyOn(prisma.stream, "findMany").mockResolvedValue([]);
+    const sender = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN";
+    await listStreams({ sender });
+    expect(spy).toHaveBeenCalledOnce();
+    const args = spy.mock.calls[0][0]!;
+    expect(args.orderBy).toEqual([{ sender: "asc" }, { streamId: "desc" }]);
+  });
+
+  it("applies primary recipient asc ordering with streamId desc tie-breaker when recipient filter is set", async () => {
+    const spy = vi.spyOn(prisma.stream, "findMany").mockResolvedValue([]);
+    const recipient = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H";
+    await listStreams({ recipient });
+    expect(spy).toHaveBeenCalledOnce();
+    const args = spy.mock.calls[0][0]!;
+    expect(args.orderBy).toEqual([{ recipient: "asc" }, { streamId: "desc" }]);
+  });
+
+  it("applies primary token asc ordering with streamId desc tie-breaker when token filter is set", async () => {
+    const spy = vi.spyOn(prisma.stream, "findMany").mockResolvedValue([]);
+    const token = "CBFS2HT4TIHTMWA5ZND6FEC27BRRA4V6JWOD7JIIDZVSPVAM7EJ2LZS7";
+    await listStreams({ token });
+    expect(spy).toHaveBeenCalledOnce();
+    const args = spy.mock.calls[0][0]!;
+    expect(args.orderBy).toEqual([{ token: "asc" }, { streamId: "desc" }]);
+  });
+
+  it("returns stable ordering across repeated calls", async () => {
+    const rows = [
+      partialStream({ streamId: 10n }),
+      partialStream({ streamId: 5n }),
+      partialStream({ streamId: 1n }),
+    ];
+    vi.spyOn(prisma.stream, "findMany").mockResolvedValue(rows);
+
+    const firstCall = await listStreams({});
+    const secondCall = await listStreams({});
+
+    expect(firstCall.streams).toEqual(secondCall.streams);
+    expect(firstCall.streams.map((s) => s.streamId)).toEqual([10n, 5n, 1n]);
+  });
+
+  it("verifies orderByFromFilter helper output", () => {
+    expect(orderByFromFilter({})).toEqual([{ streamId: "desc" }]);
+    expect(orderByFromFilter({ sender: "GA..." })).toEqual([{ sender: "asc" }, { streamId: "desc" }]);
+    expect(orderByFromFilter({ recipient: "GB..." })).toEqual([{ recipient: "asc" }, { streamId: "desc" }]);
+    expect(orderByFromFilter({ token: "CB..." })).toEqual([{ token: "asc" }, { streamId: "desc" }]);
+  });
+});
+
+describe("statusWhere", () => {
+  const now = 1_000n;
+
+  it("matches cancelled streams regardless of the clock", () => {
+    expect(statusWhere("cancelled", now)).toEqual({ cancelled: true });
+  });
+
+  it("matches pending streams: not cancelled and not yet started", () => {
+    expect(statusWhere("pending", now)).toEqual({
+      cancelled: false,
+      startTime: { gt: now },
+    });
+  });
+
+  it("matches streaming streams: not cancelled, started, not yet ended", () => {
+    expect(statusWhere("streaming", now)).toEqual({
+      cancelled: false,
+      startTime: { lte: now },
+      endTime: { gt: now },
+    });
+  });
+
+  it("matches completed streams: not cancelled and past the end time", () => {
+    expect(statusWhere("completed", now)).toEqual({
+      cancelled: false,
+      endTime: { lte: now },
+    });
+  });
+});
+
+describe("streams repository filter combinations", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("asserts two filters applied together narrow the result as an intersection", async () => {
+    const sender = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN";
+    const recipient = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H";
+
+    const spy = vi.spyOn(prisma.stream, "findMany").mockResolvedValueOnce([]);
+
+    await listStreams({ sender, recipient });
+
+    expect(spy).toHaveBeenCalledOnce();
+    const where = spy.mock.calls[0][0]!.where as Record<string, unknown>;
+
+    expect(where.sender).toBe(sender);
+    expect(where.recipient).toBe(recipient);
+    expect(where).not.toHaveProperty("OR");
+  });
+
+  it("asserts a filter combination with no matches returns empty", async () => {
+    const sender = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN";
+    const token = "CBFS2HT4TIHTMWA5ZND6FEC27BRRA4V6JWOD7JIIDZVSPVAM7EJ2LZS7";
+
+    vi.spyOn(prisma.stream, "findMany").mockResolvedValueOnce([]);
+
+    const result = await listStreams({ sender, token, cancelled: true });
+
+    expect(result).toEqual({ streams: [] });
+  });
+
+  it("combines sender, recipient, and token filters into a single narrowed query", async () => {
+    const sender = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN";
+    const recipient = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H";
+    const token = "CBFS2HT4TIHTMWA5ZND6FEC27BRRA4V6JWOD7JIIDZVSPVAM7EJ2LZS7";
+
+    const spy = vi.spyOn(prisma.stream, "findMany").mockResolvedValueOnce([]);
+
+    await listStreams({ sender, recipient, token });
+
+    const where = spy.mock.calls[0][0]!.where as Record<string, unknown>;
+    expect(where).toEqual({
+      sender,
+      recipient,
+      token,
+    });
+  });
+});
+
+
+describe("streams repository amount filters", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("does not constrain totalAmount when neither bound is given", async () => {
+    const spy = vi.spyOn(prisma.stream, "findMany").mockResolvedValueOnce([]);
+    await listStreams({});
+    const where = spy.mock.calls[0][0]!.where as Record<string, unknown>;
+    expect(where).not.toHaveProperty("totalAmount");
+  });
+
+  it("applies minAmount and maxAmount as an inclusive range on totalAmount", async () => {
+    const spy = vi.spyOn(prisma.stream, "findMany").mockResolvedValueOnce([]);
+    await listStreams({ minAmount: 1000000n, maxAmount: 10000000n });
+    const where = spy.mock.calls[0][0]!.where as { totalAmount: { gte: Prisma.Decimal; lte: Prisma.Decimal } };
+    expect(where.totalAmount.gte.toString()).toBe("1000000");
+    expect(where.totalAmount.lte.toString()).toBe("10000000");
+  });
+
+  it("applies a single bound without the other", async () => {
+    const spy = vi.spyOn(prisma.stream, "findMany").mockResolvedValueOnce([]);
+    await listStreams({ minAmount: 5n });
+    const where = spy.mock.calls[0][0]!.where as { totalAmount: Record<string, Prisma.Decimal> };
+    expect(Object.keys(where.totalAmount)).toEqual(["gte"]);
+  });
+
+  it("keeps uint128 bounds exact", async () => {
+    const max = 340282366920938463463374607431768211455n;
+    const spy = vi.spyOn(prisma.stream, "findMany").mockResolvedValueOnce([]);
+    await listStreams({ maxAmount: max });
+    const where = spy.mock.calls[0][0]!.where as { totalAmount: { lte: Prisma.Decimal } };
+    expect(where.totalAmount.lte.toFixed()).toBe(max.toString());
+  });
+
+  it("applies the same bounds to countStreams", async () => {
+    const spy = vi.spyOn(prisma.stream, "count").mockResolvedValueOnce(0);
+    await countStreams({ minAmount: 1n, maxAmount: 2n });
+    const where = spy.mock.calls[0][0]!.where as { totalAmount: Record<string, Prisma.Decimal> };
+    expect(Object.keys(where.totalAmount).sort()).toEqual(["gte", "lte"]);
   });
 });

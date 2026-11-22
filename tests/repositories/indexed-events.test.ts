@@ -6,6 +6,7 @@ import { prisma } from "../../src/db.js";
 
 import {
   indexedEventFromDecoded,
+  listIndexedEvents,
   recordIndexedEvent,
   type IndexedEventRecord,
 } from "../../src/repositories/indexed-events.js";
@@ -157,3 +158,62 @@ describe("recordIndexedEvent idempotency (#222)", () => {
     expect(rows.get(first.eventId)).toEqual(first);
   });
 });
+
+describe("listIndexedEvents", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("queries by streamId without kind filter when kind is omitted", async () => {
+    const findMany = vi
+      .spyOn((prisma as any).indexedEvent, "findMany")
+      .mockResolvedValue([]);
+
+    await listIndexedEvents(42n);
+
+    expect(findMany).toHaveBeenCalledWith({
+      where: { streamId: "42" },
+      orderBy: { eventId: "asc" },
+    });
+  });
+
+  it("filters by kind when kind is specified", async () => {
+    const findMany = vi
+      .spyOn((prisma as any).indexedEvent, "findMany")
+      .mockResolvedValue([]);
+
+    await listIndexedEvents(42n, "withdrawn");
+
+    expect(findMany).toHaveBeenCalledWith({
+      where: { streamId: "42", kind: "withdrawn" },
+      orderBy: { eventId: "asc" },
+    });
+  });
+
+  it("filters by created kind when kind is created", async () => {
+    const findMany = vi
+      .spyOn((prisma as any).indexedEvent, "findMany")
+      .mockResolvedValue([]);
+
+    await listIndexedEvents(42n, "created");
+
+    expect(findMany).toHaveBeenCalledWith({
+      where: { streamId: "42", kind: "created" },
+      orderBy: { eventId: "asc" },
+    });
+  });
+
+  it("filters by cancelled kind when kind is cancelled", async () => {
+    const findMany = vi
+      .spyOn((prisma as any).indexedEvent, "findMany")
+      .mockResolvedValue([]);
+
+    await listIndexedEvents(42n, "cancelled");
+
+    expect(findMany).toHaveBeenCalledWith({
+      where: { streamId: "42", kind: "cancelled" },
+      orderBy: { eventId: "asc" },
+    });
+  });
+});
+

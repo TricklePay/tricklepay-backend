@@ -11,25 +11,32 @@ import { API_INDEX_SCHEMA_ID, apiIndexSchema } from "../schema.js";
 // endpoints exist without reading the source.
 export function rootRoutes(config: Config) {
   return async (app: FastifyInstance): Promise<void> => {
-  if (!app.getSchema(API_INDEX_SCHEMA_ID)) app.addSchema(apiIndexSchema);
-  app.get("/", { schema: { response: { 200: { $ref: API_INDEX_SCHEMA_ID } } } }, async () => {
-    return {
-      name: "tricklepay-backend",
-      description: "Indexer and read API for TricklePay token streams",
-      network: config.network,
-      contractId: config.contractId,
-      endpoints: [
-        { method: "GET", path: "/health", description: "Liveness check" },
-        { method: "GET", path: "/status", description: "Indexer progress" },
-        { method: "GET", path: "/metrics", description: "Prometheus metrics" },
-        {
-          method: "GET",
-          path: "/streams",
-          description: "List streams; filters: sender, recipient, token, limit, offset",
-        },
-        { method: "GET", path: "/streams/:id", description: "A single stream by id" },
-      ],
-    };
+    if (!app.getSchema(API_INDEX_SCHEMA_ID)) app.addSchema(apiIndexSchema);
+    app.get("/", { schema: { response: { 200: { $ref: API_INDEX_SCHEMA_ID } } } }, async () => {
+      return {
+        name: "tricklepay-backend",
+        description: "Indexer and read API for TricklePay token streams",
+        network: config.network,
+        contractId: config.contractId,
+        endpoints: [
+          { method: "GET", path: "/health", description: "Liveness check" },
+          { method: "GET", path: "/ready", description: "Readiness check" },
+          { method: "GET", path: "/status", description: "Indexer progress" },
+          { method: "GET", path: "/metrics", description: "Prometheus metrics" },
+          {
+            method: "GET",
+            path: "/streams",
+            description: "List streams; filters: sender, recipient, token, limit, offset, cursor, cancelled, includeTotal",
+          },
+          { method: "GET", path: "/streams/summary", description: "Summarize streams by status" },
+          { method: "GET", path: "/streams/:id", description: "A single stream by id" },
+          { method: "GET", path: "/streams/:id/events", description: "Stream event history" },
+          { method: "GET", path: "/streams/:id/schedule", description: "Get stream vesting schedule; parameters: points" },
+          { method: "GET", path: "/accounts/:address/summary", description: "Get account stream summary" },
+          { method: "GET", path: "/tokens", description: "List distinct tokens" },
+          { method: "GET", path: "/docs", description: "Interactive OpenAPI documentation" },
+        ],
+      };
     });
   };
 }

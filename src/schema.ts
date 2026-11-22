@@ -17,11 +17,16 @@
 export const STREAM_VIEW_SCHEMA_ID = "StreamView";
 export const STREAM_LIST_RESPONSE_SCHEMA_ID = "StreamListResponse";
 export const STREAM_SUMMARY_RESPONSE_SCHEMA_ID = "StreamSummaryResponse";
+export const STREAM_SCHEDULE_RESPONSE_SCHEMA_ID = "StreamScheduleResponse";
 export const STREAM_EVENT_SCHEMA_ID = "StreamEvent";
 export const STREAM_EVENT_HISTORY_RESPONSE_SCHEMA_ID = "StreamEventHistoryResponse";
 export const INDEXER_STATUS_SCHEMA_ID = "IndexerStatus";
 export const ERROR_SCHEMA_ID = "ApiError";
 export const API_INDEX_SCHEMA_ID = "ApiIndex";
+export const TOKEN_SUMMARY_SCHEMA_ID = "TokenSummary";
+export const TOKEN_LIST_RESPONSE_SCHEMA_ID = "TokenListResponse";
+export const ACCOUNT_STREAM_SUMMARY_SCHEMA_ID = "AccountStreamSummary";
+export const ACCOUNT_SUMMARY_RESPONSE_SCHEMA_ID = "AccountSummaryResponse";
 
 // ---------------------------------------------------------------------------
 // StreamView — a single token stream as the API renders it.
@@ -48,6 +53,8 @@ export const streamViewSchema = {
     "cliffTime",
     "cancelled",
     "status",
+    "createdLedger",
+    "updatedLedger",
   ],
   properties: {
     id: {
@@ -131,6 +138,54 @@ export const streamViewSchema = {
       description:
         "Derived lifecycle status: pending (not yet started), streaming (active), " +
         "completed (fully vested), cancelled.",
+    },
+    createdLedger: {
+      type: "integer",
+      description: "Ledger sequence number in which the stream was created on-chain.",
+      examples: [100],
+    },
+    updatedLedger: {
+      type: "integer",
+      description:
+        "Ledger sequence number of the most recent on-chain event applied to this stream.",
+      examples: [200],
+    },
+  },
+} as const;
+
+// ---------------------------------------------------------------------------
+// StreamScheduleResponse — vesting curve points for charting.
+// ---------------------------------------------------------------------------
+export const streamScheduleResponseSchema = {
+  $id: STREAM_SCHEDULE_RESPONSE_SCHEMA_ID,
+  type: "object",
+  description: "Vesting curve schedule points for charting a stream.",
+  required: ["points"],
+  properties: {
+    points: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["time", "amount", "vested"],
+        properties: {
+          time: {
+            type: "string",
+            description: "Point timestamp in Unix seconds (decimal string).",
+            examples: ["1735689600"],
+          },
+          amount: {
+            type: "string",
+            description: "Vested token amount as of this timestamp (uint128, decimal string).",
+            examples: ["50000000000000"],
+          },
+          vested: {
+            type: "string",
+            description: "Vested token amount as of this timestamp (uint128, decimal string).",
+            examples: ["50000000000000"],
+          },
+        },
+      },
+      description: "Evenly spaced schedule points between start and end, with cliff step included.",
     },
   },
 } as const;
@@ -265,47 +320,58 @@ export const streamEventSchema = {
       examples: ["66f7505577a417f4c1187fb8a8eeb6f3737f848d5f0b3b20c5a6c57ab7d659d1"],
     },
     sender: {
-      type: ["string", "null"],
+      type: "string",
+      nullable: true,
       description: "Sender address for created/cancelled events, if present.",
     },
     recipient: {
-      type: ["string", "null"],
+      type: "string",
+      nullable: true,
       description: "Recipient address for created/withdrawn/cancelled events, if present.",
     },
     token: {
-      type: ["string", "null"],
+      type: "string",
+      nullable: true,
       description: "Token contract address for created events, if present.",
     },
     totalAmount: {
-      type: ["string", "null"],
+      type: "string",
+      nullable: true,
       description: "Total amount for created events, as a decimal string.",
     },
     amount: {
-      type: ["string", "null"],
+      type: "string",
+      nullable: true,
       description: "Withdrawn amount for withdrawal events, as a decimal string.",
     },
     recipientAmount: {
-      type: ["string", "null"],
+      type: "string",
+      nullable: true,
       description: "Recipient payout for cancellation events, as a decimal string.",
     },
     senderRefund: {
-      type: ["string", "null"],
+      type: "string",
+      nullable: true,
       description: "Sender refund for cancellation events, as a decimal string.",
     },
     startTime: {
-      type: ["string", "null"],
+      type: "string",
+      nullable: true,
       description: "Stream start time, in Unix seconds, for created events.",
     },
     endTime: {
-      type: ["string", "null"],
+      type: "string",
+      nullable: true,
       description: "Stream end time, in Unix seconds, for created events.",
     },
     cliffTime: {
-      type: ["string", "null"],
+      type: "string",
+      nullable: true,
       description: "Vesting cliff time, in Unix seconds, for created events.",
     },
     closedAt: {
-      type: ["string", "null"],
+      type: "string",
+      nullable: true,
       description: "Ledger close time, in Unix seconds, for the event.",
     },
   },
@@ -319,6 +385,105 @@ export const streamEventHistoryResponseSchema = {
 } as const;
 
 // ---------------------------------------------------------------------------
+// TokenSummary and TokenListResponse — distinct tokens with counts and totals.
+// ---------------------------------------------------------------------------
+export const tokenSummarySchema = {
+  $id: TOKEN_SUMMARY_SCHEMA_ID,
+  type: "object",
+  description: "A distinct token with its stream count and total escrowed amount.",
+  required: ["token", "count", "total"],
+  properties: {
+    token: {
+      type: "string",
+      description: "Stellar token contract address.",
+      examples: ["CBFS2HT4TIHTMWA5ZND6FEC27BRRA4V6JWOD7JIIDZVSPVAM7EJ2LZS7"],
+    },
+    count: {
+      type: "integer",
+      description: "Number of streams using this token.",
+      minimum: 0,
+      examples: [12],
+    },
+    total: {
+      type: "string",
+      description:
+        "Total amount escrowed across streams for this token (uint128, decimal string).",
+      examples: ["1000000000000000"],
+    },
+  },
+} as const;
+
+export const tokenListResponseSchema = {
+  $id: TOKEN_LIST_RESPONSE_SCHEMA_ID,
+  type: "array",
+  description: "List of distinct tokens with their stream counts and total escrowed amounts.",
+  items: { $ref: TOKEN_SUMMARY_SCHEMA_ID },
+} as const;
+
+// ---------------------------------------------------------------------------
+// AccountStreamSummary and AccountSummaryResponse — incoming and outgoing totals.
+// ---------------------------------------------------------------------------
+export const accountStreamSummarySchema = {
+  $id: ACCOUNT_STREAM_SUMMARY_SCHEMA_ID,
+  type: "object",
+  description: "Summary of stream counts and token totals for an address.",
+  required: [
+    "count",
+    "totalAmount",
+    "total",
+    "withdrawn",
+    "vested",
+    "withdrawable",
+  ],
+  properties: {
+    count: {
+      type: "integer",
+      description: "Number of streams.",
+      minimum: 0,
+      examples: [3],
+    },
+    totalAmount: {
+      type: "string",
+      description: "Total allocated tokens (uint128, decimal string).",
+      examples: ["100000000000000"],
+    },
+    total: {
+      type: "string",
+      description: "Total allocated tokens (alias for totalAmount, uint128, decimal string).",
+      examples: ["100000000000000"],
+    },
+    withdrawn: {
+      type: "string",
+      description: "Total tokens already withdrawn (uint128, decimal string).",
+      examples: ["25000000000000"],
+    },
+    vested: {
+      type: "string",
+      description: "Total tokens vested as of now (uint128, decimal string).",
+      examples: ["50000000000000"],
+    },
+    withdrawable: {
+      type: "string",
+      description: "Total tokens currently withdrawable (uint128, decimal string).",
+      examples: ["25000000000000"],
+    },
+  },
+} as const;
+
+export const accountSummaryResponseSchema = {
+  $id: ACCOUNT_SUMMARY_RESPONSE_SCHEMA_ID,
+  type: "object",
+  description: "Account summary containing incoming and outgoing stream totals.",
+  required: ["incoming", "outgoing"],
+  properties: {
+    incoming: { $ref: ACCOUNT_STREAM_SUMMARY_SCHEMA_ID },
+    outgoing: { $ref: ACCOUNT_STREAM_SUMMARY_SCHEMA_ID },
+  },
+} as const;
+
+
+
+// ---------------------------------------------------------------------------
 // IndexerStatus — indexer progress report.
 // ---------------------------------------------------------------------------
 export const indexerStatusSchema = {
@@ -329,11 +494,17 @@ export const indexerStatusSchema = {
   properties: {
     indexer: {
       type: "object",
-      required: ["initialized", "lastLedger", "cursor", "updatedAt"],
+      required: ["initialized", "startLedger", "lastLedger", "cursor", "updatedAt", "consecutiveFailures", "nextPollAt"],
       properties: {
         initialized: {
           type: "boolean",
           description: "False until the indexer completes its first poll.",
+        },
+        startLedger: {
+          type: "integer",
+          description:
+            "Configured ledger to begin indexing from for a fresh database. 0 starts at the chain's latest ledger; a saved cursor takes precedence.",
+          examples: [0, 56290013],
         },
         lastLedger: {
           type: "integer",
@@ -341,13 +512,32 @@ export const indexerStatusSchema = {
           examples: [56290013],
         },
         cursor: {
-          type: ["string", "null"],
+          type: "string",
+          nullable: true,
           description: "RPC paging cursor to resume from, or null before the first poll.",
         },
         updatedAt: {
-          type: ["string", "null"],
+          type: "string",
+          nullable: true,
           format: "date-time",
           description: "When the position was last written, or null before the first poll.",
+        },
+        consecutiveFailures: {
+          type: "integer",
+          description:
+            "Number of consecutive poll iterations that have failed since the last success. " +
+            "Resets to 0 after a successful tick. Use alongside nextPollAt to understand backoff state.",
+          minimum: 0,
+          examples: [0, 3],
+        },
+        nextPollAt: {
+          type: "string",
+          nullable: true,
+          format: "date-time",
+          description:
+            "ISO 8601 timestamp of the next scheduled poll attempt. " +
+            "Non-null only while the poller is in backoff after one or more failures; null during normal polling.",
+          examples: [null, "2026-10-19T12:05:30.000Z"],
         },
       },
     },
@@ -363,7 +553,8 @@ export const indexerStatusSchema = {
       },
     },
     lagLedgers: {
-      type: ["integer", "null"],
+      type: "integer",
+      nullable: true,
       description:
         "Ledgers the indexer is behind the chain. Null before the first poll. Never negative.",
       examples: [709986],
@@ -392,6 +583,7 @@ export const apiErrorSchema = {
       enum: [
         "VALIDATION_ERROR",
         "NOT_FOUND",
+        "RATE_LIMITED",
         "REQUEST_ERROR",
         "INTERNAL_SERVER_ERROR",
       ],
@@ -439,6 +631,7 @@ export const apiIndexSchema = {
     },
     endpoints: {
       type: "array",
+      description: "List of all registered API routes.",
       items: {
         type: "object",
         required: ["method", "path", "description"],

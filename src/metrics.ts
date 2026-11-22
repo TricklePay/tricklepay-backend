@@ -121,6 +121,28 @@ export class Gauge {
     }
   }
 
+  inc(labels: Record<string, string>, amount?: number): void;
+  inc(amount?: number): void;
+  inc(labelsOrAmount: Record<string, string> | number = 1, amount = 1): void {
+    if (typeof labelsOrAmount === "number") {
+      this.values.set("", (this.values.get("") ?? 0) + labelsOrAmount);
+    } else {
+      const key = labelsKey(labelsOrAmount);
+      this.values.set(key, (this.values.get(key) ?? 0) + amount);
+    }
+  }
+
+  dec(labels: Record<string, string>, amount?: number): void;
+  dec(amount?: number): void;
+  dec(labelsOrAmount: Record<string, string> | number = 1, amount = 1): void {
+    if (typeof labelsOrAmount === "number") {
+      this.values.set("", (this.values.get("") ?? 0) - labelsOrAmount);
+    } else {
+      const key = labelsKey(labelsOrAmount);
+      this.values.set(key, (this.values.get(key) ?? 0) - amount);
+    }
+  }
+
   private serialize(): string {
     const lines: string[] = [
       `# HELP ${this.name} ${this.help}`,
@@ -283,11 +305,43 @@ export const indexerPollLastSuccess = new Gauge(
   "Unix timestamp in seconds of the last successful indexer poll iteration. 0 before the first success; use with time() to detect a stalled poller.",
 );
 
+/** Number of streams the indexer has indexed. */
+export const indexedStreams = new Gauge(
+  "tricklepay_indexer_indexed_streams",
+  "Number of streams the indexer has indexed.",
+);
+
 /** Total individual events that failed to apply and were skipped. */
 export const eventsFailed = new Counter(
   "tricklepay_indexer_events_failed",
   "Total individual events that failed to apply and were skipped.",
   ["kind"],
+);
+
+/** Number of unresolved failed indexer events awaiting recovery. */
+export const failedEventBacklog = new Gauge(
+  "tricklepay_indexer_failed_event_backlog",
+  "Number of failed indexer events awaiting recovery.",
+);
+
+/** Number of consecutive poll iterations that have failed since the last success. */
+export const indexerConsecutiveFailures = new Gauge(
+  "tricklepay_indexer_consecutive_failures",
+  "Number of consecutive poll iterations that have failed since the last success. Resets to 0 after a successful tick.",
+);
+
+/** Unix timestamp (seconds) of the next scheduled poll attempt. 0 before the first failure. */
+export const indexerNextPollAt = new Gauge(
+  "tricklepay_indexer_next_poll_timestamp_seconds",
+  "Unix timestamp in seconds of the next scheduled poll attempt. 0 when no backoff is active.",
+);
+
+// Database -----------------------------------------------------------------
+
+/** Database query execution durations in milliseconds. */
+export const databaseQueryDuration = new Histogram(
+  "tricklepay_database_query_duration_ms",
+  "Time spent executing a database query in milliseconds.",
 );
 
 // HTTP ----------------------------------------------------------------------

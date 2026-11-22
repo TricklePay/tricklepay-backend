@@ -1,0 +1,17 @@
+# Vulnerabilities the container scan (.github/workflows/container.yml) is
+# allowed to ignore. Only CRITICAL findings fail CI, so an entry here is an
+# accepted, reviewed risk, not a way to silence noise.
+#
+# Every entry must:
+#   - have a comment above it naming the affected package, why the finding
+#     does not apply or cannot be fixed yet, and a link to the advisory or
+#     upstream issue;
+#   - carry an expiry date (exp:YYYY-MM-DD), at most 90 days out, after which
+#     Trivy reports the finding again and it has to be re-reviewed.
+#
+# Example:
+#   # openssl (alpine): only reachable through the TLS server API, which the
+#   # service does not use. https://example.com/advisory
+#   CVE-0000-00000 exp:2026-12-31
+#
+# See docs/container-image.md#vulnerability-scan.

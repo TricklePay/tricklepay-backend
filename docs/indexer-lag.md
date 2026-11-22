@@ -85,7 +85,7 @@ This does **not** mean nearly two million ledgers of transactions were missed. I
 
 Compare `lagLedgers` with `indexer.updatedAt`:
 
-| `lagLedgers` | `updatedAt` advancing? | Interpretation |
+| `lagLedgers` | `updatedAt' advancing? | Interpretation |
 |---|---|---|
 | Small or zero | Yes | Indexer is keeping up; contract is active. |
 | Large | Yes | Backfill in progress, or contract has been quiet. Normal. |
@@ -97,6 +97,30 @@ If `updatedAt` is advancing and `lagLedgers` is large but stable (not growing), 
 If `updatedAt` is advancing and `lagLedgers` is shrinking, a backfill is in progress.
 
 If `updatedAt` has not changed in several minutes, the indexer process may have crashed or stalled.
+
+---
+
+## Lag warning in the logs
+
+The `tricklepay_indexer_lag_ledgers` metric carries the same figure, but a metric does not show up for someone reading logs during an incident. The indexer therefore logs a warning when the lag rises above `INDEXER_LAG_WARN_LEDGERS` (default `1000`, about an hour and a half of ledgers):
+
+```json
+{"level":40,"module":"indexer","lagLedgers":709986,"threshold":1000,"lastLedger":56290013,"chainLedger":56999999,"msg":"indexer has fallen behind the chain head"}
+```
+
+The warning is logged when the lag **crosses** the threshold, not on every tick, so a long backfill or a stall produces a single line. When the lag falls back to or below the threshold an `info` line, `indexer lag is back within the warning threshold`, is logged, and a later crossing warns again. Set `INDEXER_LAG_WARN_LEDGERS=0` to turn the warning off.
+
+The warning measures the same `chainLedger - lastLedger` gap as `lagLedgers`, so the caveat above applies: a contract that has been quiet for longer than the threshold also crosses it. Check whether `indexer.updatedAt` is advancing before treating the warning as a stall.
+
+---
+
+## Readiness signal
+
+The `GET /ready` readiness probe reflects whether the indexer has made progress, not merely whether dependencies answer. A freshly started instance that has not yet completed a indexer poll reports not ready, even if the database and Soroban RPC are reachable. A not-ready response includes a `Retry-After` header (in seconds, default `5`, configurable via `READINESS_RETRY_AFTER_SECONDS`) so orchestrators and load balancers can pace their probes; a ready response does not.
+
+Readiness is determined by the presence of an `IndexerState` position with a non-null `indexer.updatedAt`. Once the indexer has written its first position, the service is considered ready. This is intentionally independent of lag: a backfilling indexer with a large `lagLedgers` is still ready, because it has usable data and is making progress.
+
+Liveness (`GET /health`) is unaffected by this change: liveness continues to reflect only whether the process is running and able to respond.
 
 ---
 

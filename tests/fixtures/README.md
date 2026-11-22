@@ -1,5 +1,47 @@
 # Test fixtures
 
+## `vesting-vectors.json`
+
+A shared table of `(totalAmount, startTime, endTime, cliffTime, now) → vested`
+vectors for [`vestedAmount`](../../src/lib/vesting.ts), checked by
+`tests/lib/vesting-vectors.test.ts`. Each row also carries an `id` and a `note`
+explaining what boundary it pins down (before start, at the cliff instant, at
+end, truncating division, the largest i128 total, and so on).
+
+The point of a separate, data-driven fixture — rather than only the
+hand-written cases in `tests/lib/vesting.test.ts` — is to let both this
+repository and the contract's `vesting.rs` be checked against the exact same
+table, so the two implementations can be proven to agree rather than merely
+each passing cases their own authors thought of.
+
+### Regenerating from the contract
+
+The values in this fixture currently come from evaluating the TypeScript
+`vestedAmount` port itself, so changes to that function and changes to this
+fixture are not independent — a bug mirrored into both would pass silently.
+To make the comparison meaningful, regenerate the `vested` column from the
+Rust side:
+
+1. In the `tricklepay-contracts` repository, add a small harness that calls
+   the real `vesting::vested_amount` function for each row — for example a
+   `#[test]` (run with `cargo test -- --nocapture`) or an example binary (run
+   with `cargo run --example vesting_vectors`) that reads the `id`,
+   `totalAmount`, `startTime`, `endTime`, `cliffTime`, and `now` columns below,
+   calls the contract function with `i128`/`u64` values parsed from those
+   strings, and prints a JSON array in this same shape with `vested` filled in.
+2. Pipe that output back over this file:
+   ```bash
+   cargo run --example vesting_vectors > tests/fixtures/vesting-vectors.json
+   ```
+   (adjust the path to wherever this repository is checked out relative to
+   `tricklepay-contracts`).
+3. Run `npx vitest run tests/lib/vesting-vectors.test.ts` here to confirm the
+   TypeScript port still agrees with the regenerated values.
+
+When adding a new vector by hand in the meantime, keep `id` unique and
+`note` specific enough that a failing row is self-explanatory without cross
+referencing this README.
+
 ## `get-events.json`
 
 A Soroban RPC `getEvents` response in the exact envelope the endpoint returns,

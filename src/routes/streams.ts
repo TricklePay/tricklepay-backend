@@ -1,24 +1,16 @@
-// Registers the GET /streams, GET /streams/summary, GET /streams/:id/events, and GET /streams/:id endpoints.
-// These routes read stream records, historical events, and aggregations from the database.
-
-import { Prisma, type Stream } from "@prisma/client";
-
-import { StrKey } from "@stellar/stellar-sdk";
+// Registers the GET /streams, GET /streams/summary, GET /tokens, GET /streams/:id/events,
+// GET /streams/:id, GET /streams/:id/schedule, and GET /accounts/:address/summary endpoints.
+// Each endpoint lives in its own module under routes/streams/; this plugin adds the shared
+// schemas once and registers them on the same instance, in the same order as before.
 
 import type { FastifyInstance } from "fastify";
 
-import { sendError, bigIntToStringNullable } from "../lib/response.js";
-import { toView } from "../lib/stream-view.js";
-
+import { DEFAULT_STREAM_SUMMARY_CACHE_TTL_MS } from "../config.js";
 import {
-  aggregateStreams,
-  countStreams,
-  decodeCursor,
-  getStream,
-  listStreams,
-} from "../repositories/streams.js";
-
-import {
+  ACCOUNT_STREAM_SUMMARY_SCHEMA_ID,
+  ACCOUNT_SUMMARY_RESPONSE_SCHEMA_ID,
+  accountStreamSummarySchema,
+  accountSummaryResponseSchema,
   apiErrorSchema,
   ERROR_SCHEMA_ID,
   streamEventHistoryResponseSchema,
@@ -27,92 +19,35 @@ import {
   STREAM_EVENT_SCHEMA_ID,
   streamListResponseSchema,
   STREAM_LIST_RESPONSE_SCHEMA_ID,
+  streamScheduleResponseSchema,
+  STREAM_SCHEDULE_RESPONSE_SCHEMA_ID,
   streamSummaryResponseSchema,
   STREAM_SUMMARY_RESPONSE_SCHEMA_ID,
   streamViewSchema,
   STREAM_VIEW_SCHEMA_ID,
+  TOKEN_LIST_RESPONSE_SCHEMA_ID,
+  TOKEN_SUMMARY_SCHEMA_ID,
+  tokenListResponseSchema,
+  tokenSummarySchema,
 } from "../schema.js";
-import { listIndexedEvents } from "../repositories/indexed-events.js";
-import { nowSeconds } from "../lib/time.js";
+import { registerAccountSummaryRoute } from "./streams/account-summary.js";
+import { registerStreamDetailRoute } from "./streams/detail.js";
+import { registerStreamEventsRoute } from "./streams/events.js";
+import { registerListStreamsRoute } from "./streams/list.js";
+import { registerStreamScheduleRoute } from "./streams/schedule.js";
+import { registerStreamSummaryRoute } from "./streams/summary.js";
+import { registerTokensRoute } from "./streams/tokens.js";
 
-const MAX_LIMIT = 100;
-const DEFAULT_LIMIT = 50;
-// Above this offset a scan gets expensive enough that callers should page
-// through results in order or narrow them with filters instead.
-const MAX_OFFSET = 10000;
+export type StreamRoutesOptions = {
+  summaryCacheTtlMs?: number;
+};
 
-type StreamStatus = "pending" | "streaming" | "completed" | "cancelled";
+export async function streamRoutes(
+  app: FastifyInstance,
+  opts: StreamRoutesOptions = {},
+): Promise<void> {
+  const summaryCacheTtlMs = opts.summaryCacheTtlMs ?? DEFAULT_STREAM_SUMMARY_CACHE_TTL_MS;
 
-function parseLimit(raw: string | undefined): number {
-  const value = raw ? Number(raw) : DEFAULT_LIMIT;
-  if (!Number.isFinite(value) || value <= 0) return DEFAULT_LIMIT;
-  return Math.min(Math.floor(value), MAX_LIMIT);
-}
-
-function parseOffset(raw: string | undefined): number {
-  const value = raw ? Number(raw) : 0;
-  if (!Number.isFinite(value) || value < 0) return 0;
-  return Math.floor(value);
-}
-
-function parseIncludeTotal(raw: string | undefined): boolean {
-  return raw === "true";
-}
-
-const MAX_UINT64 = 18446744073709551615n;
-
-function parseStreamId(raw: string | undefined): bigint | null {
-  if (raw === undefined) return null;
-
-  const value = raw.trim();
-  if (value.length === 0 || !/^\d+$/.test(value)) return null;
-
-  try {
-    const parsed = BigInt(value);
-    if (parsed < 0n || parsed > MAX_UINT64) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-function parseCancelled(raw: string | undefined): boolean | undefined {
-  if (raw === "true") return true;
-  if (raw === "false") return false;
-  return undefined;
-}
-
-// Stellar addresses are canonical uppercase base32 strkeys, but callers
-// sometimes send lowercase or whitespace-padded spellings. Normalize those
-// before matching so every rendering of one address filters identically, and
-// reject values that are neither a valid account nor a valid contract address.
-// Returns null when the input cannot be normalized safely.
-function normalizeAddress(raw: string): string | null {
-  const candidate = raw.trim().toUpperCase();
-  if (StrKey.isValidEd25519PublicKey(candidate) || StrKey.isValidContract(candidate)) {
-    return candidate;
-  }
-  return null;
-}
-
-const SUMMARY_STATUSES = ["pending", "streaming", "completed", "cancelled"] as const;
-
-// The database-side predicate for each lifecycle status, mirroring `statusOf`:
-// cancelled wins first, then the start/end time windows against the clock.
-function statusWhere(status: StreamStatus, now: bigint): Prisma.StreamWhereInput {
-  switch (status) {
-    case "cancelled":
-      return { cancelled: true };
-    case "pending":
-      return { cancelled: false, startTime: { gt: now } };
-    case "completed":
-      return { cancelled: false, endTime: { lte: now } };
-    case "streaming":
-      return { cancelled: false, startTime: { lte: now }, endTime: { gt: now } };
-  }
-}
-
-export async function streamRoutes(app: FastifyInstance): Promise<void> {
   // Ensure the shared schemas are available whether this plugin is registered
   // on a full server (which calls addSchema centrally) or a bare Fastify
   // instance in tests. Fastify deduplicates by $id, so calling addSchema when
@@ -126,302 +61,28 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
   if (!app.getSchema(STREAM_EVENT_HISTORY_RESPONSE_SCHEMA_ID)) {
     app.addSchema(streamEventHistoryResponseSchema);
   }
+  if (!app.getSchema(TOKEN_SUMMARY_SCHEMA_ID)) {
+    app.addSchema(tokenSummarySchema);
+  }
+  if (!app.getSchema(TOKEN_LIST_RESPONSE_SCHEMA_ID)) {
+    app.addSchema(tokenListResponseSchema);
+  }
+  if (!app.getSchema(ACCOUNT_STREAM_SUMMARY_SCHEMA_ID)) {
+    app.addSchema(accountStreamSummarySchema);
+  }
+  if (!app.getSchema(ACCOUNT_SUMMARY_RESPONSE_SCHEMA_ID)) {
+    app.addSchema(accountSummaryResponseSchema);
+  }
+  if (!app.getSchema(STREAM_SCHEDULE_RESPONSE_SCHEMA_ID)) {
+    app.addSchema(streamScheduleResponseSchema);
+  }
   if (!app.getSchema(ERROR_SCHEMA_ID)) app.addSchema(apiErrorSchema);
 
-  app.get(
-    "/streams",
-    {
-      schema: {
-        summary: "List streams",
-        description:
-          "Returns a paginated list of token streams. Optionally filter by sender, recipient, or token address; " +
-          "address filters accept lowercase and whitespace-padded spellings and are normalized before matching. " +
-          "Use the opaque cursor returned by previous responses for stable pagination under concurrent inserts; " +
-          "when cursor is provided, offset is ignored and offset ceiling checks are skipped. " +
-          "Results are returned in a stable deterministic order: when filtering by sender, recipient, or token, " +
-          "results are ordered by that address ascending, then by stream id descending to break ties. " +
-          "Unfiltered queries (or queries filtered only by cancellation status) are ordered by stream id descending. " +
-          "Stream id is the final tie-breaker in all cases so pagination is cacheable and repeatable.",
-        tags: ["streams"],
-        querystring: {
-          type: "object",
-          properties: {
-            sender: {
-              type: "string",
-              description:
-                "Filter by sender Stellar address. Trimmed and uppercased before matching.",
-              examples: ["GBLDDFU4L4AUB67M7NDS56VMMW7N6N5Q5T6XQIQG45Q6S6BZYF2K36L7"],
-            },
-            recipient: {
-              type: "string",
-              description:
-                "Filter by recipient Stellar address. Trimmed and uppercased before matching.",
-              examples: ["GBLDDFU4L4AUB67M7NDS56VMMW7N6N5Q5T6XQIQG45Q6S6BZYF2K36L7"],
-            },
-            token: {
-              type: "string",
-              description:
-                "Filter by token contract Stellar address. Trimmed and uppercased before matching.",
-              examples: ["CDLZFC3SYJYDZT7K67VZ75HPJVIEWCEUNGXQZOFQIX22EOCDOB5GQQM6"],
-            },
-            limit: {
-              type: "string",
-              description: `Maximum results to return. Capped at ${MAX_LIMIT}. Defaults to ${DEFAULT_LIMIT}.`,
-              examples: ["10"],
-            },
-            offset: {
-              type: "string",
-              description: `Zero-based offset for pagination. Defaults to 0 and must not exceed ${MAX_OFFSET}.`,
-              examples: ["50"],
-            },
-            includeTotal: {
-              type: "string",
-              enum: ["true", "false"],
-              description:
-                "When true, the response includes the total number of streams matching the filters. " +
-                "Defaults to false, which skips the count query and omits total from the response.",
-              examples: ["true"],
-            },
-            cancelled: {
-              type: "string",
-              enum: ["true", "false"],
-              description:
-                "Filter by cancellation status. Omit to return both cancelled and active streams.",
-            },
-            cursor: {
-              type: "string",
-              description:
-                "Opaque cursor returned by a previous list response. Use this to fetch the next page " +
-                "with stable ordering under concurrent inserts. Takes precedence over offset when both are provided.",
-            },
-          },
-          additionalProperties: false,
-        },
-        response: {
-          200: { $ref: STREAM_LIST_RESPONSE_SCHEMA_ID },
-          400: { $ref: ERROR_SCHEMA_ID },
-        },
-      },
-    },
-    async (request, reply) => {
-      const query = request.query as {
-        sender?: string;
-        recipient?: string;
-        token?: string;
-        limit?: string;
-        offset?: string;
-        includeTotal?: string;
-        cancelled?: string;
-        cursor?: string;
-      };
-
-      const limit = parseLimit(query.limit);
-      const offset = parseOffset(query.offset);
-
-      let cursor: bigint | undefined;
-      if (query.cursor !== undefined) {
-        const decoded = decodeCursor(query.cursor);
-        if (decoded === null) {
-          return sendError(reply, request, 400, "VALIDATION_ERROR", "invalid cursor");
-        }
-        cursor = decoded;
-      }
-
-      const usingCursor = cursor !== undefined;
-      if (!usingCursor && offset > MAX_OFFSET) {
-        return sendError(
-          reply,
-          request,
-          400,
-          "VALIDATION_ERROR",
-          `offset must not exceed ${MAX_OFFSET}. Page through results in order with limit and offset, ` +
-            "or narrow them with the sender, recipient, and token filters, or use the returned cursor for stable pagination.",
-        );
-      }
-
-      const filter: {
-        sender?: string;
-        recipient?: string;
-        token?: string;
-        cancelled?: boolean;
-        cursor?: bigint;
-      } = {};
-      for (const field of ["sender", "recipient", "token"] as const) {
-        const raw = query[field];
-        if (!raw) continue;
-        const normalized = normalizeAddress(raw);
-        if (!normalized) {
-          return sendError(reply, request, 400, "VALIDATION_ERROR", `invalid ${field} address`);
-        }
-        filter[field] = normalized;
-      }
-
-      filter.cancelled = parseCancelled(query.cancelled);
-      filter.cursor = cursor;
-
-      const includeTotal = parseIncludeTotal(query.includeTotal);
-
-      const [listResult, total] = await Promise.all([
-        listStreams({ ...filter, limit, offset }),
-        includeTotal ? countStreams(filter) : Promise.resolve(undefined),
-      ]);
-
-      reply.header("Cache-Control", "public, max-age=30");
-      return {
-        streams: listResult.streams.map(toView),
-        ...(total === undefined ? {} : { total }),
-        ...(listResult.nextCursor === undefined ? {} : { nextCursor: listResult.nextCursor }),
-        limit,
-        offset: usingCursor ? 0 : offset,
-      };
-    },
-  );
-
-  app.get(
-    "/streams/summary",
-    {
-      schema: {
-        summary: "Summarize streams by status",
-        description:
-          "Returns counts and exact amount totals for each lifecycle status across all indexed streams. " +
-          "Totals are aggregated in the database over decimal columns, so they never lose precision.",
-        tags: ["streams"],
-        response: {
-          200: { $ref: STREAM_SUMMARY_RESPONSE_SCHEMA_ID },
-        },
-      },
-    },
-    async (_request, reply) => {
-      const now = nowSeconds();
-      const entries = await Promise.all(
-        SUMMARY_STATUSES.map(async (status) => {
-          const aggregate = await aggregateStreams(statusWhere(status, now));
-          return [
-            status,
-            {
-              count: aggregate.count,
-              totalAmount: aggregate.totalAmount.toString(),
-              withdrawn: aggregate.withdrawn.toString(),
-            },
-          ] as const;
-        }),
-      );
-
-      reply.header("Cache-Control", "public, max-age=30");
-      return Object.fromEntries(entries);
-    },
-  );
-
-  app.get(
-    "/streams/:id/events",
-    {
-      schema: {
-        summary: "Get stream event history",
-        description:
-          "Returns the indexed event history for a single stream in ascending chain order. " +
-          "The event ids are TOID-index values, so the array is deterministic and replay-safe.",
-        tags: ["streams"],
-        params: {
-          type: "object",
-          required: ["id"],
-          properties: {
-            id: {
-              type: "string",
-              description: "Stream id (uint64, decimal string).",
-              examples: ["42"],
-            },
-          },
-        },
-        response: {
-          200: { $ref: STREAM_EVENT_HISTORY_RESPONSE_SCHEMA_ID },
-          400: { $ref: ERROR_SCHEMA_ID },
-          404: { $ref: ERROR_SCHEMA_ID },
-        },
-      },
-    },
-    async (request, reply) => {
-      const { id } = request.params as { id: string };
-      const streamId = parseStreamId(id);
-      if (streamId === null) {
-        return sendError(reply, request, 400, "VALIDATION_ERROR", "invalid stream id");
-      }
-
-      const stream = await getStream({ streamId });
-      if (!stream) {
-        return sendError(reply, request, 404, "NOT_FOUND", "stream not found");
-      }
-
-      const events = await listIndexedEvents(streamId);
-      reply.header("Cache-Control", "public, max-age=30");
-      return events.map((event) => ({
-        eventId: event.eventId,
-        kind: event.kind,
-        streamId: event.streamId,
-        ledger: event.ledger,
-        txHash: event.txHash,
-        sender: event.sender ?? null,
-        recipient: event.recipient ?? null,
-        token: event.token ?? null,
-        totalAmount: bigIntToStringNullable(event.totalAmount),
-        amount: bigIntToStringNullable(event.amount),
-        recipientAmount: bigIntToStringNullable(event.recipientAmount),
-        senderRefund: bigIntToStringNullable(event.senderRefund),
-        startTime: bigIntToStringNullable(event.startTime),
-        endTime: bigIntToStringNullable(event.endTime),
-        cliffTime: bigIntToStringNullable(event.cliffTime),
-        closedAt: bigIntToStringNullable(event.closedAt),
-      }));
-    },
-  );
-
-  app.get(
-    "/streams/:id",
-    {
-      schema: {
-        summary: "Get stream by id",
-        description: "Returns a single token stream by its numeric id.",
-        tags: ["streams"],
-        params: {
-          type: "object",
-          required: ["id"],
-          properties: {
-            id: {
-              type: "string",
-              description: "Stream id (uint64, decimal string).",
-              examples: ["42"],
-            },
-          },
-        },
-        response: {
-          200: { $ref: STREAM_VIEW_SCHEMA_ID },
-          304: { type: "null" },
-          400: { $ref: ERROR_SCHEMA_ID },
-          404: { $ref: ERROR_SCHEMA_ID },
-        },
-      },
-    },
-    async (request, reply) => {
-      const { id } = request.params as { id: string };
-      const streamId = parseStreamId(id);
-      if (streamId === null) {
-        return sendError(reply, request, 400, "VALIDATION_ERROR", "invalid stream id");
-      }
-
-      const stream = await getStream({ streamId });
-      if (!stream) {
-        return sendError(reply, request, 404, "NOT_FOUND", "stream not found");
-      }
-
-      const etag = `"${stream.updatedLedger}"`;
-      reply.header("Cache-Control", "public, max-age=30");
-      reply.header("ETag", etag);
-
-      const ifNoneMatch = request.headers["if-none-match"];
-      if (ifNoneMatch === etag) {
-        return reply.code(304).send();
-      }
-
-      return toView(stream);
-    },
-  );
+  registerListStreamsRoute(app);
+  registerStreamSummaryRoute(app, summaryCacheTtlMs);
+  registerTokensRoute(app);
+  registerStreamEventsRoute(app);
+  registerStreamDetailRoute(app);
+  registerStreamScheduleRoute(app);
+  registerAccountSummaryRoute(app);
 }
