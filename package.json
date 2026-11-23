@@ -19,6 +19,7 @@
     "replay-failed-events": "tsx src/indexer/replay.ts",
     "prune-failed-events": "tsx src/indexer/prune.ts",
     "print-config": "tsx src/print-config.ts",
+    "load-test": "tsx scripts/load-test-queries.ts",
     "depcheck": "depcheck",
     "postinstall": "prisma generate",
     "prisma:generate": "prisma generate",
