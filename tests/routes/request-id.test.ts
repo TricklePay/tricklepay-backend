@@ -133,7 +133,6 @@ describe("request ids", () => {
       expect(streamsRepo.getStream).not.toHaveBeenCalled();
     },
   );
-  });
 
   it("attaches a generated id to errors when the client sent none", async () => {
     streamsRepo.getStream.mockResolvedValue(null);

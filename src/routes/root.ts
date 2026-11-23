@@ -12,7 +12,7 @@ import { API_INDEX_SCHEMA_ID, apiIndexSchema } from "../schema.js";
 export function rootRoutes(config: Config) {
   return async (app: FastifyInstance): Promise<void> => {
     if (!app.getSchema(API_INDEX_SCHEMA_ID)) app.addSchema(apiIndexSchema);
-    app.get("/", { schema: { response: { 200: { $ref: API_INDEX_SCHEMA_ID } } } } }, async (request) => {
+    app.get("/", { schema: { response: { 200: { $ref: API_INDEX_SCHEMA_ID } } } }, async (request) => {
       // Determine if we're on the /v1 prefix by checking the path
       const isV1 = request.routeOptions.url?.startsWith("/v1") ?? false;
       const prefix = isV1 ? "/v1" : "";

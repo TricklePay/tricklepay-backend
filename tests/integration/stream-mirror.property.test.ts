@@ -94,7 +94,7 @@ describe("stream mirror lifecycle invariants", () => {
           now,
         );
         const expectedWithdrawable = expectedVested > withdrawn ? expectedVested - withdrawn : 0n;
-        expect(BigInt(mapStreamResponse(row!, now).withdrawable)).toBe(expectedWithdrawable);
+        expect(BigInt(mapStreamResponse(row!, now).withdrawable!)).toBe(expectedWithdrawable);
         previousTotal = total;
       }
 
@@ -136,7 +136,7 @@ describe("stream mirror lifecycle invariants", () => {
       const cancelled = await prisma.stream.findUnique({ where: { streamId } });
       expect(cancelled!.cancelled).toBe(true);
       expect(cancelled!.withdrawn.toString()).toBe(withdrawn.toString());
-      expect(BigInt(mapStreamResponse(cancelled!, cancelAt).withdrawable)).toBe(recipientAmount);
+      expect(BigInt(mapStreamResponse(cancelled!, cancelAt).withdrawable!)).toBe(recipientAmount);
     }
   });
 });

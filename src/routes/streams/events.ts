@@ -5,7 +5,7 @@ import type { FastifyInstance } from "fastify";
 import { QueryTimeoutError } from "../../db.js";
 import { bigIntToStringNullable, sendError } from "../../lib/response.js";
 import { isStreamIdOutOfRange, parseStreamId } from "../../lib/stream-id.js";
-import { listIndexedEvents, listIndexedEventsWithCumulative, type IndexedEventKind } from "../../repositories/indexed-events.js";
+import { listIndexedEvents, listIndexedEventsWithCumulative, type DecimalField, type IndexedEventKind, type IndexedEventRecord } from "../../repositories/indexed-events.js";
 import { getStream } from "../../repositories/streams.js";
 import { ERROR_SCHEMA_ID, STREAM_EVENT_HISTORY_RESPONSE_SCHEMA_ID } from "../../schema.js";
 
@@ -82,7 +82,7 @@ export function registerStreamEventsRoute(app: FastifyInstance): void {
         return sendError(reply, request, 404, "NOT_FOUND", "stream not found");
       }
 
-      const events = cumulative
+      const events: (IndexedEventRecord & { cumulativeWithdrawn?: DecimalField | null })[] = cumulative
         ? await listIndexedEventsWithCumulative(streamId, kind as IndexedEventKind | undefined)
         : await listIndexedEvents(streamId, kind as IndexedEventKind | undefined);
 
