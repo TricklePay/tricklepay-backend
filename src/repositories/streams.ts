@@ -11,6 +11,7 @@
 import { Prisma, type Stream } from "@prisma/client";
 
 import { prisma, withQueryTimeout } from "../db.js";
+import { parseStreamId } from "../lib/stream-id.js";
 import { indexedStreams } from "../metrics.js";
 
 export interface UpsertStreamInput {
@@ -52,8 +53,7 @@ export interface WithdrawalInput {
 
 export interface CancellationInput {
   streamId: bigint;
-  // The vested-but-unwithdrawn balance paid to the recipient as the stream was
-  // cancelled.
+  // The vested-but-unwithdrawn balance still claimable by the recipient after cancellation.
   recipientAmount: bigint;
   // Unix seconds at which the cancellation happened, which becomes the stream's
   // frozen end time.

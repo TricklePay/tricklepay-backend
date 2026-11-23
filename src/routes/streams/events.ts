@@ -4,7 +4,7 @@ import type { FastifyInstance } from "fastify";
 
 import { QueryTimeoutError } from "../../db.js";
 import { bigIntToStringNullable, sendError } from "../../lib/response.js";
-import { parseStreamId } from "../../lib/stream-id.js";
+import { isStreamIdOutOfRange, parseStreamId } from "../../lib/stream-id.js";
 import { listIndexedEvents, listIndexedEventsWithCumulative, type IndexedEventKind } from "../../repositories/indexed-events.js";
 import { getStream } from "../../repositories/streams.js";
 import { ERROR_SCHEMA_ID, STREAM_EVENT_HISTORY_RESPONSE_SCHEMA_ID } from "../../schema.js";
@@ -58,6 +58,9 @@ export function registerStreamEventsRoute(app: FastifyInstance): void {
       const { kind, cumulative } = (request.query as { kind?: string; cumulative?: boolean }) ?? {};
       const streamId = parseStreamId(id);
       if (streamId === null) {
+        if (isStreamIdOutOfRange(id)) {
+          return sendError(reply, request, 404, "NOT_FOUND", "stream not found");
+        }
         return sendError(reply, request, 400, "VALIDATION_ERROR", "invalid stream id");
       }
 

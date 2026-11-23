@@ -93,7 +93,7 @@ describe("request ids", () => {
   });
 
   it("rejects invalid stream ids with a 400 response", async () => {
-    for (const badId of ["", "-1", "1.5", "abc", "  ", "18446744073709551616"]) {
+    for (const badId of ["", "-1", "1.5", "abc", "  "]) {
       const response = await inject({
         url: `/streams/${encodeURIComponent(badId)}`,
         headers: { "x-request-id": "trace-invalid-stream-id" },
@@ -108,15 +108,31 @@ describe("request ids", () => {
     }
   });
 
-  it("accepts large uint64 stream ids without precision loss", async () => {
-    const maxUint64 = "18446744073709551615";
+  it("accepts the maximum database stream id without precision loss", async () => {
+    const maxStreamId = "9223372036854775807";
     streamsRepo.getStream.mockResolvedValue(null);
-    const response = await inject({
-      url: `/streams/${maxUint64}`,
-      headers: { "x-request-id": "trace-valid-stream-id" },
-    });
-    expect(response.statusCode).toBe(404);
-    expect(streamsRepo.getStream).toHaveBeenCalledWith({ streamId: 18446744073709551615n });
+    for (const suffix of ["", "/events", "/schedule"]) {
+      const response = await inject({
+        url: `/streams/${maxStreamId}${suffix}`,
+        headers: { "x-request-id": "trace-valid-stream-id" },
+      });
+      expect(response.statusCode).toBe(404);
+    }
+    expect(streamsRepo.getStream).toHaveBeenCalledWith({ streamId: 9223372036854775807n });
+  });
+
+  it.each(["9223372036854775808", "18446744073709551615", "18446744073709551616"])(
+    "returns 404 for out-of-range stream id %s on all detail routes",
+    async (id) => {
+      streamsRepo.getStream.mockClear();
+      for (const suffix of ["", "/events", "/schedule"]) {
+        const response = await inject({ url: `/streams/${id}${suffix}` });
+        expect(response.statusCode).toBe(404);
+        expect(response.json()).toHaveProperty("error", "stream not found");
+      }
+      expect(streamsRepo.getStream).not.toHaveBeenCalled();
+    },
+  );
   });
 
   it("attaches a generated id to errors when the client sent none", async () => {
