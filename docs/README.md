@@ -59,6 +59,7 @@ Listed alphabetically by file name, ignoring case.
 - [shutdown-ordering.md](shutdown-ordering.md): Ordered `SIGTERM`/`SIGINT` shutdown sequence and why each step must complete before the next.
 - [test-coverage.md](test-coverage.md): How unit test coverage is measured and reported in CI, and the recorded baseline figures.
 - [verification-cli-design.md](verification-cli-design.md): Design specification for the `npm run verify-streams` CLI tool that automates verification of indexed database state against on-chain state, including sampling strategies, output formats, and monitoring integration.
+- [webhook-design.md](webhook-design.md): Design specification for webhook notification system that delivers real-time stream events (created, withdrawn, cancelled) to registered HTTP endpoints with HMAC signatures, automatic retries, and SSRF protection.
 
 ## When to add a new document here
 
