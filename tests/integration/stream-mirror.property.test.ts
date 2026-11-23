@@ -135,7 +135,8 @@ describe("stream mirror lifecycle invariants", () => {
 
       const cancelled = await prisma.stream.findUnique({ where: { streamId } });
       expect(cancelled!.cancelled).toBe(true);
-      expect(cancelled!.withdrawn.toString()).toBe(cancelled!.totalAmount.toString());
+      expect(cancelled!.withdrawn.toString()).toBe(withdrawn.toString());
+      expect(BigInt(mapStreamResponse(cancelled!, cancelAt).withdrawable)).toBe(recipientAmount);
     }
   });
 });

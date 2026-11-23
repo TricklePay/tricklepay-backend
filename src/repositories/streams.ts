@@ -97,8 +97,7 @@ export function decodeCursor(raw: string): bigint | null {
     const decoded = Buffer.from(raw, "base64url").toString("utf8");
     const parsed = JSON.parse(decoded);
     if (parsed && typeof parsed.streamId === "string") {
-      const value = BigInt(parsed.streamId);
-      if (value >= 0n) return value;
+      return parseStreamId(parsed.streamId);
     }
   } catch {
     // fall through to null
