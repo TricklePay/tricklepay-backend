@@ -38,6 +38,10 @@ import { getIndexerPosition, saveIndexerPosition } from "../repositories/indexer
 
 import { applyEvent } from "./apply.js";
 
+import { streamEventBus } from "../event-bus.js";
+
+import { getStream } from "../repositories/streams.js";
+
 // The loop's state between ticks: where to read from next, and how far the
 // indexer has actually got. `lastLedger` is carried across ticks because a page
 // that applies nothing must leave it alone rather than reset it.
@@ -356,6 +360,25 @@ export class Poller {
       // never claimed as processed on the strength of a write that failed.
       nextState.lastLedger = Math.max(nextState.lastLedger, event.ledger);
       eventsApplied.inc({ kind: event.kind, outcome });
+
+      // Emit the stream update for SSE subscribers after successful apply
+      if (outcome === "applied" || outcome === "reconciled") {
+        try {
+          const updatedStream = await getStream({ streamId: event.streamId });
+          if (updatedStream) {
+            streamEventBus.emitStreamUpdate({
+              streamId: event.streamId,
+              kind: event.kind,
+              stream: updatedStream,
+              eventId: event.id,
+              ledger: event.ledger,
+            });
+          }
+        } catch (err) {
+          // SSE emission failure should not fail the indexer tick
+          this.log.warn({ err, streamId: event.streamId.toString() }, "failed to emit SSE update");
+        }
+      }
     }
 
     // Record the highest ledger actually applied, not the RPC chain head.
