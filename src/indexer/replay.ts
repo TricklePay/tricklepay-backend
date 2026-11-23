@@ -33,6 +33,7 @@ export interface ReplayFailedEventsOptions {
   limit?: number;
   dryRun?: boolean;
   maxPages?: number;
+  silent?: boolean;
 }
 
 export interface ReplayFailedEventsSummary {
@@ -103,7 +104,9 @@ export async function replayFailedEvents(
       if (!event) {
         const message = `event ${row.eventId} not found on chain while replaying failed event`;
         if (dryRun) {
-          logger.warn({ eventId: row.eventId, ledger: row.ledger }, "dry-run: would keep failed event record");
+          if (!options.silent) {
+            logger.warn({ eventId: row.eventId, ledger: row.ledger }, "dry-run: would keep failed event record");
+          }
         } else {
           await recordFailedEvent({
             eventId: row.eventId,
@@ -139,15 +142,19 @@ export async function replayFailedEvents(
 
       if (applyResult === "success" || applyResult === "would-apply") {
         succeeded += 1;
-        if (!dryRun) {
-          logger.info({ eventId: event.id, streamId: event.streamId.toString(), ledger: event.ledger }, "replayed failed event");
-        } else {
-          logger.info({ eventId: event.id, streamId: event.streamId.toString(), ledger: event.ledger }, "dry-run: would replay failed event");
+        if (!options.silent) {
+          if (!dryRun) {
+            logger.info({ eventId: event.id, streamId: event.streamId.toString(), ledger: event.ledger }, "replayed failed event");
+          } else {
+            logger.info({ eventId: event.id, streamId: event.streamId.toString(), ledger: event.ledger }, "dry-run: would replay failed event");
+          }
         }
       } else {
         const message = `could not replay failed event ${event.id}: no stream state to apply`;
         if (dryRun) {
-          logger.warn({ eventId: event.id }, "dry-run: would keep failed event record");
+          if (!options.silent) {
+            logger.warn({ eventId: event.id }, "dry-run: would keep failed event record");
+          }
         } else {
           await recordFailedEvent({
             eventId: row.eventId,
@@ -163,7 +170,9 @@ export async function replayFailedEvents(
     } catch (err) {
       const message = `replay failed for ${row.eventId}: ${errorMessage(err)}`;
       if (dryRun) {
-        logger.warn({ eventId: row.eventId, ledger: row.ledger, err }, "dry-run: replay would fail");
+        if (!options.silent) {
+          logger.warn({ eventId: row.eventId, ledger: row.ledger, err }, "dry-run: replay would fail");
+        }
       } else {
         await recordFailedEvent({
           eventId: row.eventId,
@@ -198,7 +207,7 @@ export async function replayOneFailedEvent(
   contractId: string,
   networkPassphrase: string,
   eventId: string,
-  options: Pick<ReplayFailedEventsOptions, "dryRun" | "maxPages"> = {},
+  options: Pick<ReplayFailedEventsOptions, "dryRun" | "maxPages" | "silent"> = {},
 ): Promise<ReplayOneFailedEventResult> {
   const dryRun = options.dryRun ?? false;
   const maxPages = options.maxPages ?? 20;
@@ -219,7 +228,7 @@ export async function replayOneFailedEvent(
         ledger: row.ledger,
         error: message,
       });
-    } else {
+    } else if (!options.silent) {
       logger.warn({ eventId: row.eventId, ledger: row.ledger }, "dry-run: would keep failed event record");
     }
     return { eventId, outcome: "not-found-on-chain", dryRun };
@@ -239,9 +248,11 @@ export async function replayOneFailedEvent(
 
     if (applyResult === "success" || applyResult === "would-apply") {
       if (!dryRun) {
-        logger.info({ eventId: event.id, streamId: event.streamId.toString(), ledger: event.ledger }, "replayed failed event");
+        if (!options.silent) {
+          logger.info({ eventId: event.id, streamId: event.streamId.toString(), ledger: event.ledger }, "replayed failed event");
+        }
         await refreshFailedEventBacklog();
-      } else {
+      } else if (!options.silent) {
         logger.info({ eventId: event.id, streamId: event.streamId.toString(), ledger: event.ledger }, "dry-run: would replay failed event");
       }
       return { eventId, outcome: "succeeded", dryRun };
@@ -256,7 +267,7 @@ export async function replayOneFailedEvent(
         ledger: row.ledger,
         error: message,
       });
-    } else {
+    } else if (!options.silent) {
       logger.warn({ eventId: event.id }, "dry-run: would keep failed event record");
     }
     return { eventId, outcome: "failed", dryRun };
@@ -270,7 +281,7 @@ export async function replayOneFailedEvent(
         ledger: row.ledger,
         error: message,
       });
-    } else {
+    } else if (!options.silent) {
       logger.warn({ eventId: row.eventId, ledger: row.ledger, err }, "dry-run: replay would fail");
     }
     return { eventId, outcome: "failed", dryRun };
@@ -299,17 +310,16 @@ Examples:
   tsx src/indexer/replay.ts --limit=50
   tsx src/indexer/replay.ts --event-id=0241383411213664256-0000000001 --dry-run`;
 
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
   const rawArgv = process.argv.slice(2);
   const parsed = parseAndValidateCli(rawArgv, REPLAY_ALLOWED_FLAGS, REPLAY_USAGE);
   if (parsed.isHelp) {
-    console.log(REPLAY_USAGE);
+    process.stdout.write(`${REPLAY_USAGE}\n`);
     process.exitCode = 0;
     return;
   }
   if (!parsed.ok) {
-    console.error(`Error: ${parsed.error}\n`);
-    console.error(REPLAY_USAGE);
+    process.stderr.write(`Error: ${parsed.error}\n\n${REPLAY_USAGE}\n`);
     process.exitCode = 2;
     return;
   }
@@ -320,19 +330,31 @@ async function main(): Promise<void> {
   const eventIdArg = args.get("--event-id");
   const eventId = typeof eventIdArg === "string" ? eventIdArg : undefined;
 
-  const config = loadConfig();
-  const server = createRpcServer(config);
+  let config;
+  let server;
+  try {
+    config = loadConfig();
+    server = createRpcServer(config);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`configuration error: ${message}\n`);
+    process.exitCode = 1;
+    return;
+  }
 
   if (eventId !== undefined) {
     // Single-event replay mode.
-    const result = await replayOneFailedEvent(server, config.contractId, config.networkPassphrase, eventId, { dryRun });
+    const result = await replayOneFailedEvent(server, config.contractId, config.networkPassphrase, eventId, {
+      dryRun,
+      silent: jsonOutput,
+    });
 
     if (result.outcome === "not-found-in-db") {
       const msg = `event ${eventId} not found in failed events table`;
       if (jsonOutput) {
         process.stdout.write(JSON.stringify({ eventId, outcome: result.outcome, dryRun: result.dryRun, error: msg }) + "\n");
       } else {
-        logger.error({ eventId }, msg);
+        process.stderr.write(`${msg}\n`);
       }
       await prisma.$disconnect();
       process.exitCode = 1;
@@ -342,7 +364,7 @@ async function main(): Promise<void> {
     if (jsonOutput) {
       process.stdout.write(JSON.stringify({ eventId: result.eventId, outcome: result.outcome, dryRun: result.dryRun }) + "\n");
     } else {
-      logger.info({ eventId: result.eventId, outcome: result.outcome, dryRun: result.dryRun }, "single-event replay finished");
+      process.stdout.write(`single-event replay finished: eventId=${result.eventId} outcome=${result.outcome} dryRun=${result.dryRun}\n`);
     }
 
     if (result.outcome === "failed" || result.outcome === "not-found-on-chain") {
@@ -356,6 +378,7 @@ async function main(): Promise<void> {
     const result = await replayFailedEvents(server, config.contractId, config.networkPassphrase, {
       limit: Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 20,
       dryRun,
+      silent: jsonOutput,
     });
 
     if (jsonOutput) {
@@ -368,12 +391,9 @@ async function main(): Promise<void> {
         }) + "\n",
       );
     } else {
-      logger.info({
-        attempted: result.attempted,
-        succeeded: result.succeeded,
-        failed: result.failed,
-        dryRun: result.dryRun,
-      }, "replay finished");
+      process.stdout.write(
+        `replay finished: attempted=${result.attempted} succeeded=${result.succeeded} failed=${result.failed} dryRun=${result.dryRun}\n`,
+      );
     }
   }
 
@@ -381,8 +401,9 @@ async function main(): Promise<void> {
 }
 
 if (isMainModule(import.meta.url)) {
-  void main().catch((err) => {
-    logger.error({ err }, "failed to replay failed events");
+  void main().catch((err: unknown) => {
+    const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
+    process.stderr.write(`failed to replay failed events: ${message}\n`);
     process.exitCode = 1;
   });
 }
