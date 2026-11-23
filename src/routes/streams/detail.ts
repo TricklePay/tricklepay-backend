@@ -7,7 +7,7 @@ import { ifNoneMatchMatches, strongEtag } from "../../lib/etag.js";
 import { sendError } from "../../lib/response.js";
 import { parseStreamId } from "../../lib/stream-id.js";
 import { parseAtTimestamp } from "../../lib/stream-query.js";
-import { mapStreamResponse } from "../../lib/stream-view.js";
+import { mapStreamResponse, parseFields } from "../../lib/stream-view.js";
 import { getStream } from "../../repositories/streams.js";
 import { ERROR_SCHEMA_ID, STREAM_VIEW_SCHEMA_ID } from "../../schema.js";
 
@@ -40,6 +40,11 @@ export function registerStreamDetailRoute(app: FastifyInstance): void {
                 "Optional Unix timestamp in seconds to calculate vested/derived figures at that point in time.",
               examples: ["1735689600"],
             },
+            fields: {
+              type: "string",
+              description: "Comma-separated list of fields to include in the response. Valid fields: id, sender, recipient, token, totalAmount, withdrawn, vested, withdrawable, locked, progress, startTime, endTime, cliffTime, cancelled, status, createdLedger, updatedLedger. Omit to return all fields.",
+              examples: ["id,status,withdrawable"],
+            },
           },
           additionalProperties: false,
         },
@@ -58,7 +63,7 @@ export function registerStreamDetailRoute(app: FastifyInstance): void {
         return sendError(reply, request, 400, "VALIDATION_ERROR", "invalid stream id");
       }
 
-      const query = request.query as { at?: string };
+      const query = request.query as { at?: string; fields?: string };
       let asOfTime: bigint | undefined;
       if (query.at !== undefined) {
         const parsed = parseAtTimestamp(query.at);
@@ -66,6 +71,18 @@ export function registerStreamDetailRoute(app: FastifyInstance): void {
           return sendError(reply, request, 400, "VALIDATION_ERROR", "invalid at timestamp");
         }
         asOfTime = parsed;
+      }
+
+      // Parse and validate fields parameter
+      const fields = parseFields(query.fields);
+      if (query.fields !== undefined && fields === null) {
+        return sendError(
+          reply,
+          request,
+          400,
+          "VALIDATION_ERROR",
+          "invalid fields parameter: one or more field names are not recognized",
+        );
       }
 
       let stream;
@@ -83,8 +100,8 @@ export function registerStreamDetailRoute(app: FastifyInstance): void {
 
       const etag =
         asOfTime !== undefined
-          ? strongEtag(stream.updatedLedger, asOfTime)
-          : strongEtag(stream.updatedLedger);
+          ? strongEtag(stream.updatedLedger, asOfTime, query.fields)
+          : strongEtag(stream.updatedLedger, undefined, query.fields);
       reply.header("Cache-Control", "public, max-age=30");
       reply.header("ETag", etag);
 
@@ -92,7 +109,7 @@ export function registerStreamDetailRoute(app: FastifyInstance): void {
         return reply.code(304).send();
       }
 
-      return mapStreamResponse(stream, asOfTime);
+      return mapStreamResponse(stream, asOfTime, fields);
     },
   );
 }

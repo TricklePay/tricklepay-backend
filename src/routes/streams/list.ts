@@ -5,7 +5,7 @@ import type { FastifyInstance } from "fastify";
 import { sendError } from "../../lib/response.js";
 import { ifNoneMatchMatches, weakEtagFromBody } from "../../lib/etag.js";
 import { parsePagination } from "../../lib/pagination.js";
-import { mapStreamResponse } from "../../lib/stream-view.js";
+import { mapStreamResponse, parseFields } from "../../lib/stream-view.js";
 import { parseStreamId } from "../../lib/stream-id.js";
 import {
   parseAmount,
@@ -39,6 +39,7 @@ interface ListStreamsQuery {
   cursor?: string;
   minAmount?: string;
   maxAmount?: string;
+  fields?: string;
 }
 
 export function registerListStreamsRoute(app: FastifyInstance): void {
@@ -134,6 +135,11 @@ export function registerListStreamsRoute(app: FastifyInstance): void {
               type: "string",
               description: "Filter streams with total amount less than or equal to this value (non-negative integer string).",
               examples: ["10000000"],
+            },
+            fields: {
+              type: "string",
+              description: "Comma-separated list of fields to include in each stream object. Valid fields: id, sender, recipient, token, totalAmount, withdrawn, vested, withdrawable, locked, progress, startTime, endTime, cliffTime, cancelled, status, createdLedger, updatedLedger. Omit to return all fields.",
+              examples: ["id,status,withdrawable"],
             },
           },
           additionalProperties: false,
@@ -235,6 +241,18 @@ export function registerListStreamsRoute(app: FastifyInstance): void {
 
       const includeTotal = parseIncludeTotal(query.includeTotal);
 
+      // Parse and validate fields parameter
+      const fields = parseFields(query.fields);
+      if (query.fields !== undefined && fields === null) {
+        return sendError(
+          reply,
+          request,
+          400,
+          "VALIDATION_ERROR",
+          "invalid fields parameter: one or more field names are not recognized",
+        );
+      }
+
       const now = nowSeconds();
 
       const [listResult, total] = await Promise.all([
@@ -251,14 +269,18 @@ export function registerListStreamsRoute(app: FastifyInstance): void {
       // Built once and reused for both the ETag and the returned body so the
       // digest is derived from exactly the bytes the client would receive.
       const body = {
-        streams: listResult.streams.map((s) => mapStreamResponse(s)),
+        streams: listResult.streams.map((s) => mapStreamResponse(s, undefined, fields)),
         ...(total === undefined ? {} : { total }),
         ...(listResult.nextCursor === undefined ? {} : { nextCursor: listResult.nextCursor }),
         limit,
         offset: usingCursor ? 0 : offset,
       };
 
-      const etag = weakEtagFromBody(body);
+      // ETag includes the fields selection so different field sets get different tags
+      const etagInput = query.fields
+        ? { ...body, _fields: query.fields }
+        : body;
+      const etag = weakEtagFromBody(etagInput);
       reply.header("ETag", etag);
 
       if (ifNoneMatchMatches(request.headers["if-none-match"], etag)) {

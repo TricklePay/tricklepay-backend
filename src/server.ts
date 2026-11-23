@@ -17,16 +17,24 @@ import { buildSwaggerConfig, swaggerUiConfig } from "./api-spec.js";
 
 import {
   DEFAULT_RATE_LIMIT_MAX,
+  DEFAULT_RATE_LIMIT_WINDOW_MS,
+  DEFAULT_RATE_LIMIT_DETAIL_MAX,
+  DEFAULT_RATE_LIMIT_DETAIL_WINDOW_MS,
+  DEFAULT_RATE_LIMIT_LIST_MAX,
+  DEFAULT_RATE_LIMIT_LIST_WINDOW_MS,
+  DEFAULT_RATE_LIMIT_SUMMARY_MAX,
+  DEFAULT_RATE_LIMIT_SUMMARY_WINDOW_MS,
   DEFAULT_CONNECTION_TIMEOUT_MS,
   DEFAULT_KEEP_ALIVE_TIMEOUT_MS,
   DEFAULT_REQUEST_TIMEOUT_MS,
-  DEFAULT_RATE_LIMIT_WINDOW_MS,
   DEFAULT_READY_MAX_STALENESS_MS,
   DEFAULT_READINESS_RETRY_AFTER_SECONDS,
   DEFAULT_COMPRESSION_THRESHOLD_BYTES,
   defaultPublicBaseUrl,
   type Config,
 } from "./config.js";
+
+import { createRateLimiterHook } from "./rate-limiter.js";
 
 import { errorCodeForStatus } from "./error-redaction.js";
 
@@ -146,58 +154,30 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
     }
   });
 
-  const clientWindows = new Map<string, { requests: number; resetAt: number }>();
-  const maxTrackedClients = config?.maxTrackedRateLimitClients ?? 10_000;
-
-  app.addHook("onRequest", async (request, reply) => {
-    const now = Date.now();
-
-    // Liveness, readiness, and Prometheus scrape traffic must remain available
-    // when application traffic from the same peer exhausts its rate limit.
-    const pathname = request.raw.url?.split("?")[0];
-    if (pathname === "/health" || pathname === "/ready" || pathname === "/metrics") {
-      return;
-    }
-
-    // Allowlisted addresses are never counted or limited.
-    if (rateLimitAllowlist.length > 0 && isAllowlistedAddress(request.ip, rateLimitAllowlist)) {
-      return;
-    }
-
-    let window = clientWindows.get(request.ip);
-
-    if (!window || window.resetAt <= now) {
-      if (window) {
-        clientWindows.delete(request.ip);
-      } else if (clientWindows.size >= maxTrackedClients) {
-        for (const [ip, trackedWindow] of clientWindows) {
-          if (trackedWindow.resetAt <= now) clientWindows.delete(ip);
-        }
-        if (clientWindows.size >= maxTrackedClients) {
-          const oldestIp = clientWindows.keys().next().value;
-          if (oldestIp !== undefined) clientWindows.delete(oldestIp);
-        }
-      }
-      window = { requests: 0, resetAt: now + rateLimitWindowMs };
-    }
-
-    clientWindows.delete(request.ip);
-    clientWindows.set(request.ip, window);
-
-    if (window.requests >= rateLimitMax) {
-      const retryAfter = Math.max(1, Math.ceil((window.resetAt - now) / 1000));
-      return reply
-        .header("Retry-After", String(retryAfter))
-        .status(429)
-        .send({
-          code: errorCodeForStatus(429),
-          error: "rate limit exceeded",
-          requestId: request.id,
-        });
-    }
-
-    window.requests += 1;
+  // Per-route-group rate limiting
+  const rateLimiter = createRateLimiterHook({
+    groups: {
+      detail: {
+        max: config?.rateLimitDetailMax ?? DEFAULT_RATE_LIMIT_DETAIL_MAX,
+        windowMs: config?.rateLimitDetailWindowMs ?? DEFAULT_RATE_LIMIT_DETAIL_WINDOW_MS,
+      },
+      list: {
+        max: config?.rateLimitListMax ?? DEFAULT_RATE_LIMIT_LIST_MAX,
+        windowMs: config?.rateLimitListWindowMs ?? DEFAULT_RATE_LIMIT_LIST_WINDOW_MS,
+      },
+      summary: {
+        max: config?.rateLimitSummaryMax ?? DEFAULT_RATE_LIMIT_SUMMARY_MAX,
+        windowMs: config?.rateLimitSummaryWindowMs ?? DEFAULT_RATE_LIMIT_SUMMARY_WINDOW_MS,
+      },
+      default: {
+        max: config?.rateLimitMax ?? DEFAULT_RATE_LIMIT_MAX,
+        windowMs: config?.rateLimitWindowMs ?? DEFAULT_RATE_LIMIT_WINDOW_MS,
+      },
+    },
+    maxTrackedClients: config?.maxTrackedRateLimitClients ?? 10_000,
+    allowlist: rateLimitAllowlist,
   });
+  app.addHook("onRequest", rateLimiter);
 
   if (config?.requestTimeoutMs) {
     const timeoutMs = config.requestTimeoutMs;
