@@ -212,12 +212,10 @@ export async function applyWithdrawal(input: WithdrawalInput, tx: Prisma.Transac
   return classifyMiss(input.streamId, tx);
 }
 
-// Applies a `cancelled` event. The contract freezes a cancelled stream by
-// setting its total to the amount vested at cancellation and its end time to
-// that moment; cancellation also settles both sides, paying the recipient their
-// vested-but-unwithdrawn balance and refunding the rest to the sender. So the
-// frozen total is what has been withdrawn so far plus the recipient's payout,
-// and `withdrawn` reaches it, leaving nothing further withdrawable.
+// Applies a `cancelled` event. The contract refunds the sender and freezes the
+// stream's vested total at the amount already withdrawn plus the recipient's
+// balance still claimable after cancellation. Withdrawn stays unchanged until
+// the recipient actually claims that balance.
 //
 // The read and guarded update run in a single transaction so a concurrent
 // withdrawal cannot change `withdrawn` between the two operations, which would
@@ -233,7 +231,6 @@ export async function applyCancellation(input: CancellationInput, tx: Prisma.Tra
       where: { ...notYetApplied(input.streamId, input.eventId), withdrawn: stored.withdrawn },
       data: {
         totalAmount: frozenTotal,
-        withdrawn: frozenTotal,
         endTime: input.cancelledAt,
         cancelled: true,
         updatedLedger: input.ledger,
@@ -401,6 +398,7 @@ export async function aggregateStreams(where: Prisma.StreamWhereInput): Promise<
 export interface TokenSummary {
   token: string;
   count: number;
+  totalAmount: string;
   total: string;
 }
 
@@ -417,11 +415,15 @@ export async function listTokens(): Promise<TokenSummary[]> {
     }),
   );
 
-  return groups.map((group) => ({
-    token: group.token,
-    count: group._count.streamId,
-    total: group._sum.totalAmount ? group._sum.totalAmount.toString() : "0",
-  }));
+  return groups.map((group) => {
+    const totalAmount = group._sum.totalAmount?.toString() ?? "0";
+    return {
+      token: group.token,
+      count: group._count.streamId,
+      totalAmount,
+      total: totalAmount,
+    };
+  });
 }
 
 // Returns incoming (recipient = address) and outgoing (sender = address) streams
