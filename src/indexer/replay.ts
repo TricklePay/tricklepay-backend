@@ -8,7 +8,13 @@ import { loadConfig } from "../config.js";
 
 import { prisma } from "../db.js";
 
-import { isMainModule, parseCliArgs, wantsJsonOutput } from "../lib/cli-args.js";
+import {
+  isMainModule,
+  parseAndValidateCli,
+  parseCliArgs,
+  wantsJsonOutput,
+  type CliFlagDef,
+} from "../lib/cli-args.js";
 
 import { logger } from "../logger.js";
 
@@ -271,10 +277,45 @@ export async function replayOneFailedEvent(
   }
 }
 
-async function main(): Promise<void> {
-  const args = parseCliArgs();
+export const REPLAY_ALLOWED_FLAGS: readonly CliFlagDef[] = [
+  { name: "--limit", type: "string" },
+  { name: "--event-id", type: "string" },
+  { name: "--dry-run", type: "boolean" },
+  { name: "--json", type: "boolean" },
+  { name: "--help", type: "boolean" },
+  { name: "-h", type: "boolean" },
+];
 
-  const dryRun = args.get("--dry-run") === true || args.get("--dryRun") === true;
+export const REPLAY_USAGE = `Usage: tsx src/indexer/replay.ts [--event-id=<id> | --limit=<n>] [--dry-run] [--json]
+
+Options:
+  --event-id=<id>  Replay a single failed event by id
+  --limit=<n>      Maximum number of failed events to replay (default: 20)
+  --dry-run        Report what would be replayed without persisting
+  --json           Output result as JSON
+  --help, -h       Show this help message
+
+Examples:
+  tsx src/indexer/replay.ts --limit=50
+  tsx src/indexer/replay.ts --event-id=0241383411213664256-0000000001 --dry-run`;
+
+async function main(): Promise<void> {
+  const rawArgv = process.argv.slice(2);
+  const parsed = parseAndValidateCli(rawArgv, REPLAY_ALLOWED_FLAGS, REPLAY_USAGE);
+  if (parsed.isHelp) {
+    console.log(REPLAY_USAGE);
+    process.exitCode = 0;
+    return;
+  }
+  if (!parsed.ok) {
+    console.error(`Error: ${parsed.error}\n`);
+    console.error(REPLAY_USAGE);
+    process.exitCode = 2;
+    return;
+  }
+
+  const args = parsed.args;
+  const dryRun = args.get("--dry-run") === true;
   const jsonOutput = wantsJsonOutput(args);
   const eventIdArg = args.get("--event-id");
   const eventId = typeof eventIdArg === "string" ? eventIdArg : undefined;

@@ -11,6 +11,7 @@
 import { Prisma, type Stream } from "@prisma/client";
 
 import { prisma, withQueryTimeout, measureRepositoryCall } from "../db.js";
+import { parseStreamId } from "../lib/stream-id.js";
 import { indexedStreams } from "../metrics.js";
 
 export interface UpsertStreamInput {
@@ -52,8 +53,7 @@ export interface WithdrawalInput {
 
 export interface CancellationInput {
   streamId: bigint;
-  // The vested-but-unwithdrawn balance paid to the recipient as the stream was
-  // cancelled.
+  // The vested-but-unwithdrawn balance still claimable by the recipient after cancellation.
   recipientAmount: bigint;
   // Unix seconds at which the cancellation happened, which becomes the stream's
   // frozen end time.
@@ -97,8 +97,7 @@ export function decodeCursor(raw: string): bigint | null {
     const decoded = Buffer.from(raw, "base64url").toString("utf8");
     const parsed = JSON.parse(decoded);
     if (parsed && typeof parsed.streamId === "string") {
-      const value = BigInt(parsed.streamId);
-      if (value >= 0n) return value;
+      return parseStreamId(parsed.streamId);
     }
   } catch {
     // fall through to null
@@ -219,12 +218,10 @@ export async function applyWithdrawal(input: WithdrawalInput, tx: Prisma.Transac
   });
 }
 
-// Applies a `cancelled` event. The contract freezes a cancelled stream by
-// setting its total to the amount vested at cancellation and its end time to
-// that moment; cancellation also settles both sides, paying the recipient their
-// vested-but-unwithdrawn balance and refunding the rest to the sender. So the
-// frozen total is what has been withdrawn so far plus the recipient's payout,
-// and `withdrawn` reaches it, leaving nothing further withdrawable.
+// Applies a `cancelled` event. The contract refunds the sender and freezes the
+// stream's vested total at the amount already withdrawn plus the recipient's
+// balance still claimable after cancellation. Withdrawn stays unchanged until
+// the recipient actually claims that balance.
 //
 // The read and guarded update run in a single transaction so a concurrent
 // withdrawal cannot change `withdrawn` between the two operations, which would
@@ -241,7 +238,6 @@ export async function applyCancellation(input: CancellationInput, tx: Prisma.Tra
       where: { ...notYetApplied(input.streamId, input.eventId), withdrawn: stored.withdrawn },
       data: {
         totalAmount: frozenTotal,
-        withdrawn: frozenTotal,
         endTime: input.cancelledAt,
         cancelled: true,
         updatedLedger: input.ledger,
@@ -418,6 +414,7 @@ export async function aggregateStreams(where: Prisma.StreamWhereInput): Promise<
 export interface TokenSummary {
   token: string;
   count: number;
+  totalAmount: string;
   total: string;
 }
 
@@ -435,11 +432,15 @@ export async function listTokens(): Promise<TokenSummary[]> {
     }),
   );
 
-  return groups.map((group) => ({
-    token: group.token,
-    count: group._count.streamId,
-    total: group._sum.totalAmount ? group._sum.totalAmount.toString() : "0",
-  }));
+  return groups.map((group) => {
+    const totalAmount = group._sum.totalAmount?.toString() ?? "0";
+    return {
+      token: group.token,
+      count: group._count.streamId,
+      totalAmount,
+      total: totalAmount,
+    };
+  });
   });
 }
 

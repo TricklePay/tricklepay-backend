@@ -56,6 +56,50 @@ export async function listIndexedEvents(
   });
 }
 
+// Fetches events with cumulative withdrawal amounts computed via a window
+// function. The running total accumulates only for withdrawal events; created
+// and cancelled events carry null for the cumulative field.
+export async function listIndexedEventsWithCumulative(
+  streamId: bigint,
+  kind?: IndexedEventKind,
+): Promise<(IndexedEventRecord & { cumulativeWithdrawn: DecimalField | null })[]> {
+  const streamIdStr = streamId.toString();
+  const kindFilter = kind !== undefined ? `AND kind = '${kind}'` : "";
+  
+  // Use a window function to compute running withdrawal totals in order.
+  // Only withdrawal events carry an amount; other events get null.
+  const query = `
+    SELECT 
+      "eventId",
+      "kind",
+      "streamId",
+      "ledger",
+      "txHash",
+      "sender",
+      "recipient",
+      "token",
+      "totalAmount",
+      "amount",
+      "recipientAmount",
+      "senderRefund",
+      "startTime",
+      "endTime",
+      "cliffTime",
+      "closedAt",
+      SUM(CASE WHEN kind = 'withdrawn' THEN COALESCE("amount", 0) ELSE 0 END) 
+        OVER (ORDER BY "eventId" ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) 
+        AS "cumulativeWithdrawn"
+    FROM "IndexedEvent"
+    WHERE "streamId" = $1 ${kindFilter}
+    ORDER BY "eventId" ASC
+  `;
+
+  const rows = await withQueryTimeout(
+    prisma.$queryRawUnsafe(query, streamIdStr),
+  );
+  return rows as (IndexedEventRecord & { cumulativeWithdrawn: DecimalField | null })[];
+}
+
 export function indexedEventFromDecoded(event: StreamEvent): IndexedEventRecord {
   return {
     eventId: event.id,

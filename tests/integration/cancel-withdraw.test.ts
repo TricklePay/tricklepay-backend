@@ -5,10 +5,9 @@
 //
 //   1. created          — full stream inserted with withdrawn=0
 //   2. partial withdraw — withdrawn increments, withdrawable shrinks
-//   3. cancel           — totalAmount frozen, withdrawn=frozenTotal, withdrawable=0
-//   4. final withdraw   — the recipientAmount payout that the cancel already
-//                         settled; its event id predates the cancel, so the
-//                         idempotency guard rejects it as a duplicate
+//   3. cancel           — totalAmount frozen, recipientAmount still claimable
+//   4. partial withdraw — recipient claims some of the remaining balance
+//   5. final withdraw   — recipient claims the rest
 //
 // After each step the test calls GET /streams/:id and asserts the API fields
 // that a client would branch on: withdrawn, withdrawable, locked, and status.
@@ -31,7 +30,7 @@ const url = process.env.DATABASE_URL;
 const enabled = !!url;
 
 // A dummy RPC server stub — applyEvent only calls the chain when a delta
-// arrives for an unknown stream. All four events here are applied in order, so
+// arrives for an unknown stream. All events here are applied in order, so
 // the stream is always present before any delta arrives.
 const rpcStub = {} as Parameters<typeof applyEvent>[0];
 
@@ -51,7 +50,9 @@ const TX_HASH = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 const UNIT = 1_000_000_000n;
 const TOTAL_AMOUNT = 100n * UNIT;       // 100 tokens total
 const PARTIAL_WITHDRAW = 10n * UNIT;    // 10 tokens — first withdrawal
-const RECIPIENT_AMOUNT = 30n * UNIT;    // 30 tokens vested at cancel time
+const RECIPIENT_AMOUNT = 40n * UNIT;    // 50 vested at cancel, 10 already withdrawn
+const POST_CANCEL_PARTIAL = 10n * UNIT;
+const POST_CANCEL_FINAL = RECIPIENT_AMOUNT - POST_CANCEL_PARTIAL;
 
 // The stream runs entirely in the past so vestedAmount == totalAmount at any
 // query time, keeping every derived-field assertion deterministic regardless of
@@ -68,11 +69,9 @@ const CANCEL_AT  = 1_650_000_000n; // 2022-04-15
 // to the lengths the real RPC uses.
 const EV_CREATED        = "0000000100000000000000000-0000000001";
 const EV_WITHDRAWN      = "0000000200000000000000000-0000000001";
-// The final withdrawal (the recipientAmount payout) is emitted in the same
-// transaction as the cancel, but before the Cancelled event, so its event id
-// sits between the partial withdrawal and the cancel.
-const EV_FINAL_WITHDRAW = "0000000200000000000000000-0000000002";
 const EV_CANCELLED      = "0000000300000000000000000-0000000001";
+const EV_POST_CANCEL_PARTIAL = "0000000400000000000000000-0000000001";
+const EV_FINAL_WITHDRAW = "0000000500000000000000000-0000000001";
 
 // Build typed StreamEvent objects without going through the RPC decoder.
 function createdEvent(): StreamEvent {
@@ -120,22 +119,30 @@ function cancelledEvent(): StreamEvent {
   };
 }
 
-// The final withdrawal: the recipient claiming the recipientAmount that the
-// cancel pays out.  In the real contract this Withdrawn event is emitted in the
-// same transaction as the Cancelled event, but with a lower event id (it
-// precedes the Cancelled event in the transaction's event log).  Applied after
-// the cancel, its id is older than the cancel's lastEventId, so the
-// notYetApplied guard correctly rejects it as a duplicate.
+function postCancelPartialEvent(): StreamEvent {
+  return {
+    kind: "withdrawn",
+    id: EV_POST_CANCEL_PARTIAL,
+    ledger: 56_000_004,
+    closedAt: CANCEL_AT + 1n,
+    txHash: TX_HASH,
+    streamId: STREAM_ID,
+    recipient: RECIPIENT,
+    amount: POST_CANCEL_PARTIAL,
+  };
+}
+
+// The recipient claims the remaining balance after cancellation.
 function finalWithdrawnEvent(): StreamEvent {
   return {
     kind: "withdrawn",
     id: EV_FINAL_WITHDRAW,
-    ledger: 56_000_003,
-    closedAt: CANCEL_AT,
+    ledger: 56_000_005,
+    closedAt: CANCEL_AT + 2n,
     txHash: TX_HASH,
     streamId: STREAM_ID,
     recipient: RECIPIENT,
-    amount: RECIPIENT_AMOUNT,
+    amount: POST_CANCEL_FINAL,
   };
 }
 
@@ -155,8 +162,7 @@ afterAll(async () => {
 });
 
 describe("cancel-then-withdraw integration sequence", () => {
-  // Build one server instance for the whole suite so we don't pay the startup
-  // cost four times.  afterAll closes it to release the listening port.
+  // Build one server instance for the whole suite. afterAll closes it.
   let app: Awaited<ReturnType<typeof buildServer>>;
 
   // buildServer registers several Fastify plugins (swagger, swagger-ui, cors,
@@ -223,7 +229,7 @@ describe("cancel-then-withdraw integration sequence", () => {
     expect(body.cancelled).toBe(false);
   });
 
-  it("event 3 — cancellation: frozen total, withdrawn=frozenTotal, withdrawable=0, status=cancelled", async () => {
+  it("event 3 — cancellation leaves the recipient amount claimable", async () => {
     if (!enabled) return;
 
     const outcome = await applyEvent(rpcStub, CONTRACT_ID, NETWORK_PASSPHRASE, cancelledEvent());
@@ -236,31 +242,37 @@ describe("cancel-then-withdraw integration sequence", () => {
 
     // The API reports totalAmount as the frozen total.
     expect(body.totalAmount).toBe(frozenTotal);
-    // Both withdrawn and totalAmount are frozen at the same value.
-    expect(body.withdrawn).toBe(frozenTotal);
-    // Nothing left to withdraw once the stream is settled.
-    expect(body.withdrawable).toBe("0");
-    // locked = totalAmount − vested. After cancel, totalAmount==withdrawn==vested,
-    // so locked is always 0.
+    expect(body.withdrawn).toBe(PARTIAL_WITHDRAW.toString());
+    expect(body.withdrawable).toBe(RECIPIENT_AMOUNT.toString());
+    // The frozen total is fully vested, so locked is 0.
     expect(body.locked).toBe("0");
     expect(body.status).toBe("cancelled");
     expect(body.cancelled).toBe(true);
   });
 
-  it("event 4 — final withdrawal: duplicate, API unchanged", async () => {
+  it("event 4 — partial withdrawal after cancellation reduces the claimable balance", async () => {
     if (!enabled) return;
 
-    // The cancel's lastEventId (EV_CANCELLED) is newer than EV_FINAL_WITHDRAW,
-    // so applyWithdrawal's notYetApplied guard rejects it as a duplicate.
-    const outcome = await applyEvent(rpcStub, CONTRACT_ID, NETWORK_PASSPHRASE, finalWithdrawnEvent());
-    expect(outcome).toBe("duplicate");
+    const outcome = await applyEvent(rpcStub, CONTRACT_ID, NETWORK_PASSPHRASE, postCancelPartialEvent());
+    expect(outcome).toBe("applied");
 
-    // Nothing in the database changed — the API should return the same numbers
-    // as immediately after the cancellation.
     const body = await fetchStream(STREAM_ID);
-
     const frozenTotal = (PARTIAL_WITHDRAW + RECIPIENT_AMOUNT).toString();
+    expect(body.totalAmount).toBe(frozenTotal);
+    expect(body.withdrawn).toBe((PARTIAL_WITHDRAW + POST_CANCEL_PARTIAL).toString());
+    expect(body.withdrawable).toBe(POST_CANCEL_FINAL.toString());
+    expect(body.locked).toBe("0");
+    expect(body.status).toBe("cancelled");
+  });
 
+  it("event 5 — final withdrawal brings withdrawn to the frozen total", async () => {
+    if (!enabled) return;
+
+    const outcome = await applyEvent(rpcStub, CONTRACT_ID, NETWORK_PASSPHRASE, finalWithdrawnEvent());
+    expect(outcome).toBe("applied");
+
+    const body = await fetchStream(STREAM_ID);
+    const frozenTotal = (PARTIAL_WITHDRAW + RECIPIENT_AMOUNT).toString();
     expect(body.totalAmount).toBe(frozenTotal);
     expect(body.withdrawn).toBe(frozenTotal);
     expect(body.withdrawable).toBe("0");

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `totalAmount` is the canonical amount total in account summaries, `/streams/summary`, and `/tokens`. The `total` amount field in account summaries and `/tokens` is deprecated; it remains through at least one minor release and is planned for removal in v2. Clients should switch to `totalAmount`.
+
 ### Added
 - Initial entry capturing the current public API and operational baseline.
 - `GET /tokens` endpoint: returns each distinct token contract address with its stream count and total amount (#481).

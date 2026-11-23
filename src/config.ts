@@ -92,6 +92,15 @@ export const DEFAULT_READY_MAX_STALENESS_MS = 0;
 export const DEFAULT_RATE_LIMIT_MAX = 100;
 export const DEFAULT_RATE_LIMIT_WINDOW_MS = 60_000;
 
+// Per-route-group rate limits. These are the defaults; each can be overridden
+// via environment variables.
+export const DEFAULT_RATE_LIMIT_DETAIL_MAX = 200;
+export const DEFAULT_RATE_LIMIT_DETAIL_WINDOW_MS = 60_000;
+export const DEFAULT_RATE_LIMIT_LIST_MAX = 50;
+export const DEFAULT_RATE_LIMIT_LIST_WINDOW_MS = 60_000;
+export const DEFAULT_RATE_LIMIT_SUMMARY_MAX = 20;
+export const DEFAULT_RATE_LIMIT_SUMMARY_WINDOW_MS = 60_000;
+
 export const DEFAULT_CONNECTION_TIMEOUT_MS = 10_000;
 export const DEFAULT_KEEP_ALIVE_TIMEOUT_MS = 72_000;
 export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
@@ -261,6 +270,12 @@ export interface Config {
   readonly trustedProxies: readonly string[];
   readonly rateLimitMax?: number;
   readonly rateLimitWindowMs?: number;
+  readonly rateLimitDetailMax?: number;
+  readonly rateLimitDetailWindowMs?: number;
+  readonly rateLimitListMax?: number;
+  readonly rateLimitListWindowMs?: number;
+  readonly rateLimitSummaryMax?: number;
+  readonly rateLimitSummaryWindowMs?: number;
   readonly readyMaxStalenessMs: number;
   readonly rateLimitAllowlist: readonly string[];
   readonly maxTrackedRateLimitClients?: number;
@@ -347,6 +362,12 @@ export function loadConfig(): Config {
     trustedProxies: parseTrustedProxies(process.env.TRUSTED_PROXIES),
     rateLimitMax,
     rateLimitWindowMs,
+    rateLimitDetailMax: integer("RATE_LIMIT_DETAIL_MAX", DEFAULT_RATE_LIMIT_DETAIL_MAX),
+    rateLimitDetailWindowMs: integer("RATE_LIMIT_DETAIL_WINDOW_MS", DEFAULT_RATE_LIMIT_DETAIL_WINDOW_MS),
+    rateLimitListMax: integer("RATE_LIMIT_LIST_MAX", DEFAULT_RATE_LIMIT_LIST_MAX),
+    rateLimitListWindowMs: integer("RATE_LIMIT_LIST_WINDOW_MS", DEFAULT_RATE_LIMIT_LIST_WINDOW_MS),
+    rateLimitSummaryMax: integer("RATE_LIMIT_SUMMARY_MAX", DEFAULT_RATE_LIMIT_SUMMARY_MAX),
+    rateLimitSummaryWindowMs: integer("RATE_LIMIT_SUMMARY_WINDOW_MS", DEFAULT_RATE_LIMIT_SUMMARY_WINDOW_MS),
     // Staleness threshold for the /ready endpoint. 0 = disabled.
     readyMaxStalenessMs: integer("READY_MAX_STALENESS_MS", DEFAULT_READY_MAX_STALENESS_MS),
     // Addresses that bypass the rate limiter entirely (#allowlist).
@@ -439,6 +460,12 @@ export function describeConfig(config: Config): LoggedConfig {
     // Undefined when rate limiting is not configured; pino omits the field.
     rateLimitMax: config.rateLimitMax,
     rateLimitWindowMs: config.rateLimitWindowMs,
+    rateLimitDetailMax: config.rateLimitDetailMax,
+    rateLimitDetailWindowMs: config.rateLimitDetailWindowMs,
+    rateLimitListMax: config.rateLimitListMax,
+    rateLimitListWindowMs: config.rateLimitListWindowMs,
+    rateLimitSummaryMax: config.rateLimitSummaryMax,
+    rateLimitSummaryWindowMs: config.rateLimitSummaryWindowMs,
     readyMaxStalenessMs: config.readyMaxStalenessMs,
     rateLimitAllowlist: config.rateLimitAllowlist,
     maxTrackedRateLimitClients: config.maxTrackedRateLimitClients,

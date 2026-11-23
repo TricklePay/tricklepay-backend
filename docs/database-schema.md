@@ -58,7 +58,7 @@ A single row represents a unique contract event emitted on-chain by the TrickleP
   * `token` (`String?`): Contract address / token identifier of the asset being streamed; present on `created` events.
   * `totalAmount` (`Decimal(40, 0)?`): Initial stream deposit amount in smallest token units (e.g. stroops/base units, up to uint128); present on `created` events.
   * `amount` (`Decimal(40, 0)?`): Amount withdrawn in smallest token units; present on `withdrawn` events.
-  * `recipientAmount` (`Decimal(40, 0)?`): Vested unwithdrawn balance paid to recipient upon cancellation in smallest token units; present on `cancelled` events.
+  * `recipientAmount` (`Decimal(40, 0)?`): Vested unwithdrawn balance still claimable by the recipient after cancellation in smallest token units; present on `cancelled` events.
   * `senderRefund` (`Decimal(40, 0)?`): Unvested deposit refunded to sender upon cancellation in smallest token units; present on `cancelled` events.
   * `startTime` (`BigInt?`): Stream start time as a Unix timestamp in seconds; present on `created` events.
   * `endTime` (`BigInt?`): Stream scheduled end time as a Unix timestamp in seconds; present on `created` events.

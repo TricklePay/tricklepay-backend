@@ -31,6 +31,14 @@ export function buildSwaggerConfig(serverUrl: string): FastifyDynamicSwaggerOpti
       servers: [{ url: serverUrl, description: "This deployment" }],
       tags: [
         {
+          name: "v1",
+          description: "Stable v1 API endpoints (recommended).",
+        },
+        {
+          name: "deprecated",
+          description: "Unversioned endpoints (deprecated). Use /v1/* endpoints instead.",
+        },
+        {
           name: "streams",
           description: "Token stream read endpoints.",
         },
