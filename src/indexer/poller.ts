@@ -38,6 +38,10 @@ import { getIndexerPosition, saveIndexerPosition } from "../repositories/indexer
 
 import { applyEvent } from "./apply.js";
 
+import { streamEventBus } from "../event-bus.js";
+
+import { getStream } from "../repositories/streams.js";
+
 // The loop's state between ticks: where to read from next, and how far the
 // indexer has actually got. `lastLedger` is carried across ticks because a page
 // that applies nothing must leave it alone rather than reset it.
@@ -78,6 +82,10 @@ export class Poller {
   // Unix timestamp (ms) of when the next poll will fire. Set just before each
   // sleep so /status and metrics can report it to operators during backoff.
   private nextPollAtMs = 0;
+  // Whether the last lag reading was above the warning threshold. The warning
+  // is logged when the lag crosses the threshold rather than on every page, so
+  // a long backfill or a stall produces one line instead of one per tick.
+  private lagWarned = false;
   private readonly log: Logger;
 
   constructor(
@@ -207,6 +215,7 @@ export class Poller {
     // the whole backlog.
     while (shouldContinue()) {
       let page: EventPage;
+      const requestedCursor = current.cursor;
       try {
         page = await getContractEvents(this.server, this.config.contractId, current);
       } catch (err) {
@@ -233,7 +242,7 @@ export class Poller {
       pages += 1;
       events += page.events.length;
 
-      const drained = isBacklogDrained(page, position.cursor);
+      const drained = isBacklogDrained(page, requestedCursor);
       if (drained) break;
 
       // A cap keeps one tick from running forever on a huge backlog. The cursor
@@ -351,6 +360,25 @@ export class Poller {
       // never claimed as processed on the strength of a write that failed.
       nextState.lastLedger = Math.max(nextState.lastLedger, event.ledger);
       eventsApplied.inc({ kind: event.kind, outcome });
+
+      // Emit the stream update for SSE subscribers after successful apply
+      if (outcome === "applied" || outcome === "reconciled") {
+        try {
+          const updatedStream = await getStream({ streamId: event.streamId });
+          if (updatedStream) {
+            streamEventBus.emitStreamUpdate({
+              streamId: event.streamId,
+              kind: event.kind,
+              stream: updatedStream,
+              eventId: event.id,
+              ledger: event.ledger,
+            });
+          }
+        } catch (err) {
+          // SSE emission failure should not fail the indexer tick
+          this.log.warn({ err, streamId: event.streamId.toString() }, "failed to emit SSE update");
+        }
+      }
     }
 
     // Record the highest ledger actually applied, not the RPC chain head.
@@ -367,8 +395,31 @@ export class Poller {
     // reporting a negative lag if the RPC response is briefly stale.
     const lag = Math.max(0, page.latestLedger - nextState.lastLedger);
     indexerLagLedgers.set(lag);
+    this.reportLag(lag, nextState.lastLedger, page.latestLedger);
 
     return nextState;
+  }
+
+  // Logs once when the lag rises above the configured threshold, and once more
+  // when it falls back to or below it. The metric shows the figure; this puts
+  // a line in the logs for anyone reading them during an incident.
+  private reportLag(lag: number, lastLedger: number, chainLedger: number): void {
+    const threshold = this.config.lagWarnLedgers;
+    if (threshold <= 0) return;
+
+    if (lag > threshold && !this.lagWarned) {
+      this.lagWarned = true;
+      this.log.warn(
+        { lagLedgers: lag, threshold, lastLedger, chainLedger },
+        "indexer has fallen behind the chain head",
+      );
+    } else if (lag <= threshold && this.lagWarned) {
+      this.lagWarned = false;
+      this.log.info(
+        { lagLedgers: lag, threshold, lastLedger, chainLedger },
+        "indexer lag is back within the warning threshold",
+      );
+    }
   }
 }
 

@@ -35,7 +35,7 @@ describe("errorCodeForStatus (#73)", () => {
 
 describe("request rate limiting (#381)", () => {
   it("does not rate limit /health after /streams exhausts the client limit", async () => {
-    const app = await buildServer({ rateLimitMax: 3, rateLimitWindowMs: 5000 });
+    const app = await buildServer({ rateLimitListMax: 3, rateLimitListWindowMs: 5000 });
     app.get("/streams", async () => ({ streams: [] }));
 
     try {

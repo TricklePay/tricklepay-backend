@@ -1,11 +1,7 @@
-// Registers the GET /streams, GET /streams/summary, GET /tokens, GET /streams/:id/events, and GET /streams/:id endpoints.
-// These routes read stream records, historical events, and aggregations from the database.
-
-import { createHash } from "node:crypto";
-
-import { Prisma, type Stream } from "@prisma/client";
-
-import { StrKey } from "@stellar/stellar-sdk";
+// Registers the GET /streams, GET /streams/summary, GET /tokens, GET /streams/:id/events,
+// GET /streams/:id, GET /streams/:id/schedule, and GET /accounts/:address/summary endpoints.
+// Each endpoint lives in its own module under routes/streams/; this plugin adds the shared
+// schemas once and registers them on the same instance, in the same order as before.
 
 import type { FastifyInstance } from "fastify";
 
@@ -215,35 +211,11 @@ export type StreamRoutesOptions = {
   summaryCacheTtlMs?: number;
 };
 
-// Mirrors the `querystring` JSON schema on GET /streams below field for
-// field, so a parameter renamed in one place without the other is a compile
-// error instead of a silently-undefined value at runtime.
-interface ListStreamsQuery {
-  ids?: string;
-  sender?: string;
-  recipient?: string;
-  token?: string;
-  limit?: string;
-  offset?: string;
-  includeTotal?: string;
-  cancelled?: string;
-  status?: StreamStatus;
-  cursor?: string;
-  minAmount?: string;
-  maxAmount?: string;
-}
-
 export async function streamRoutes(
   app: FastifyInstance,
   opts: StreamRoutesOptions = {},
 ): Promise<void> {
   const summaryCacheTtlMs = opts.summaryCacheTtlMs ?? DEFAULT_STREAM_SUMMARY_CACHE_TTL_MS;
-  let cachedSummary: { payload: SummaryPayload; createdAt: number } | null = null;
-  // When a recomputation is already in-flight, all concurrent callers wait on
-  // the same Promise instead of each running their own four aggregate queries.
-  // A failed computation is never stored; the waiting callers all receive the
-  // same rejection so no stale data leaks through.
-  let inFlightSummary: Promise<SummaryPayload> | null = null;
 
   // Ensure the shared schemas are available whether this plugin is registered
   // on a full server (which calls addSchema centrally) or a bare Fastify
