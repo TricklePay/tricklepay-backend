@@ -52,6 +52,21 @@ function countBy(values: string[]): Map<string, number> {
 }
 
 describe("shared schema ids", () => {
+  it("uses totalAmount for the amount total and deprecates legacy aliases", () => {
+    const summaries = [
+      schemaModule.accountStreamSummarySchema,
+      schemaModule.tokenSummarySchema,
+      ...Object.values(schemaModule.streamSummaryResponseSchema.properties),
+    ];
+    for (const summary of summaries) {
+      expect(summary.required).toContain("totalAmount");
+      expect(summary.properties).toHaveProperty("totalAmount");
+      if ("total" in summary.properties) {
+        expect(summary.properties.total.deprecated).toBe(true);
+      }
+    }
+  });
+
   it("finds the exported *_SCHEMA_ID constants", () => {
     // Guards the enumeration itself: if the naming convention changes and this
     // finds nothing, the checks below would pass vacuously.

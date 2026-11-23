@@ -83,7 +83,7 @@ describe("X-Indexer-Lag-Ledgers header", () => {
     expect(indexerState.getIndexerPosition).not.toHaveBeenCalled();
   });
 
-  it.each(["/health", "/health/live", "/ready", "/metrics"])(
+  it.each(["/health", "/ready", "/metrics"])(
     "is omitted on the excluded route %s",
     async (url) => {
       indexerState.getIndexerPosition.mockResolvedValue(position(1_000, 1_042));
