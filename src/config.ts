@@ -74,6 +74,11 @@ export const DEFAULT_MAX_BACKOFF_MS = 60000;
 // that a normal catch-up drains in one tick.
 export const DEFAULT_MAX_PAGES_PER_TICK = 1000;
 
+// Default lag, in ledgers, above which the indexer logs a warning that it has
+// fallen behind the chain head. At roughly five seconds a ledger this is about
+// an hour and a half. 0 disables the warning; the lag metric is unaffected.
+export const DEFAULT_LAG_WARN_LEDGERS = 1000;
+
 // Summary aggregates are expensive and commonly polled, so cache them briefly.
 export const DEFAULT_STREAM_SUMMARY_CACHE_TTL_MS = 2_000;
 
@@ -86,6 +91,15 @@ export const DEFAULT_READY_MAX_STALENESS_MS = 0;
 // by server.ts when registering the rate-limit plugin.
 export const DEFAULT_RATE_LIMIT_MAX = 100;
 export const DEFAULT_RATE_LIMIT_WINDOW_MS = 60_000;
+
+// Per-route-group rate limits. These are the defaults; each can be overridden
+// via environment variables.
+export const DEFAULT_RATE_LIMIT_DETAIL_MAX = 200;
+export const DEFAULT_RATE_LIMIT_DETAIL_WINDOW_MS = 60_000;
+export const DEFAULT_RATE_LIMIT_LIST_MAX = 50;
+export const DEFAULT_RATE_LIMIT_LIST_WINDOW_MS = 60_000;
+export const DEFAULT_RATE_LIMIT_SUMMARY_MAX = 20;
+export const DEFAULT_RATE_LIMIT_SUMMARY_WINDOW_MS = 60_000;
 
 export const DEFAULT_CONNECTION_TIMEOUT_MS = 10_000;
 export const DEFAULT_KEEP_ALIVE_TIMEOUT_MS = 72_000;
@@ -244,6 +258,8 @@ export interface Config {
   readonly startLedger: number;
   readonly maxBackoffMs: number;
   readonly maxPagesPerTick: number;
+  // Lag in ledgers above which the indexer logs a warning. 0 disables it.
+  readonly lagWarnLedgers: number;
   readonly summaryCacheTtlMs: number;
   readonly bodyLimit: number;
   readonly queryStringLimit: number;
@@ -254,6 +270,12 @@ export interface Config {
   readonly trustedProxies: readonly string[];
   readonly rateLimitMax?: number;
   readonly rateLimitWindowMs?: number;
+  readonly rateLimitDetailMax?: number;
+  readonly rateLimitDetailWindowMs?: number;
+  readonly rateLimitListMax?: number;
+  readonly rateLimitListWindowMs?: number;
+  readonly rateLimitSummaryMax?: number;
+  readonly rateLimitSummaryWindowMs?: number;
   readonly readyMaxStalenessMs: number;
   readonly rateLimitAllowlist: readonly string[];
   readonly maxTrackedRateLimitClients?: number;
@@ -319,6 +341,7 @@ export function loadConfig(): Config {
       DEFAULT_MAX_PAGES_PER_TICK,
       1,
     ),
+    lagWarnLedgers: integer("INDEXER_LAG_WARN_LEDGERS", DEFAULT_LAG_WARN_LEDGERS),
     summaryCacheTtlMs: integer(
       "STREAM_SUMMARY_CACHE_TTL_MS",
       DEFAULT_STREAM_SUMMARY_CACHE_TTL_MS,
@@ -336,6 +359,12 @@ export function loadConfig(): Config {
     trustedProxies: parseTrustedProxies(process.env.TRUSTED_PROXIES),
     rateLimitMax,
     rateLimitWindowMs,
+    rateLimitDetailMax: integer("RATE_LIMIT_DETAIL_MAX", DEFAULT_RATE_LIMIT_DETAIL_MAX),
+    rateLimitDetailWindowMs: integer("RATE_LIMIT_DETAIL_WINDOW_MS", DEFAULT_RATE_LIMIT_DETAIL_WINDOW_MS),
+    rateLimitListMax: integer("RATE_LIMIT_LIST_MAX", DEFAULT_RATE_LIMIT_LIST_MAX),
+    rateLimitListWindowMs: integer("RATE_LIMIT_LIST_WINDOW_MS", DEFAULT_RATE_LIMIT_LIST_WINDOW_MS),
+    rateLimitSummaryMax: integer("RATE_LIMIT_SUMMARY_MAX", DEFAULT_RATE_LIMIT_SUMMARY_MAX),
+    rateLimitSummaryWindowMs: integer("RATE_LIMIT_SUMMARY_WINDOW_MS", DEFAULT_RATE_LIMIT_SUMMARY_WINDOW_MS),
     // Staleness threshold for the /ready endpoint. 0 = disabled.
     readyMaxStalenessMs: integer("READY_MAX_STALENESS_MS", DEFAULT_READY_MAX_STALENESS_MS),
     // Addresses that bypass the rate limiter entirely (#allowlist).
@@ -418,6 +447,7 @@ export function describeConfig(config: Config): LoggedConfig {
     startLedger: config.startLedger,
     maxBackoffMs: config.maxBackoffMs,
     maxPagesPerTick: config.maxPagesPerTick,
+    lagWarnLedgers: config.lagWarnLedgers,
     summaryCacheTtlMs: config.summaryCacheTtlMs,
     bodyLimit: config.bodyLimit,
     queryStringLimit: config.queryStringLimit,
@@ -426,6 +456,12 @@ export function describeConfig(config: Config): LoggedConfig {
     // Undefined when rate limiting is not configured; pino omits the field.
     rateLimitMax: config.rateLimitMax,
     rateLimitWindowMs: config.rateLimitWindowMs,
+    rateLimitDetailMax: config.rateLimitDetailMax,
+    rateLimitDetailWindowMs: config.rateLimitDetailWindowMs,
+    rateLimitListMax: config.rateLimitListMax,
+    rateLimitListWindowMs: config.rateLimitListWindowMs,
+    rateLimitSummaryMax: config.rateLimitSummaryMax,
+    rateLimitSummaryWindowMs: config.rateLimitSummaryWindowMs,
     readyMaxStalenessMs: config.readyMaxStalenessMs,
     rateLimitAllowlist: config.rateLimitAllowlist,
     maxTrackedRateLimitClients: config.maxTrackedRateLimitClients,

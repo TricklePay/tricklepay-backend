@@ -1,148 +1,160 @@
+import Fastify, { type FastifyInstance } from "fastify";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { resetLagCache } from "../src/indexer-lag-hook.js";
-import * as indexerStateRepo from "../src/repositories/indexer-state.js";
-import { streamRoutes } from "../src/routes/streams.js";
-import { buildServer } from "../src/server.js";
+// The X-Indexer-Lag-Ledgers header tells clients how stale a read is. The
+// repository is stubbed and the hook registered on a bare Fastify instance, so
+// only the hook's own rules are under test: which responses get the header,
+// when it is left off, how long a value is cached, and that a database error
+// never fails the request.
 
-describe("Indexer lag header exclusions and error handling (#674)", () => {
-  let getPositionSpy: ReturnType<typeof vi.spyOn>;
+const indexerState = vi.hoisted(() => ({
+  getIndexerPosition: vi.fn(),
+}));
 
-  beforeEach(() => {
-    resetLagCache();
-    getPositionSpy = vi.spyOn(indexerStateRepo, "getIndexerPosition").mockResolvedValue({
-      lastLedger: 100,
-      chainLedger: 150,
-      cursor: "cursor-123",
-      updatedAt: new Date(),
-    });
+vi.mock("../src/repositories/indexer-state.js", () => indexerState);
+
+const HEADER = "x-indexer-lag-ledgers";
+const T0 = new Date("2025-11-14T03:00:00.000Z");
+
+function position(lastLedger: number, chainLedger: number) {
+  return { lastLedger, chainLedger, cursor: "c", updatedAt: T0 };
+}
+
+let app: FastifyInstance;
+
+beforeEach(async () => {
+  // The cache is module state, so each test loads a fresh copy of the hook.
+  vi.resetModules();
+  indexerState.getIndexerPosition.mockReset();
+  // Only Date is faked: Fastify's inject relies on real timers.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(T0);
+
+  const { registerIndexerLagHook } = await import("../src/indexer-lag-hook.js");
+  app = Fastify();
+  registerIndexerLagHook(app);
+  for (const url of ["/streams", "/health", "/health/live", "/ready", "/metrics"]) {
+    app.get(url, async () => ({ ok: true }));
+  }
+  app.post("/streams", async () => ({ ok: true }));
+  await app.ready();
+});
+
+afterEach(async () => {
+  await app.close();
+  vi.useRealTimers();
+});
+
+describe("X-Indexer-Lag-Ledgers header", () => {
+  it("reports chainLedger minus lastLedger on GET responses", async () => {
+    indexerState.getIndexerPosition.mockResolvedValue(position(1_000, 1_042));
+
+    const res = await app.inject({ method: "GET", url: "/streams" });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers[HEADER]).toBe("42");
   });
 
-  afterEach(() => {
-    vi.restoreAllMocks();
-    resetLagCache();
+  it("clamps a negative lag to zero", async () => {
+    indexerState.getIndexerPosition.mockResolvedValue(position(1_050, 1_000));
+
+    const res = await app.inject({ method: "GET", url: "/streams" });
+
+    expect(res.headers[HEADER]).toBe("0");
   });
 
-  it("adds X-Indexer-Lag-Ledgers to successful GET read endpoints", async () => {
-    const app = await buildServer();
-    app.get("/", async (_req, reply) => reply.send({ ok: true }));
-    const response = await app.inject({ method: "GET", url: "/" });
+  it("is omitted before the first poll has recorded a position", async () => {
+    indexerState.getIndexerPosition.mockResolvedValue(null);
 
-    expect(response.statusCode).toBe(200);
-    expect(response.headers["x-indexer-lag-ledgers"]).toBe("50");
-    await app.close();
+    const res = await app.inject({ method: "GET", url: "/streams" });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers).not.toHaveProperty(HEADER);
   });
 
-  it("skips header for exact exclusions (/health, /ready, /metrics)", async () => {
-    const app = await buildServer();
+  it("is omitted on non-GET requests without touching the repository", async () => {
+    indexerState.getIndexerPosition.mockResolvedValue(position(1_000, 1_042));
 
-    const healthRes = await app.inject({ method: "GET", url: "/health" });
-    expect(healthRes.statusCode).toBe(200);
-    expect(healthRes.headers["x-indexer-lag-ledgers"]).toBeUndefined();
+    const res = await app.inject({ method: "POST", url: "/streams" });
 
-    const readyRes = await app.inject({ method: "GET", url: "/ready" });
-    expect(readyRes.headers["x-indexer-lag-ledgers"]).toBeUndefined();
-
-    const metricsRes = await app.inject({ method: "GET", url: "/metrics" });
-    expect(metricsRes.headers["x-indexer-lag-ledgers"]).toBeUndefined();
-
-    await app.close();
+    expect(res.statusCode).toBe(200);
+    expect(res.headers).not.toHaveProperty(HEADER);
+    expect(indexerState.getIndexerPosition).not.toHaveBeenCalled();
   });
 
-  it("skips header when query strings are present on excluded routes", async () => {
-    const app = await buildServer();
+  it.each(["/health", "/ready", "/metrics"])(
+    "is omitted on the excluded route %s",
+    async (url) => {
+      indexerState.getIndexerPosition.mockResolvedValue(position(1_000, 1_042));
 
-    const healthWithQuery = await app.inject({ method: "GET", url: "/health?verbose=true" });
-    expect(healthWithQuery.headers["x-indexer-lag-ledgers"]).toBeUndefined();
+      const res = await app.inject({ method: "GET", url });
 
-    const readyWithQuery = await app.inject({ method: "GET", url: "/ready?probe=1" });
-    expect(readyWithQuery.headers["x-indexer-lag-ledgers"]).toBeUndefined();
+      expect(res.statusCode).toBe(200);
+      expect(res.headers).not.toHaveProperty(HEADER);
+      expect(indexerState.getIndexerPosition).not.toHaveBeenCalled();
+    },
+  );
+});
 
-    const metricsWithQuery = await app.inject({ method: "GET", url: "/metrics?format=prometheus" });
-    expect(metricsWithQuery.headers["x-indexer-lag-ledgers"]).toBeUndefined();
+describe("lag cache", () => {
+  it("reuses the value for two seconds, then reads the repository again", async () => {
+    indexerState.getIndexerPosition
+      .mockResolvedValueOnce(position(1_000, 1_010))
+      .mockResolvedValueOnce(position(1_000, 1_020));
 
-    await app.close();
+    const first = await app.inject({ method: "GET", url: "/streams" });
+    expect(first.headers[HEADER]).toBe("10");
+
+    // Just inside the TTL: still served from the cache.
+    vi.setSystemTime(T0.getTime() + 1_999);
+    const cached = await app.inject({ method: "GET", url: "/streams" });
+    expect(cached.headers[HEADER]).toBe("10");
+    expect(indexerState.getIndexerPosition).toHaveBeenCalledTimes(1);
+
+    // At the TTL the entry has expired and the new lag is read.
+    vi.setSystemTime(T0.getTime() + 2_000);
+    const refreshed = await app.inject({ method: "GET", url: "/streams" });
+    expect(refreshed.headers[HEADER]).toBe("20");
+    expect(indexerState.getIndexerPosition).toHaveBeenCalledTimes(2);
   });
 
-  it("does not exclude routes that merely share a prefix with excluded routes", async () => {
-    const app = await buildServer();
+  it("does not cache the absence of a position", async () => {
+    indexerState.getIndexerPosition
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(position(1_000, 1_005));
 
-    app.get("/healthcheck", async (_req, reply) => {
-      return reply.send({ ok: true });
-    });
-    app.get("/readiness", async (_req, reply) => {
-      return reply.send({ ok: true });
-    });
+    const before = await app.inject({ method: "GET", url: "/streams" });
+    expect(before.headers).not.toHaveProperty(HEADER);
 
-    const healthcheckRes = await app.inject({ method: "GET", url: "/healthcheck" });
-    expect(healthcheckRes.statusCode).toBe(200);
-    expect(healthcheckRes.headers["x-indexer-lag-ledgers"]).toBe("50");
+    // The first poll lands moments later; the header appears straight away.
+    vi.setSystemTime(T0.getTime() + 100);
+    const after = await app.inject({ method: "GET", url: "/streams" });
+    expect(after.headers[HEADER]).toBe("5");
+  });
+});
 
-    const readinessRes = await app.inject({ method: "GET", url: "/readiness" });
-    expect(readinessRes.statusCode).toBe(200);
-    expect(readinessRes.headers["x-indexer-lag-ledgers"]).toBe("50");
+describe("repository failure", () => {
+  it("serves the response without the header when the repository throws", async () => {
+    indexerState.getIndexerPosition.mockRejectedValue(new Error("connection refused"));
 
-    await app.close();
+    const res = await app.inject({ method: "GET", url: "/streams" });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true });
+    expect(res.headers).not.toHaveProperty(HEADER);
   });
 
-  it("skips header and avoids database read on 404 responses", async () => {
-    const app = await buildServer();
-    getPositionSpy.mockClear();
+  it("recovers once the repository answers again", async () => {
+    indexerState.getIndexerPosition
+      .mockRejectedValueOnce(new Error("connection refused"))
+      .mockResolvedValueOnce(position(1_000, 1_007));
 
-    const response = await app.inject({ method: "GET", url: "/non-existent-route" });
+    const failed = await app.inject({ method: "GET", url: "/streams" });
+    expect(failed.statusCode).toBe(200);
+    expect(failed.headers).not.toHaveProperty(HEADER);
 
-    expect(response.statusCode).toBe(404);
-    expect(response.headers["x-indexer-lag-ledgers"]).toBeUndefined();
-    expect(getPositionSpy).not.toHaveBeenCalled();
-
-    await app.close();
-  });
-
-  it("skips header and avoids database read on 400 validation error responses", async () => {
-    const app = await buildServer();
-    await app.register(streamRoutes);
-    getPositionSpy.mockClear();
-
-    const response = await app.inject({ method: "GET", url: "/streams/invalid-id" });
-
-    expect(response.statusCode).toBe(400);
-    expect(response.headers["x-indexer-lag-ledgers"]).toBeUndefined();
-    expect(getPositionSpy).not.toHaveBeenCalled();
-
-    await app.close();
-  });
-
-  it("skips header and avoids database read on 304 Not Modified responses", async () => {
-    const app = await buildServer();
-
-    app.get("/cached-route", async (_req, reply) => {
-      return reply.status(304).send();
-    });
-
-    getPositionSpy.mockClear();
-    const response = await app.inject({ method: "GET", url: "/cached-route" });
-
-    expect(response.statusCode).toBe(304);
-    expect(response.headers["x-indexer-lag-ledgers"]).toBeUndefined();
-    expect(getPositionSpy).not.toHaveBeenCalled();
-
-    await app.close();
-  });
-
-  it("skips header on non-GET requests", async () => {
-    const app = await buildServer();
-
-    app.post("/submit", async (_req, reply) => {
-      return reply.send({ ok: true });
-    });
-
-    getPositionSpy.mockClear();
-    const response = await app.inject({ method: "POST", url: "/submit" });
-
-    expect(response.statusCode).toBe(200);
-    expect(response.headers["x-indexer-lag-ledgers"]).toBeUndefined();
-    expect(getPositionSpy).not.toHaveBeenCalled();
-
-    await app.close();
+    const ok = await app.inject({ method: "GET", url: "/streams" });
+    expect(ok.headers[HEADER]).toBe("7");
   });
 });

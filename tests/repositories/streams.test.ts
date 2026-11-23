@@ -514,3 +514,46 @@ describe("streams repository filter combinations", () => {
   });
 });
 
+
+describe("streams repository amount filters", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("does not constrain totalAmount when neither bound is given", async () => {
+    const spy = vi.spyOn(prisma.stream, "findMany").mockResolvedValueOnce([]);
+    await listStreams({});
+    const where = spy.mock.calls[0][0]!.where as Record<string, unknown>;
+    expect(where).not.toHaveProperty("totalAmount");
+  });
+
+  it("applies minAmount and maxAmount as an inclusive range on totalAmount", async () => {
+    const spy = vi.spyOn(prisma.stream, "findMany").mockResolvedValueOnce([]);
+    await listStreams({ minAmount: 1000000n, maxAmount: 10000000n });
+    const where = spy.mock.calls[0][0]!.where as { totalAmount: { gte: Prisma.Decimal; lte: Prisma.Decimal } };
+    expect(where.totalAmount.gte.toString()).toBe("1000000");
+    expect(where.totalAmount.lte.toString()).toBe("10000000");
+  });
+
+  it("applies a single bound without the other", async () => {
+    const spy = vi.spyOn(prisma.stream, "findMany").mockResolvedValueOnce([]);
+    await listStreams({ minAmount: 5n });
+    const where = spy.mock.calls[0][0]!.where as { totalAmount: Record<string, Prisma.Decimal> };
+    expect(Object.keys(where.totalAmount)).toEqual(["gte"]);
+  });
+
+  it("keeps uint128 bounds exact", async () => {
+    const max = 340282366920938463463374607431768211455n;
+    const spy = vi.spyOn(prisma.stream, "findMany").mockResolvedValueOnce([]);
+    await listStreams({ maxAmount: max });
+    const where = spy.mock.calls[0][0]!.where as { totalAmount: { lte: Prisma.Decimal } };
+    expect(where.totalAmount.lte.toFixed()).toBe(max.toString());
+  });
+
+  it("applies the same bounds to countStreams", async () => {
+    const spy = vi.spyOn(prisma.stream, "count").mockResolvedValueOnce(0);
+    await countStreams({ minAmount: 1n, maxAmount: 2n });
+    const where = spy.mock.calls[0][0]!.where as { totalAmount: Record<string, Prisma.Decimal> };
+    expect(Object.keys(where.totalAmount).sort()).toEqual(["gte", "lte"]);
+  });
+});

@@ -2,24 +2,27 @@
 
 Every response carries `x-request-id` (see [request-ids.md](request-ids.md)) and
 the security headers described under [Security headers](#security-headers).
+Most `GET` responses also carry `X-Indexer-Lag-Ledgers` (see
+[`X-Indexer-Lag-Ledgers`](#x-indexer-lag-ledgers)), and large responses are
+compressed (see [Compression](#compression-content-encoding-and-vary)).
 Beyond that, which headers a response carries — and what a client may rely on
 — varies by route. This table states it explicitly so it doesn't have to be
-read back out of `src/routes/*.ts`, `src/health-routes.ts`, and
-`src/request-id-hook.ts`.
+read back out of `src/routes/*.ts`, `src/health-routes.ts`,
+`src/request-id-hook.ts`, `src/indexer-lag-hook.ts`, and `src/server.ts`.
 
 | Endpoint | `Cache-Control` | `ETag` | Other headers | Set only on success? |
 | --- | --- | --- | --- | --- |
-| `GET /` | — | — | `X-Indexer-Lag-Ledgers` | Yes |
+| `GET /` | — | — | — | — |
 | `GET /health` | — | — | — | — |
 | `GET /ready` | — | — | — | — |
-| `GET /status` | `no-store` | — | `X-Indexer-Lag-Ledgers` | Yes (always 200; see below) |
-| `GET /streams` | `public, max-age=30` | — | `X-Indexer-Lag-Ledgers` | Yes — a 400 carries neither |
-| `GET /streams/summary` | `public, max-age=N` (variable, see below) | — | `X-Indexer-Lag-Ledgers` | Always 200 |
-| `GET /streams/:id` (also `HEAD`) | `public, max-age=30` | `"<updatedLedger>"`, or `"<updatedLedger>-<at>"` with `?at=` | `X-Indexer-Lag-Ledgers` | Yes — 400/404/304 carry neither |
-| `GET /streams/:id/events` | `public, max-age=30` | — | `X-Indexer-Lag-Ledgers` | Yes — 400/404 carry neither |
-| `GET /streams/:id/schedule` | `public, max-age=30` | `"<updatedLedger>-schedule-<points>"` | `X-Indexer-Lag-Ledgers` | Yes — 400/404/304 carry neither |
-| `GET /accounts/:address/summary` | `public, max-age=30` | — | `X-Indexer-Lag-Ledgers` | Yes — 400 carries neither |
-| `GET /tokens` | `public, max-age=30` | — | `X-Indexer-Lag-Ledgers` | Always 200 |
+| `GET /status` | `no-store` | — | — | Yes (always 200; see below) |
+| `GET /streams` | `public, max-age=30` | `W/"<sha256 of body>"` | — | Yes — a 400 carries neither |
+| `GET /streams/summary` | `public, max-age=N` (variable, see below) | — | — | Always 200 |
+| `GET /streams/:id` (also `HEAD`) | `public, max-age=30` | `"<updatedLedger>"`, or `"<updatedLedger>-<at>"` with `?at=` | — | Yes — 400/404 carry neither |
+| `GET /streams/:id/events` | `public, max-age=30` | — | — | Yes — 400/404 carry neither |
+| `GET /streams/:id/schedule` | `public, max-age=30` | `"<updatedLedger>-schedule-<points>"` | — | Yes — 400/404 carry neither |
+| `GET /accounts/:address/summary` | `public, max-age=30` | — | — | Yes — 400 carries neither |
+| `GET /tokens` | `public, max-age=30` | — | — | Always 200 |
 | `GET /metrics` | — | — | `Content-Type: text/plain; version=0.0.4; charset=utf-8` | — |
 | Any route, `429` (rate limited) | — | — | `Retry-After: <seconds>` | — |
 | Any unmatched route, `404` | — | — | — | — |
@@ -28,6 +31,9 @@ read back out of `src/routes/*.ts`, `src/health-routes.ts`, and
 in an `onRequest` hook that runs before routing (`src/request-id-hook.ts`),
 so it's present even on a 404 for a path that matches no route, a 429 from
 the rate limiter, and a 400 from schema validation.
+`X-Indexer-Lag-Ledgers`, `Content-Encoding`, and `Vary` are also omitted:
+they are added by hooks to responses on most rows, under the conditions
+described in their own sections below, rather than by the route.
 
 `/docs`, `/docs/json`, and `/docs/yaml` aren't listed — their caching headers
 are `@fastify/swagger-ui`'s defaults. They do carry the security headers below,
@@ -92,26 +98,79 @@ honoured by browsers when the request is actually served over HTTPS.
 
 ## `ETag` and conditional requests
 
-Only `GET /streams/:id` and `GET /streams/:id/schedule` set `ETag`. Both
-derive it from the stream's `updatedLedger` — the ledger of the last event
-actually applied to that stream — plus any request-specific input that
-changes the response (`?at=` for the stream view, the point count for the
-schedule). Both check the incoming `If-None-Match` against that same value
-and reply `304` with an empty body on a match, rather than recomputing and
-re-sending a response the client already has.
+Three routes set `ETag`, and all of them build it and evaluate
+`If-None-Match` through [`src/lib/etag.ts`](../src/lib/etag.ts), so the rules
+below hold on every one of them:
 
-No other endpoint sets `ETag`: `/streams`, `/streams/:id/events`, `/tokens`,
-and `/accounts/:address/summary` all return collections or aggregates that
-don't reduce to one stream's `updatedLedger`, so there is no single version
-token to compare against.
+- **`GET /streams/:id` and `GET /streams/:id/schedule`** use a strong tag
+  (`strongEtag`) derived from the stream's `updatedLedger` — the ledger of the
+  last event actually applied to that stream — plus any request-specific input
+  that changes the response (`?at=` for the stream view, the point count for
+  the schedule).
+- **`GET /streams`** uses a weak tag (`weakEtagFromBody`): a SHA-256 of the
+  serialized response body, so it changes whenever any returned field
+  (streams, `total`, `nextCursor`, pagination) does. A list has no single
+  version column to derive a tag from, and the body hash only promises
+  semantic equivalence, hence `W/`.
 
-## `X-Indexer-Lag-Ledgers` header (#674)
+`ifNoneMatchMatches` applies RFC 9110 weak comparison: `*` matches any current
+representation, a comma-separated list matches if any entry does, and the weak
+and strong forms of the same opaque value are equal. Entries that are not
+valid entity-tags are ignored, so a malformed header never yields a `304`. On
+a match the route replies `304` with an empty body rather than re-sending a
+response the client already has.
 
-The `X-Indexer-Lag-Ledgers` header communicates how fresh the service's indexer
-data is relative to the chain head. It is attached to successful GET read
-responses so clients know the current lag without issuing an extra `/status`
-query.
+No other endpoint sets `ETag`: `/streams/:id/events`, `/streams/summary`,
+`/tokens`, and `/accounts/:address/summary` return collections or aggregates
+that don't reduce to one stream's `updatedLedger` and have not needed
+revalidation.
 
-- **Exclusions**: `/health`, `/ready`, and `/metrics` are excluded by exact pathname match (without query string), so queries like `/metrics?x=1` or `/health?verbose=true` still skip the header. Unrelated routes with matching prefixes (e.g. `/healthcheck`) are not excluded.
-- **Errors and 304 responses**: Error responses (`statusCode >= 400`) and conditional `304 Not Modified` responses skip this header, preventing database lookups for failed requests or body-less responses.
-- **Uninitialized indexer**: If the indexer has not yet completed its initial poll tick, no lag value is known and the header is omitted.
+## `X-Indexer-Lag-Ledgers`
+
+[`src/indexer-lag-hook.ts`](../src/indexer-lag-hook.ts) adds
+`X-Indexer-Lag-Ledgers: <n>` in an `onSend` hook, so a client can see how
+fresh the data is without a separate `/status` call. `<n>` is
+`max(0, chainLedger - lastLedger)` — the same figure `GET /status` reports
+as `lagLedgers` (see [indexer-lag.md](indexer-lag.md)).
+
+- **Which responses carry it.** Successful `GET` responses only. `400`/`404`
+  (any status `>= 400`) and `304 Not Modified` responses skip it, so a failed
+  or body-less response never triggers an `IndexerState` read. `/health`,
+  `/ready`, and `/metrics` are excluded by exact path match, ignoring any
+  query string (`/metrics?x=1` is still excluded); a route that merely shares
+  a prefix, such as `/healthcheck`, is not. `HEAD` requests (including
+  `HEAD /streams/:id`) never carry it, because the hook only acts on `GET`.
+- **When it is omitted.** Before the indexer's first poll, when there is no
+  recorded position yet, and when the position cannot be read (for example
+  during a database outage); the response is otherwise unaffected.
+- **Caching.** The value is read from `IndexerState` and cached in-process
+  for 2 seconds, so it can trail `/status` by that much. It describes the lag
+  at the moment the response was produced: a copy served from an HTTP cache
+  under `Cache-Control: public, max-age=30` carries the value from when it
+  was stored, up to 30 seconds old. Use `GET /status` (`no-store`) when the
+  current figure matters.
+- **Browsers.** It is not in the CORS exposed headers, so browser JavaScript
+  on another origin cannot read it — see
+  [CORS origin](../README.md#cors-origin).
+
+## Compression: `Content-Encoding` and `Vary`
+
+`@fastify/compress` is registered globally in
+[`src/server.ts`](../src/server.ts). A response is compressed when all of
+these hold:
+
+- the request's `Accept-Encoding` names an encoding the plugin supports
+  (`br`, `gzip`, or `deflate`; the client's preference order is respected),
+  and the request does not carry `x-no-compression`;
+- the body is at least `COMPRESSION_THRESHOLD_BYTES` (default `1024`; see
+  the [configuration table](../README.md#configuration));
+- the content type is compressible (JSON and text, so every API response),
+  and the status is not `206`.
+
+A compressed response carries `Content-Encoding: <encoding>`, `Vary:
+accept-encoding` (appended to any existing `Vary`), and a `Content-Length`
+for the compressed bytes. Responses below the threshold, or for clients that
+don't ask for compression, are sent as-is with neither `Content-Encoding` nor
+the `Vary` entry, so small responses such as `/health` and single-stream
+lookups are usually uncompressed. Compression happens after the route has set
+`ETag` and `Cache-Control`, so neither depends on the encoding.

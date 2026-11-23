@@ -9,6 +9,16 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     environment: "node",
+    // Coverage is only collected when `--coverage` is passed (`npm run
+    // test:coverage`, used by CI). No thresholds are enforced yet; the first
+    // CI report is the baseline.
+    coverage: {
+      provider: "v8",
+      include: ["src/**/*.ts"],
+      exclude: ["src/generated/**"],
+      reporter: ["text", "json-summary", "json", "html"],
+      reportsDirectory: "coverage",
+    },
     projects: [
       {
         test: {
@@ -22,6 +32,10 @@ export default defineConfig({
         test: {
           name: "integration",
           include: ["tests/integration/**/*.test.ts"],
+          // Every file shares the one DATABASE_URL, and some clean up with a
+          // table-wide deleteMany, so files running in parallel delete each
+          // other's rows mid-test. Run them one at a time.
+          fileParallelism: false,
         },
       },
     ],
