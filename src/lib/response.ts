@@ -31,6 +31,7 @@ export function sendError(
   code: ApiErrorCode,
   message: string,
 ): ReturnType<FastifyReply["send"]> {
+  if (reply.sent) return reply as unknown as ReturnType<FastifyReply["send"]>;
   return reply.code(statusCode).send({
     code,
     error: message,

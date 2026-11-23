@@ -1,7 +1,32 @@
 import { prisma } from "../db.js";
-import { isMainModule, parseCliArgs, wantsJsonOutput } from "../lib/cli-args.js";
+import {
+  isMainModule,
+  parseAndValidateCli,
+  parseCliArgs,
+  wantsJsonOutput,
+  type CliFlagDef,
+} from "../lib/cli-args.js";
 import { logger } from "../logger.js";
 import { pruneFailedEvents, type PruneFailedEventsResult } from "../repositories/failed-events.js";
+
+export const PRUNE_ALLOWED_FLAGS: readonly CliFlagDef[] = [
+  { name: "--older-than", type: "string" },
+  { name: "--dry-run", type: "boolean" },
+  { name: "--json", type: "boolean" },
+  { name: "--help", type: "boolean" },
+  { name: "-h", type: "boolean" },
+];
+
+export const PRUNE_USAGE = `Usage: tsx src/indexer/prune.ts --older-than=<age> [--dry-run] [--json]
+
+Options:
+  --older-than=<age>   Age cutoff for pruning failed events (e.g. 30d, 60d, 24h, 30)
+  --dry-run            Report what would be pruned without deleting
+  --json               Output result as JSON
+  --help, -h           Show this help message
+
+Example:
+  tsx src/indexer/prune.ts --older-than=30d --dry-run`;
 
 /**
  * Parses a human-readable age string (e.g. "30d", "60 days", "24h", "30") into a cutoff Date.
@@ -46,15 +71,33 @@ export async function runPrune(options: PruneCommandOptions): Promise<PruneFaile
 }
 
 async function main(): Promise<void> {
-  const args = parseCliArgs();
+  const rawArgv = process.argv.slice(2);
+  if (rawArgv.length === 0) {
+    console.error(PRUNE_USAGE);
+    process.exitCode = 1;
+    return;
+  }
 
-  const dryRun = args.get("--dry-run") === true || args.get("--dryRun") === true;
+  const parsed = parseAndValidateCli(rawArgv, PRUNE_ALLOWED_FLAGS, PRUNE_USAGE);
+  if (parsed.isHelp) {
+    console.log(PRUNE_USAGE);
+    process.exitCode = 0;
+    return;
+  }
+  if (!parsed.ok) {
+    console.error(`Error: ${parsed.error}\n`);
+    console.error(PRUNE_USAGE);
+    process.exitCode = 2;
+    return;
+  }
+
+  const args = parsed.args;
+  const dryRun = args.get("--dry-run") === true;
   const jsonOutput = wantsJsonOutput(args);
-  const rawOlderThan = args.get("--older-than") ?? args.get("--olderThan");
+  const rawOlderThan = args.get("--older-than");
 
   if (!rawOlderThan || typeof rawOlderThan !== "string") {
-    console.error("Usage: tsx src/indexer/prune.ts --older-than=<age> [--dry-run] [--json]");
-    console.error("Example: tsx src/indexer/prune.ts --older-than=30d --dry-run");
+    console.error(PRUNE_USAGE);
     process.exitCode = 1;
     return;
   }

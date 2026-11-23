@@ -38,6 +38,8 @@ import { createRateLimiterHook } from "./rate-limiter.js";
 
 import { errorCodeForStatus } from "./error-redaction.js";
 
+import { requestSignalStorage } from "./lib/request-context.js";
+
 import { registerErrorHandlers } from "./error-handlers.js";
 
 import { registerHealthRoutes } from "./health-routes.js";
@@ -179,11 +181,31 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
   });
   app.addHook("onRequest", rateLimiter);
 
-  if (config?.requestTimeoutMs) {
-    const timeoutMs = config.requestTimeoutMs;
+  // Single request timeout mechanism that cancels the handler (#675).
+  // When requestTimeoutMs is configured, an onRequest hook sets a timer and binds
+  // an AbortController across the request lifecycle via AsyncLocalStorage (requestSignalStorage).
+  // If the timeout expires before a reply is sent:
+  // 1. The AbortController aborts, signalling cooperative cancellation.
+  // 2. A 408 response is sent.
+  // 3. Database queries wrapped by withQueryTimeout stop waiting immediately.
+  // 4. The handler terminates without sending a duplicate reply or logging an error.
+  const timeoutMs = config?.requestTimeoutMs;
+  if (timeoutMs && timeoutMs > 0) {
     app.addHook("onRequest", (request, reply, done) => {
+      const ac = new AbortController();
+      (request as any).abortController = ac;
+
+      const originalSend = reply.send.bind(reply);
+      reply.send = function (payload?: any) {
+        if (this.sent && (ac.signal.aborted || (this.request.raw as any).destroyed)) {
+          return this;
+        }
+        return originalSend(payload);
+      };
+
       const timer = setTimeout(() => {
         if (!reply.sent) {
+          ac.abort(new Error("request timeout"));
           void reply.status(408).send({
             code: errorCodeForStatus(408),
             error: "request timeout",
@@ -191,8 +213,18 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
           });
         }
       }, timeoutMs);
-      void reply.raw.on("finish", () => clearTimeout(timer));
-      done();
+
+      const cleanup = () => clearTimeout(timer);
+      void reply.raw.on("finish", cleanup);
+      void reply.raw.on("close", cleanup);
+
+      requestSignalStorage.run(ac.signal, () => done());
+    });
+  } else {
+    app.addHook("onRequest", (request, reply, done) => {
+      const ac = new AbortController();
+      (request as any).abortController = ac;
+      requestSignalStorage.run(ac.signal, () => done());
     });
   }
 
