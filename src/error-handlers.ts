@@ -26,6 +26,10 @@ export function registerErrorHandlers(app: FastifyInstance): void {
   // reach the client (#74); the original error is logged server-side with
   // the request id for diagnosis.
   app.setErrorHandler((err: FastifyError, request, reply) => {
+    if (reply.sent) {
+      return;
+    }
+
     const isDatabaseError =
       err instanceof QueryTimeoutError ||
       (typeof err.message === "string" &&

@@ -1,14 +1,28 @@
 name: Dependency Audit
 
+# Policy (also documented in CONTRIBUTING.md):
+#
+# - Pull requests fail only on high or critical advisories that the pull
+#   request introduces: ones reported for its package-lock.json but not for
+#   the base branch's. Both lock files are audited in the same run, against
+#   the same advisory database, so an advisory published today that affects
+#   main too is not blamed on the pull request.
+# - The scheduled run (and a manual run) reports every advisory against main
+#   and fails on any high or critical one, so the existing backlog stays
+#   visible in the Actions tab without turning every pull request red.
 on:
   schedule:
     - cron: '0 0 * * *' # daily
-  push:
-    branches: [main]
+  workflow_dispatch:
   pull_request:
 
+# The audit only reads the repository and the public advisory database.
+permissions:
+  contents: read
+
 jobs:
-  audit:
+  full-report:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,7 +30,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
 
       # Run audit and fail on high or critical vulnerabilities in production dependencies.
       # Low and moderate vulnerabilities are reported but will not fail the build.

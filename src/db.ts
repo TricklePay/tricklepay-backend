@@ -1,6 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 
-import { databaseQueryDuration } from "./metrics.js";
+import { requestSignalStorage } from "./lib/request-context.js";
+import { databaseQueryDuration, repositoryQueryDuration } from "./metrics.js";
 
 // A single Prisma client shared across the process. Each new client opens its
 // own connection pool, so every module imports this one instance rather than
@@ -37,26 +38,39 @@ export class QueryTimeoutError extends Error {
 
 /**
  * Resolves with `operation`, or rejects with {@link QueryTimeoutError} once
- * `timeoutMs` has elapsed, whichever happens first.
+ * `timeoutMs` has elapsed or when the request's AbortSignal is cancelled (#675),
+ * whichever happens first.
  *
- * Prisma exposes no per-query abort, so the underlying query is not cancelled;
- * this stops the request from waiting on it. The timer is always cleared so a
- * fast query never leaves a pending handle behind.
+ * When an AbortSignal cancels, the wait on the database query terminates immediately,
+ * freeing the handler from racing the timed-out client response. The timer is always
+ * cleared so a fast query never leaves a pending handle behind.
  */
 export async function withQueryTimeout<T>(
   operation: Promise<T>,
   timeoutMs = DEFAULT_QUERY_TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<T> {
+  const activeSignal = signal ?? requestSignalStorage.getStore();
+  if (activeSignal?.aborted) {
+    throw activeSignal.reason ?? new Error("request aborted");
+  }
+
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
   try {
     return await Promise.race([
       operation,
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new QueryTimeoutError(timeoutMs)), timeoutMs);
+        if (activeSignal) {
+          onAbort = () => reject(activeSignal.reason ?? new Error("request aborted"));
+          activeSignal.addEventListener("abort", onAbort, { once: true });
+        }
       }),
     ]);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
+    if (activeSignal && onAbort) activeSignal.removeEventListener("abort", onAbort);
   }
 }
 
@@ -79,5 +93,37 @@ export async function checkHealth(timeoutMs = 5000): Promise<{ status: "up" | "d
     return { status: "down", error };
   } finally {
     if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Repository function instrumentation
+//
+// Wraps repository functions to record their execution duration in the
+// repositoryQueryDuration histogram. This provides observability into which
+// repository operations are slow and where optimization is needed.
+// ---------------------------------------------------------------------------
+
+/**
+ * Wraps a repository function to measure its duration and record it in the
+ * repositoryQueryDuration histogram with the function name as a label.
+ *
+ * Usage:
+ *   export async function getStream(...): Promise<Stream | null> {
+ *     return measureRepositoryCall("getStream", () =>
+ *       withQueryTimeout(prisma.stream.findUnique({ where: { streamId } }))
+ *     );
+ *   }
+ */
+export async function measureRepositoryCall<T>(
+  functionName: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const start = Date.now();
+  try {
+    return await operation();
+  } finally {
+    const duration = Date.now() - start;
+    repositoryQueryDuration.observe({ function: functionName }, duration);
   }
 }

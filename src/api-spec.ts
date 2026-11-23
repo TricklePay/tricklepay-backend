@@ -31,6 +31,14 @@ export function buildSwaggerConfig(serverUrl: string): FastifyDynamicSwaggerOpti
       servers: [{ url: serverUrl, description: "This deployment" }],
       tags: [
         {
+          name: "v1",
+          description: "Stable v1 API endpoints (recommended).",
+        },
+        {
+          name: "deprecated",
+          description: "Unversioned endpoints (deprecated). Use /v1/* endpoints instead.",
+        },
+        {
           name: "streams",
           description: "Token stream read endpoints.",
         },
@@ -38,10 +46,21 @@ export function buildSwaggerConfig(serverUrl: string): FastifyDynamicSwaggerOpti
           name: "indexer",
           description: "Indexer health and progress.",
         },
+        {
+          name: "admin",
+          description: "Administrative endpoints requiring bearer authentication.",
+        },
       ],
       components: {
         // Schemas are pulled from app.addSchema calls; no need to list
         // them here — @fastify/swagger discovers them automatically.
+        securitySchemes: {
+          bearerAuth: {
+            type: "http",
+            scheme: "bearer",
+            description: "Bearer token authentication for admin endpoints. Configured via ADMIN_TOKEN.",
+          },
+        },
       },
     },
     // Without this, every shared schema is emitted under a positional name

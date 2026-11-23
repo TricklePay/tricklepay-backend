@@ -67,12 +67,11 @@ Two things should always line up:
   GROUP BY s."withdrawn";
   ```
 
-  For a **cancelled** stream, the contract freezes `totalAmount` and
-  `withdrawn` to the same frozen figure at cancellation — the withdrawn total
-  up to that point plus the recipient's cancellation payout (see
-  `applyCancellation` in `src/repositories/streams.ts`). So the check becomes
-  `stored_withdrawn == sum_of_withdrawn_events + recipientAmount` using the
-  `recipientAmount` from the stream's `cancelled` row.
+  For a **cancelled** stream, the contract freezes `totalAmount` at the amount
+  withdrawn before cancellation plus the `recipientAmount` still claimable by
+  the recipient. Cancellation leaves `withdrawn` unchanged; later withdrawals
+  increase it. Check that `stored_withdrawn == sum_of_withdrawn_events` and
+  `stored_totalAmount == withdrawn_before_cancellation + recipientAmount`.
 
 If both checks pass, the stored row is a faithful summary of its own event
 history — the normal case.

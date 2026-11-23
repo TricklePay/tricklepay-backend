@@ -179,6 +179,62 @@ export const customHistogram = new Histogram(
 
 `tricklepay_database_query_duration_ms` records the duration of each Prisma SQL query in milliseconds. It is observed from Prisma query events in the shared client, so it includes query execution across API and indexer database operations. The histogram has no labels, keeping its series count fixed; use database logs or traces when individual query identification is needed.
 
+## Repository Function Duration
+
+`tricklepay_repository_query_duration_ms` records the duration of repository function calls in milliseconds, labeled by function name. This provides observability into which repository operations are slow and where optimization effort is needed.
+
+### Available Function Labels
+
+The `function` label identifies the repository operation. Bounded cardinality is guaranteed because the label values come from a fixed set of exported repository functions:
+
+**Streams repository:**
+- `upsertStream` - Full state reconciliation write
+- `insertStream` - Create stream from `created` event
+- `applyWithdrawal` - Apply withdrawal delta
+- `applyCancellation` - Apply cancellation with freeze
+- `getStream` - Fetch single stream by ID
+- `listStreams` - Paginated stream list with filters
+- `countStreams` - Count streams matching filter
+- `aggregateStreams` - Count and sum totals by status
+- `listTokens` - Grouped stream counts by token
+- `getAccountStreams` - Incoming and outgoing streams for address
+
+**Indexer state repository:**
+- `getIndexerPosition` - Fetch last checkpoint
+- `saveIndexerPosition` - Write new checkpoint
+
+**Indexed events repository:**
+- `listIndexedEvents` - Fetch event history for stream
+- `recordIndexedEvent` - Store indexed event record
+
+**Failed events repository:**
+- `recordFailedEvent` - Upsert failed event record
+- `listFailedEvents` - Fetch failed events batch
+- `getFailedEventById` - Fetch single failed event
+
+### Usage Example
+
+To identify slow list queries:
+```promql
+histogram_quantile(0.95, rate(tricklepay_repository_query_duration_ms_bucket{function="listStreams"}[5m]))
+```
+
+To see which repository functions are called most frequently:
+```promql
+rate(tricklepay_repository_query_duration_ms_count[5m])
+```
+
+## Connection Pool Metrics
+
+Prisma does not currently expose connection pool metrics (active connections, idle connections, pool size) through its public API. The configured pool size can be read from the `connection_limit` query parameter in `DATABASE_URL`, but runtime pool usage is not observable.
+
+**Workaround**: Monitor at the PostgreSQL level using `pg_stat_activity`:
+```sql
+SELECT count(*) FROM pg_stat_activity WHERE datname = 'tricklepay';
+```
+
+Or use database monitoring tools (e.g., pgAdmin, DataDog) that query PostgreSQL statistics tables directly. Query duration metrics (`tricklepay_database_query_duration_ms` and `tricklepay_repository_query_duration_ms`) provide indirect signals: slow queries or timeouts may indicate pool exhaustion.
+
 ## Testing
 
 After adding a metric:

@@ -15,12 +15,14 @@ const failedEvents = vi.hoisted(() => ({
   listFailedEvents: vi.fn(),
   refreshFailedEventBacklog: vi.fn(),
   recordFailedEvent: vi.fn(),
+  getFailedEventById: vi.fn(),
 }));
 
 const indexer = vi.hoisted(() => ({ applyEvent: vi.fn() }));
 
 const database = vi.hoisted(() => ({
   transaction: vi.fn(),
+  disconnect: vi.fn(),
   tx: {
     indexedEvent: {
       createMany: vi.fn(),
@@ -32,10 +34,13 @@ vi.mock("../../src/chain/rpc.js", () => chain);
 vi.mock("../../src/repositories/failed-events.js", () => failedEvents);
 vi.mock("../../src/indexer/apply.js", () => indexer);
 vi.mock("../../src/db.js", () => ({
-  prisma: { $transaction: database.transaction },
+  prisma: {
+    $transaction: database.transaction,
+    $disconnect: database.disconnect,
+  },
 }));
 
-const { replayFailedEvents } = await import("../../src/indexer/replay.js");
+const { replayFailedEvents, main: replayMain } = await import("../../src/indexer/replay.js");
 
 const CONTRACT_ID = "CDMB62RVYAXJJNYYH7K442SHSAJIXTZ6K7JANGSMQF2T7MHCTVSK75SW";
 const PASSPHRASE = "Test SDF Network ; September 2015";
@@ -58,6 +63,8 @@ beforeEach(() => {
   failedEvents.clearFailedEvent.mockResolvedValue(undefined);
   failedEvents.refreshFailedEventBacklog.mockResolvedValue(undefined);
   failedEvents.recordFailedEvent.mockResolvedValue(undefined);
+  failedEvents.getFailedEventById.mockResolvedValue(null);
+  database.disconnect.mockResolvedValue(undefined);
   chain.getContractEvents.mockResolvedValue({
     events: [captured.events[1]],
     latestLedger: 56999999,
@@ -174,5 +181,85 @@ describe("replayFailedEvents", () => {
     expect(database.transaction).not.toHaveBeenCalled();
     expect(failedEvents.clearFailedEvent).not.toHaveBeenCalled();
     expect(failedEvents.recordFailedEvent).not.toHaveBeenCalled();
+  });
+
+  it("suppresses informational logger messages when silent is true", async () => {
+    indexer.applyEvent.mockResolvedValue("applied");
+
+    const result = await replayFailedEvents(
+      {} as rpc.Server,
+      CONTRACT_ID,
+      PASSPHRASE,
+      { dryRun: true, silent: true },
+    );
+
+    expect(result).toEqual({ attempted: 1, succeeded: 1, failed: 0, dryRun: true });
+  });
+
+  describe("replay CLI streams", () => {
+    it("routes json results to stdout and leaves stderr empty in bulk replay mode", async () => {
+      indexer.applyEvent.mockResolvedValue("applied");
+      const origArgv = process.argv;
+      const origExitCode = process.exitCode;
+      const origContract = process.env.STREAM_CONTRACT_ID;
+      const origDb = process.env.DATABASE_URL;
+      process.env.STREAM_CONTRACT_ID = CONTRACT_ID;
+      process.env.DATABASE_URL = "postgresql://ci:ci@localhost:5432/tricklepay";
+      const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+      const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+      try {
+        process.argv = ["node", "replay.js", "--dry-run", "--json"];
+        process.exitCode = undefined;
+
+        await replayMain();
+
+        expect(process.exitCode).toBeUndefined();
+        expect(stderrSpy).not.toHaveBeenCalled();
+        expect(stdoutSpy).toHaveBeenCalledTimes(1);
+        const parsed = JSON.parse(String(stdoutSpy.mock.calls[0][0]));
+        expect(parsed).toEqual({
+          attempted: 1,
+          succeeded: 1,
+          failed: 0,
+          dryRun: true,
+        });
+      } finally {
+        process.argv = origArgv;
+        process.exitCode = origExitCode;
+        process.env.STREAM_CONTRACT_ID = origContract;
+        process.env.DATABASE_URL = origDb;
+      }
+    });
+
+    it("routes single event not-found diagnostic error to stderr in text mode", async () => {
+      failedEvents.listFailedEvents.mockResolvedValue([]);
+      const origArgv = process.argv;
+      const origExitCode = process.exitCode;
+      const origContract = process.env.STREAM_CONTRACT_ID;
+      const origDb = process.env.DATABASE_URL;
+      process.env.STREAM_CONTRACT_ID = CONTRACT_ID;
+      process.env.DATABASE_URL = "postgresql://ci:ci@localhost:5432/tricklepay";
+      const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+      const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+      try {
+        process.argv = ["node", "replay.js", "--event-id=0000000000000000000-0000000000"];
+        process.exitCode = undefined;
+
+        await replayMain();
+
+        expect(process.exitCode).toBe(1);
+        expect(stdoutSpy).not.toHaveBeenCalled();
+        expect(stderrSpy).toHaveBeenCalled();
+        const errOutput = stderrSpy.mock.calls.map((c) => String(c[0])).join("");
+        expect(errOutput).toContain("not found in failed events table");
+      } finally {
+        process.argv = origArgv;
+        process.exitCode = origExitCode;
+        process.env.STREAM_CONTRACT_ID = origContract;
+        process.env.DATABASE_URL = origDb;
+      }
+    });
   });
 });
