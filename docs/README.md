@@ -42,6 +42,7 @@ Listed alphabetically by file name, ignoring case.
 - [load-testing.md](load-testing.md): Guide for running the load test script that seeds 100,000 streams and benchmarks query performance (list, filters, cursor pagination, aggregations) with recorded p95 latencies and advisory thresholds.
 - [local-network.md](local-network.md): Configuration and setup for running the indexer and API against a local Stellar/Soroban development network.
 - [logging.md](logging.md): Pino log structure, severity levels, standard fields, and how request logs are correlated.
+- [multi-contract-design.md](multi-contract-design.md): Design specification for indexing multiple stream contracts simultaneously, covering schema changes, API filters, per-contract cursors, and backward compatibility.
 - [node-version-policy.md](node-version-policy.md): States the minimum supported, CI-tested, and production Node versions, and why `.nvmrc` deliberately pins the floor rather than matching the Dockerfile.
 - [openapi-client-generation.md](openapi-client-generation.md): Guide for generating a typed TypeScript client from the `/docs/json` OpenAPI document, and why amount and time fields are decimal strings rather than numbers.
 - [poll-tick-sequence.md](poll-tick-sequence.md): Mermaid sequence diagram of a single poll tick, from fetching a page of events through decoding, applying, recording failures, and saving the new position.
