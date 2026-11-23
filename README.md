@@ -1694,6 +1694,10 @@ with a dedicated pre-deploy hook or init-container step, use the migration image
 instead of running migrations inside the API container; either way, migrations
 must complete before the app process accepts connections.
 
+### Prisma Pin and Dependency Policy
+
+`prisma` and `@prisma/client` are pinned to exact versions (`6.19.3`) to prevent drift across environments and avoid unexpected breaking changes between contributors and deployments (#396). The `deepmerge-ts` (<8.0.0) stack exhaustion advisory (GHSA-ggr8-5vv4-36mx) reported via `prisma -> @prisma/config -> deepmerge-ts` is not reachable in production: `@prisma/config` is only invoked during local development and build/generate/migration CLI operations with trusted configuration files, not during runtime request handling or against untrusted inputs (#557). Upgrading to Prisma 7.x (which requires breaking config and schema changes) is deferred until a planned major version milestone. The advisory is accepted by ID in `.github/workflows/audit.yml`; any other high or critical advisory still fails the audit.
+
 ### Resetting the local database
 
 This is for local development only. Resetting the database permanently deletes
