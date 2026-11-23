@@ -20,6 +20,16 @@ on:
 permissions:
   contents: read
 
+# Advisories accepted by ID (comma separated), each with a written reason. Matching is by
+# advisory ID, never by package name, so a different advisory in the same package still fails.
+#
+# - GHSA-ggr8-5vv4-36mx: deepmerge-ts <8.0.0 stack exhaustion, reached only through
+#   prisma -> @prisma/config. Prisma CLI config merging runs at build/generate/migrate time on
+#   trusted static config, never at runtime. prisma and @prisma/client stay pinned to 6.19.3
+#   (#396, #557); see "Prisma Pin and Dependency Policy" in the README.
+env:
+  ACCEPTED_ADVISORIES: GHSA-ggr8-5vv4-36mx
+
 jobs:
   full-report:
     if: github.event_name != 'pull_request'
@@ -31,32 +41,124 @@ jobs:
         with:
           node-version: 22
 
-      # Run audit and fail on high or critical vulnerabilities in production dependencies.
-      # Low and moderate vulnerabilities are reported but will not fail the build.
-      # GHSA-ggr8-5vv4-36mx (deepmerge-ts <8.0.0 via prisma -> @prisma/config) is accepted as
-      # unreachable at runtime because Prisma CLI config merging runs only at build/generate time
-      # with trusted static config, while prisma and @prisma/client remain intentionally pinned to 6.19.3 (#396, #557).
+      # The full list goes to the job summary; the step fails on high or
+      # critical advisories. Low and moderate ones are reported only.
       - name: Run npm audit
         run: |
-          if ! npm audit --omit=dev --audit-level=high; then
-            AUDIT_JSON=$(npm audit --omit=dev --json || true)
-            echo "$AUDIT_JSON" | node -e '
-              let data = "";
-              process.stdin.on("data", chunk => data += chunk);
-              process.stdin.on("end", () => {
-                try {
-                  const audit = JSON.parse(data);
-                  const vulns = Object.values(audit.vulnerabilities || {}).filter(v =>
-                    v.severity === "high" || v.severity === "critical"
-                  ).filter(v => v.name !== "deepmerge-ts" && v.name !== "@prisma/config");
-                  if (vulns.length > 0) {
-                    console.error("Found unaccepted high/critical vulnerabilities:", vulns.map(v => v.name));
-                    process.exit(1);
-                  }
-                  console.log("Only accepted advisory (deepmerge-ts in prisma) found. Audit passing.");
-                } catch (e) {
-                  process.exit(1);
-                }
-              });
-            '
-          fi
+          set +e
+          npm audit --package-lock-only > audit.txt
+          {
+            echo '### npm audit (full report)'
+            echo '```'
+            cat audit.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat audit.txt
+
+      # npm audit exits non-zero on any finding, so the JSON is checked instead. An audit that
+      # could not run is an error, not a pass.
+      - name: Fail on high or critical advisories
+        run: |
+          npm audit --package-lock-only --json > audit.json || true
+          node --input-type=module <<'EOF'
+          import { readFileSync } from "node:fs";
+
+          const accepted = new Set((process.env.ACCEPTED_ADVISORIES ?? "").split(",").map((id) => id.trim()).filter(Boolean));
+          const report = JSON.parse(readFileSync("audit.json", "utf8"));
+          if (!report.vulnerabilities) {
+            throw new Error(`npm audit failed: ${JSON.stringify(report.error ?? report)}`);
+          }
+          const failing = [];
+          for (const vuln of Object.values(report.vulnerabilities)) {
+            for (const via of vuln.via) {
+              if (typeof via !== "object") continue;
+              if (via.severity !== "high" && via.severity !== "critical") continue;
+              if ([...accepted].some((id) => via.url?.endsWith(`/${id}`))) continue;
+              failing.push(`${via.severity} ${via.name}: ${via.title} (${via.url})`);
+            }
+          }
+          if (failing.length > 0) {
+            console.error(`::error::${failing.length} high or critical advisories`);
+            console.error([...new Set(failing)].join("\n"));
+            process.exit(1);
+          }
+          console.log(`No unaccepted high or critical advisories (accepted: ${[...accepted].join(", ") || "none"}).`);
+          EOF
+
+  new-advisories:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: head
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # npm audit exits non-zero whenever it finds anything, so the exit code
+      # is ignored here and the JSON is checked by the next step instead.
+      - name: Audit the pull request and its base
+        run: |
+          (cd head && npm audit --package-lock-only --json > ../head.json) || true
+          (cd base && npm audit --package-lock-only --json > ../base.json) || true
+
+      - name: Fail on newly introduced high or critical advisories
+        run: |
+          node --input-type=module <<'EOF'
+          import { appendFileSync, readFileSync } from "node:fs";
+
+          const FAILING = new Set(["high", "critical"]);
+
+          // Returns a map of "package advisory-url" to advisory details. An
+          // audit that could not run (no "vulnerabilities" key) is an error,
+          // not a pass.
+          function advisories(file) {
+            const report = JSON.parse(readFileSync(file, "utf8"));
+            if (!report.vulnerabilities) {
+              throw new Error(`npm audit failed for ${file}: ${JSON.stringify(report.error ?? report)}`);
+            }
+            const found = new Map();
+            for (const vuln of Object.values(report.vulnerabilities)) {
+              for (const via of vuln.via) {
+                if (typeof via !== "object") continue;
+                found.set(`${via.name} ${via.url}`, via);
+              }
+            }
+            return found;
+          }
+
+          const head = advisories("head.json");
+          const base = advisories("base.json");
+          const introduced = [...head].filter(([key]) => !base.has(key)).map(([, via]) => via);
+          const accepted = new Set((process.env.ACCEPTED_ADVISORIES ?? "").split(",").map((id) => id.trim()).filter(Boolean));
+          const failing = introduced.filter(
+            (via) => FAILING.has(via.severity) && ![...accepted].some((id) => via.url?.endsWith(`/${id}`))
+          );
+
+          const lines = [
+            "### npm audit (advisories introduced by this pull request)",
+            "",
+            `Base: ${base.size} advisories. This pull request: ${head.size}. New: ${introduced.length}.`,
+            "",
+          ];
+          if (introduced.length > 0) {
+            lines.push("| Severity | Package | Range | Advisory |", "|---|---|---|---|");
+            for (const via of introduced) {
+              lines.push(`| ${via.severity} | ${via.name} | ${via.range} | [${via.title}](${via.url}) |`);
+            }
+          }
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join("\n") + "\n");
+          console.log(lines.join("\n"));
+
+          if (failing.length > 0) {
+            console.error(`::error::${failing.length} new high or critical advisories. See the job summary.`);
+            process.exit(1);
+          }
+          EOF
