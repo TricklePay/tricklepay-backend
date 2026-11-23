@@ -722,10 +722,17 @@ curl -s http://localhost:3000/tokens | jq
   {
     "token": "CBFS2HT4TIHTMWA5ZND6FEC27BRRA4V6JWOD7JIIDZVSPVAM7EJ2LZS7",
     "count": 12,
+    "totalAmount": "1000000000000000",
     "total": "1000000000000000"
   }
 ]
 ```
+
+For `/accounts/:address/summary`, `/streams/summary`, and `/tokens`, use
+`totalAmount` for the amount total. The `total` amount alias in account
+summaries and `/tokens` is deprecated and remains through at least one minor
+release; it is planned for removal in v2. The `total` field on paginated
+`/streams` responses is a stream count and is unaffected.
 
 **`GET /metrics`**
 ```bash

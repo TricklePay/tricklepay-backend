@@ -519,6 +519,31 @@ describe("Poller", () => {
     );
   });
 
+  it("stops when the second full page repeats its request cursor", async () => {
+    chain.getContractEvents
+      .mockResolvedValueOnce(fullPage("cx1"))
+      .mockResolvedValueOnce(fullPage("cx1"));
+
+    const poller = new Poller(server, config, log);
+    const after = await poller.tick({ cursor: "cx0", lastLedger: LAST_APPLIED });
+
+    expect(chain.getContractEvents).toHaveBeenCalledTimes(2);
+    expect(chain.getContractEvents).toHaveBeenNthCalledWith(
+      2, server, config.contractId, expect.objectContaining({ cursor: "cx1" }),
+    );
+    expect(after.cursor).toBe("cx1");
+  });
+
+  it("still stops when the first full page repeats its request cursor", async () => {
+    chain.getContractEvents.mockResolvedValue(fullPage("cx0"));
+
+    const poller = new Poller(server, config, log);
+    const after = await poller.tick({ cursor: "cx0", lastLedger: LAST_APPLIED });
+
+    expect(chain.getContractEvents).toHaveBeenCalledTimes(1);
+    expect(after.cursor).toBe("cx0");
+  });
+
   it("increments rpcErrors and aborts the tick when getContractEvents fails", async () => {
     // When getContractEvents rejects with an RPC error during a poll tick, the
     // poller must increment the rpcErrors metric with the operation label, and abort

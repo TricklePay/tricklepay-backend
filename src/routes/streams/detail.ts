@@ -5,7 +5,7 @@ import type { FastifyInstance } from "fastify";
 import { QueryTimeoutError } from "../../db.js";
 import { ifNoneMatchMatches, strongEtag } from "../../lib/etag.js";
 import { sendError } from "../../lib/response.js";
-import { parseStreamId } from "../../lib/stream-id.js";
+import { isStreamIdOutOfRange, parseStreamId } from "../../lib/stream-id.js";
 import { parseAtTimestamp } from "../../lib/stream-query.js";
 import { mapStreamResponse, parseFields } from "../../lib/stream-view.js";
 import { getStream } from "../../repositories/streams.js";
@@ -60,6 +60,9 @@ export function registerStreamDetailRoute(app: FastifyInstance): void {
       const { id } = request.params as { id: string };
       const streamId = parseStreamId(id);
       if (streamId === null) {
+        if (isStreamIdOutOfRange(id)) {
+          return sendError(reply, request, 404, "NOT_FOUND", "stream not found");
+        }
         return sendError(reply, request, 400, "VALIDATION_ERROR", "invalid stream id");
       }
 

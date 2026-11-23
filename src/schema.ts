@@ -396,7 +396,7 @@ export const tokenSummarySchema = {
   $id: TOKEN_SUMMARY_SCHEMA_ID,
   type: "object",
   description: "A distinct token with its stream count and total escrowed amount.",
-  required: ["token", "count", "total"],
+  required: ["token", "count", "totalAmount", "total"],
   properties: {
     token: {
       type: "string",
@@ -409,10 +409,16 @@ export const tokenSummarySchema = {
       minimum: 0,
       examples: [12],
     },
-    total: {
+    totalAmount: {
       type: "string",
       description:
         "Total amount escrowed across streams for this token (uint128, decimal string).",
+      examples: ["1000000000000000"],
+    },
+    total: {
+      type: "string",
+      deprecated: true,
+      description: "Deprecated alias for totalAmount; use totalAmount instead.",
       examples: ["1000000000000000"],
     },
   },
@@ -454,7 +460,8 @@ export const accountStreamSummarySchema = {
     },
     total: {
       type: "string",
-      description: "Total allocated tokens (alias for totalAmount, uint128, decimal string).",
+      deprecated: true,
+      description: "Deprecated alias for totalAmount; use totalAmount instead.",
       examples: ["100000000000000"],
     },
     withdrawn: {
