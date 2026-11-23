@@ -1,0 +1,105 @@
+name: CHANGELOG check
+
+# Ensures that pull requests which change the API or configuration also update
+# the CHANGELOG so that the recorded release history stays in step with the
+# code. A PR can opt out with the 'no-changelog' label when the change is an
+# internal refactor or a doc-only edit that has no observable effect.
+#
+# Uses pull_request_target so the check runs from the default branch's copy of
+# this file (a PR cannot edit the check to make itself pass), and so it can
+# read labels from the PR. NEVER check out or run PR code in this workflow.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: write
+
+concurrency:
+  group: changelog-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  changelog-check:
+    name: CHANGELOG check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/github-script@v8
+        with:
+          retries: 3
+          script: |
+            const { owner, repo } = context.repo;
+            const pr = context.payload.pull_request;
+            const sha = pr.head.sha;
+            const CONTEXT = 'CHANGELOG check';
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+
+            const setStatus = (state, description) => github.rest.repos.createCommitStatus({
+              owner, repo, sha, state, context: CONTEXT,
+              description: description.slice(0, 140),
+              target_url: runUrl,
+            });
+
+            await setStatus('pending', 'Checking for CHANGELOG entry');
+
+            // Check if the PR has the opt-out label
+            const labels = pr.labels.map(l => l.name.toLowerCase());
+            if (labels.includes('no-changelog')) {
+              await setStatus('success', 'Skipped (no-changelog label present)');
+              core.summary.addHeading('CHANGELOG check: skipped', 3)
+                .addRaw('The `no-changelog` label is present. No CHANGELOG entry required.\n');
+              await core.summary.write();
+              return;
+            }
+
+            // Fetch all changed files in the PR
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner, repo, pull_number: pr.number, per_page: 100,
+            });
+
+            // Files that trigger the check
+            const API_PATTERNS = [
+              /^src\/routes\//,
+              /^src\/schema\.ts$/,
+              /^src\/config\.ts$/,
+            ];
+
+            const triggeredFiles = files.filter(f =>
+              API_PATTERNS.some(pattern => pattern.test(f.filename))
+            );
+
+            if (triggeredFiles.length === 0) {
+              await setStatus('success', 'No API or config changes');
+              core.summary.addHeading('CHANGELOG check: not required', 3)
+                .addRaw('No API or configuration files were changed. No CHANGELOG entry required.\n');
+              await core.summary.write();
+              return;
+            }
+
+            // Check if CHANGELOG.md was modified
+            const changelogModified = files.some(f => f.filename === 'CHANGELOG.md');
+
+            if (!changelogModified) {
+              const fileList = triggeredFiles.map(f => `- \`${f.filename}\``).join('\n');
+              await setStatus('failure', `CHANGELOG.md not updated (${triggeredFiles.length} file(s) changed)`);
+              core.summary.addHeading('CHANGELOG check: entry required', 3)
+                .addRaw('This PR changes API or configuration files but does not update `CHANGELOG.md`.\n\n')
+                .addRaw('**Files that triggered this check:**\n\n')
+                .addRaw(fileList + '\n\n')
+                .addRaw('**To fix:**\n')
+                .addRaw('- Add an entry to `CHANGELOG.md` under the `[Unreleased]` section describing the change\n')
+                .addRaw('- OR add the `no-changelog` label if this is an internal refactor with no observable effect\n');
+              await core.summary.write();
+              core.setFailed(`CHANGELOG.md not updated. ${triggeredFiles.length} API or config file(s) changed.`);
+              return;
+            }
+
+            await setStatus('success', `CHANGELOG.md updated (${triggeredFiles.length} file(s) changed)`);
+            core.summary.addHeading('CHANGELOG check: passed', 3)
+              .addRaw(`CHANGELOG.md was updated. ${triggeredFiles.length} API or configuration file(s) changed:\n\n`)
+              .addRaw(triggeredFiles.map(f => `- \`${f.filename}\``).join('\n') + '\n');
+            await core.summary.write();

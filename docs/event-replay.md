@@ -25,6 +25,52 @@ Operators should run the replay command when:
 
 ## How to Run It
 
+The replay tool can be invoked in two ways:
+
+1. **Via the Admin API Endpoint** (`POST /admin/replay`): Available when `ADMIN_TOKEN` is configured. See the Admin Endpoints section below.
+2. **Via the CLI**: Run `npm run replay-failed-events` or directly via `tsx`.
+
+### Admin API Endpoint
+
+When `ADMIN_TOKEN` is set, the service registers `POST /admin/replay` for triggering replays remotely. This allows operators to trigger replays from orchestration tools without shell access.
+
+**Endpoint**: `POST /admin/replay`
+
+**Authentication**: Requires `Authorization: Bearer <ADMIN_TOKEN>` header
+
+**Request Body** (optional):
+```json
+{
+  "limit": 20,
+  "dryRun": false
+}
+```
+
+- `limit` (integer, 1-1000): Maximum number of failed events to retry. Default: 20.
+- `dryRun` (boolean): When true, simulates replay without modifying the database. Default: false.
+
+**Response** (200 OK):
+```json
+{
+  "attempted": 5,
+  "succeeded": 5,
+  "failed": 0,
+  "dryRun": false
+}
+```
+
+**Concurrency**: Only one replay can run at a time. Concurrent requests receive `409 Conflict`.
+
+**Example**:
+```bash
+curl -X POST http://localhost:3000/admin/replay \
+  -H "Authorization: Bearer your-admin-token" \
+  -H "Content-Type: application/json" \
+  -d '{"limit": 50, "dryRun": false}'
+```
+
+### CLI Execution
+
 The replay tool can be invoked through `npm run replay-failed-events` or directly via `tsx`.
 
 ### Basic Execution

@@ -344,6 +344,14 @@ export const databaseQueryDuration = new Histogram(
   "Time spent executing a database query in milliseconds.",
 );
 
+/** Repository function execution durations in milliseconds, by function name. */
+export const repositoryQueryDuration = new Histogram(
+  "tricklepay_repository_query_duration_ms",
+  "Time spent in repository functions in milliseconds.",
+  ["function"],
+  [1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000], // milliseconds
+);
+
 // HTTP ----------------------------------------------------------------------
 
 /** HTTP request durations in milliseconds, by method and route. */

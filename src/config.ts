@@ -283,6 +283,9 @@ export interface Config {
   // Optional bearer token for the metrics endpoint. When set, /metrics requires
   // a matching Bearer token; when unset it is unauthenticated.
   readonly metricsToken?: string;
+  // Optional bearer token for admin endpoints. When set, /admin/* endpoints are
+  // registered and require this token; when unset they are not registered.
+  readonly adminToken?: string;
   // Whether to serve the interactive Swagger UI at /docs. When false, only
   // /docs/json and /docs/yaml are available. Default: true.
   readonly enableDocsUi: boolean;
@@ -372,6 +375,7 @@ export function loadConfig(): Config {
     readinessRetryAfterSeconds,
     // An empty value means "no token", preserving the unauthenticated default.
     metricsToken: process.env.METRICS_TOKEN?.trim() || undefined,
+    adminToken: process.env.ADMIN_TOKEN?.trim() || undefined,
     // The UI is on by default; ENABLE_DOCS_UI=false serves only the spec.
     enableDocsUi: boolean("ENABLE_DOCS_UI", true),
   };
@@ -467,6 +471,7 @@ export function describeConfig(config: Config): LoggedConfig {
     maxTrackedRateLimitClients: config.maxTrackedRateLimitClients,
     // Never log the secret itself, only whether one is configured.
     metricsToken: config.metricsToken ? "[redacted]" : undefined,
+    adminToken: config.adminToken ? "[redacted]" : undefined,
     enableDocsUi: config.enableDocsUi,
     readinessRetryAfterSeconds: config.readinessRetryAfterSeconds,
   };
