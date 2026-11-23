@@ -215,6 +215,7 @@ export class Poller {
     // the whole backlog.
     while (shouldContinue()) {
       let page: EventPage;
+      const requestedCursor = current.cursor;
       try {
         page = await getContractEvents(this.server, this.config.contractId, current);
       } catch (err) {
@@ -241,7 +242,7 @@ export class Poller {
       pages += 1;
       events += page.events.length;
 
-      const drained = isBacklogDrained(page, position.cursor);
+      const drained = isBacklogDrained(page, requestedCursor);
       if (drained) break;
 
       // A cap keeps one tick from running forever on a huge backlog. The cursor

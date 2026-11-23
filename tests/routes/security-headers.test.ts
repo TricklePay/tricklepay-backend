@@ -31,9 +31,12 @@ describe("Security headers (#520)", () => {
     expect(policy).toContain("script-src 'self'");
     expect(policy).toContain("object-src 'none'");
     expect(policy).toContain("frame-ancestors 'none'");
-    // Inline styles are required by Swagger UI, which styles the page with
-    // style attributes; scripts stay restricted to same-origin files.
-    expect(policy).toContain("'unsafe-inline'");
+    // Fonts and styles are restricted to 'self' (plus data: for fonts, unsafe-inline for Swagger UI styles)
+    expect(policy).toContain("font-src 'self' data:");
+    expect(policy).toContain("style-src 'self' 'unsafe-inline'");
+    // No https: font or style sources are allowed (#676)
+    expect(policy).not.toMatch(/font-src[^;]*https:/);
+    expect(policy).not.toMatch(/style-src[^;]*https:/);
   });
 
   it("does not force HTTPS upgrades, so the docs work over plain HTTP", async () => {
@@ -74,6 +77,13 @@ describe("Swagger UI under the security policy (#520)", () => {
   it("serves the same-origin scripts the page loads", async () => {
     const response = await request("/docs/static/swagger-ui-bundle.js");
     expect(response.statusCode).toBe(200);
+    expect(response.body.length).toBeGreaterThan(1000);
+  });
+
+  it("serves the same-origin stylesheets the page loads", async () => {
+    const response = await request("/docs/static/swagger-ui.css");
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["content-type"]).toContain("text/css");
     expect(response.body.length).toBeGreaterThan(1000);
   });
 });

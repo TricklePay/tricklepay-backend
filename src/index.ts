@@ -35,12 +35,25 @@ async function main(): Promise<void> {
   validateStartLedger(config.startLedger, chainHead.sequence);
 
   const app = await buildServer(config);
-  await app.register(rootRoutes(config));
-  await app.register(streamRoutes, { summaryCacheTtlMs: config.summaryCacheTtlMs });
-  await app.register(streamUpdateRoutes);
+  
+  // Register v1 routes (stable API under /v1 prefix)
+  await app.register(
+    async (v1Instance) => {
+      await v1Instance.register(rootRoutes(config));
+      await v1Instance.register(streamRoutes, { summaryCacheTtlMs: config.summaryCacheTtlMs });
+      await v1Instance.register(streamUpdateRoutes);
+      await v1Instance.register(statusRoutes, { startLedger: config.startLedger, poller: null as any });
+      await v1Instance.register(metricsRoutes, { token: config.metricsToken });
+    },
+    { prefix: "/v1" },
+  );
 
   const poller = new Poller(rpcServer, config, logger);
 
+  // Register unversioned routes (deprecated aliases for backwards compatibility)
+  await app.register(rootRoutes(config));
+  await app.register(streamRoutes, { summaryCacheTtlMs: config.summaryCacheTtlMs });
+  await app.register(streamUpdateRoutes);
   await app.register(statusRoutes, { startLedger: config.startLedger, poller });
   await app.register(metricsRoutes, { token: config.metricsToken });
 

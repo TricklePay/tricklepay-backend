@@ -164,7 +164,7 @@ jobs:
       # "postgres" maintenance database.
       - name: Integration tests
         run: |
-          PGPASSWORD=ci createdb -h localhost -U ci -d tricklepay_test tricklepay_shadow
+          PGPASSWORD=ci createdb -h localhost -U ci tricklepay_shadow
           npx vitest run --project integration --reporter=default --reporter=junit --outputFile.junit="$RUNNER_TEMP/test-results/integration.xml"
 
       # The database's own log is often the only explanation for a flaky
