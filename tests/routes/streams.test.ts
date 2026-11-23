@@ -780,7 +780,27 @@ describe("GET /streams cursor pagination", () => {
     const encoded = encodeCursor(BigInt(42));
     expect(typeof encoded).toBe("string");
     expect(encoded).not.toContain("streamId");
-    expect(decodeCursor(encoded)).toBe(42n);
+    // The cursor now also carries optional sort data, so it decodes to an object.
+    expect(decodeCursor(encoded)).toEqual({ streamId: 42n });
+  });
+
+  it.each([
+    ["9223372036854775807", 200],
+    ["9223372036854775808", 400],
+    ["18446744073709551615", 400],
+    ["18446744073709551616", 400],
+  ] as const)("validates database range for cursor id %s", async (id, status) => {
+    streamsRepo.listStreams.mockResolvedValue({ streams: [] });
+    const response = await listRequest(`/streams?cursor=${encodeCursor(BigInt(id))}`);
+    expect(response.statusCode).toBe(status);
+    if (status === 400) {
+      expect(response.json()).toHaveProperty("error", "invalid cursor");
+      expect(streamsRepo.listStreams).not.toHaveBeenCalled();
+    } else {
+      expect(streamsRepo.listStreams).toHaveBeenCalledWith(
+        expect.objectContaining({ cursor: BigInt(id) }),
+      );
+    }
   });
 
   it("returns 400 for an invalid cursor string", async () => {

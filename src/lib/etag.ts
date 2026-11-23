@@ -9,9 +9,11 @@ import { createHash } from "node:crypto";
  * Strong ETag built from version parts, e.g. `["200", "schedule", "50"]`
  * becomes `"200-schedule-50"`. Used where the response is a pure function of
  * a stored version (the stream's `updatedLedger`) plus the request inputs.
+ * Optional fieldsParam is included to differentiate responses with different field selections.
  */
-export function strongEtag(...parts: Array<string | number | bigint>): string {
-  return `"${parts.join("-")}"`;
+export function strongEtag(...parts: Array<string | number | bigint | undefined>): string {
+  const validParts = parts.filter((p) => p !== undefined);
+  return `"${validParts.join("-")}"`;
 }
 
 /**

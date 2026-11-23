@@ -9,8 +9,9 @@
 // without parsing the lag number. The threshold reuses the readiness staleness
 // setting (READY_MAX_STALENESS_MS) converted to ledgers.
 //
-// The headers are only added to GET requests (read operations) and are omitted
-// before the first poll when no position has been recorded yet.
+// The headers are only added to successful GET requests (read operations),
+// are omitted on errors (>= 400) and 304 Not Modified responses, and are
+// omitted before the first poll when no position has been recorded yet.
 
 import type { FastifyInstance } from "fastify";
 
@@ -28,6 +29,11 @@ const LEDGER_CLOSE_TIME_MS = 5_000;
 
 let cachedLag: number | null = null;
 let cachedAt = -Infinity;
+
+export function resetLagCache(): void {
+  cachedLag = null;
+  cachedAt = -Infinity;
+}
 
 async function getLag(): Promise<number | null> {
   const now = Date.now();
@@ -48,6 +54,8 @@ async function getLag(): Promise<number | null> {
   return lag;
 }
 
+const EXCLUDED_PATHS = new Set(["/health", "/ready", "/metrics"]);
+
 export interface IndexerLagHookOptions {
   /** Maximum staleness in milliseconds before data is considered stale. 0 = disabled. */
   stalenessThresholdMs?: number;
@@ -67,10 +75,14 @@ export function registerIndexerLagHook(
     // Only add the header to GET requests (read operations)
     if (request.method !== "GET") return;
 
-    // Skip health check and metrics endpoints
-    if (request.url.startsWith("/health") ||
-        request.url.startsWith("/ready") ||
-        request.url === "/metrics") {
+    // Skip error responses and 304 Not Modified responses
+    if (reply.statusCode >= 400 || reply.statusCode === 304) {
+      return;
+    }
+
+    // Skip health check and metrics endpoints (comparing path without query string)
+    const urlPath = request.url.split("?")[0];
+    if (EXCLUDED_PATHS.has(urlPath)) {
       return;
     }
 

@@ -55,3 +55,98 @@ export function parseCliArgs(argv: string[] = process.argv.slice(2)): Map<string
 export function wantsJsonOutput(args: Map<string, string | boolean>): boolean {
   return args.get("--json") === true;
 }
+
+export interface CliFlagDef {
+  name: string;
+  type: "string" | "boolean";
+}
+
+export interface CliValidationResult {
+  ok: boolean;
+  args: Map<string, string | boolean>;
+  error?: string;
+  isHelp?: boolean;
+}
+
+/**
+ * Validates CLI arguments against a declared list of allowed flags (#677).
+ * Rejects unknown flags (e.g. typos like --dryrun or --older-then),
+ * missing values for flags that require values, and unexpected positional arguments.
+ * Exits with status 2 and a usage message for errors.
+ *
+ * Supports:
+ *   --key=value
+ *   --key value
+ *   --flag (boolean)
+ *   --help / -h
+ */
+export function parseAndValidateCli(
+  argv: string[] = process.argv.slice(2),
+  allowedFlags: readonly CliFlagDef[],
+  usage: string,
+): CliValidationResult {
+  const allowedMap = new Map<string, CliFlagDef>();
+  for (const flag of allowedFlags) {
+    allowedMap.set(flag.name, flag);
+  }
+
+  const acceptsHelp = allowedMap.has("--help") || allowedMap.has("-h");
+  const args = new Map<string, string | boolean>();
+
+  for (let i = 0; i < argv.length; i++) {
+    const token = argv[i];
+
+    if (acceptsHelp && (token === "--help" || token === "-h")) {
+      return { ok: true, isHelp: true, args: new Map([["--help", true]]) };
+    }
+
+    if (token.startsWith("--")) {
+      if (token.includes("=")) {
+        const eqIdx = token.indexOf("=");
+        const key = token.slice(0, eqIdx);
+        const value = token.slice(eqIdx + 1);
+
+        const def = allowedMap.get(key);
+        if (!def) {
+          return { ok: false, error: `unknown flag: ${key}`, args };
+        }
+
+        if (def.type === "boolean") {
+          if (value === "true") {
+            args.set(key, true);
+          } else if (value === "false") {
+            args.set(key, false);
+          } else {
+            return { ok: false, error: `invalid boolean value for ${key}: ${value}`, args };
+          }
+        } else {
+          if (value === "") {
+            return { ok: false, error: `missing value for flag ${key}`, args };
+          }
+          args.set(key, value);
+        }
+      } else {
+        const key = token;
+        const def = allowedMap.get(key);
+        if (!def) {
+          return { ok: false, error: `unknown flag: ${key}`, args };
+        }
+
+        if (def.type === "boolean") {
+          args.set(key, true);
+        } else {
+          const next = argv[i + 1];
+          if (next === undefined || next.startsWith("--")) {
+            return { ok: false, error: `missing value for flag ${key}`, args };
+          }
+          args.set(key, next);
+          i++;
+        }
+      }
+    } else {
+      return { ok: false, error: `unexpected argument: ${token}`, args };
+    }
+  }
+
+  return { ok: true, args };
+}
