@@ -37,6 +37,21 @@ function optional(name: string, fallback: string): string {
   return value && value.trim() !== "" ? value : fallback;
 }
 
+function corsOrigin(): string | undefined {
+  const value = process.env.CORS_ORIGIN?.trim();
+  if (!value) return undefined;
+  try {
+    const url = new URL(value);
+    const local = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+    if (url.origin === value && (url.protocol === "https:" || (local && url.protocol === "http:"))) {
+      return value;
+    }
+  } catch {
+    // Report the same actionable error for malformed URLs.
+  }
+  throw new Error("CORS_ORIGIN must be a single HTTPS origin (HTTP allowed for localhost)");
+}
+
 function integer(name: string, fallback: number): number {
   const raw = process.env[name];
   if (!raw || raw.trim() === "") return fallback;
@@ -248,6 +263,7 @@ export function defaultPublicBaseUrl(host: string, port: number): string {
 export interface Config {
   readonly port: number;
   readonly host: string;
+  readonly corsOrigin?: string;
   readonly publicBaseUrl: string;
   readonly databaseUrl: string;
   readonly network: string;
@@ -326,6 +342,7 @@ export function loadConfig(): Config {
   return {
     port,
     host,
+    corsOrigin: corsOrigin(),
     publicBaseUrl: optional("PUBLIC_BASE_URL", defaultPublicBaseUrl(host, port)),
     databaseUrl: required("DATABASE_URL"),
     network,
@@ -440,6 +457,7 @@ export function describeConfig(config: Config): LoggedConfig {
     keepAliveTimeoutMs: config.keepAliveTimeoutMs,
     requestTimeoutMs: config.requestTimeoutMs,
     host: config.host,
+    corsOrigin: config.corsOrigin,
     publicBaseUrl: config.publicBaseUrl,
     // The only field carrying a secret.
     databaseUrl: redactDatabaseUrl(config.databaseUrl),
