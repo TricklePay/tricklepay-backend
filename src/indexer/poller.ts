@@ -70,6 +70,7 @@ export function isBacklogDrained(page: EventPage, requestedCursor?: string): boo
 // self-healing.
 export class Poller {
   private running = false;
+  private initialized = false;
   // Count of poll iterations that failed in a row. Drives the exponential
   // backoff: it grows with each consecutive failure and is cleared on the
   // first success, so a single transient blip does not leave the poller
@@ -103,6 +104,11 @@ export class Poller {
     return this.hasProgressed;
   }
 
+  /** True once startup has completed and the poll loop is active. */
+  isRunning(): boolean {
+    return this.running && this.initialized;
+  }
+
   /** Number of poll iterations that have failed consecutively since the last success. */
   getConsecutiveFailures(): number {
     return this.consecutiveFailures;
@@ -115,10 +121,29 @@ export class Poller {
 
   async start(): Promise<void> {
     this.running = true;
-    await refreshFailedEventBacklog();
-    let position = await this.resolveStart();
-
+    let position: IndexerState | undefined;
+    while (this.running && !position) {
+      try {
+        await refreshFailedEventBacklog();
+        position = await this.resolveStart();
+        this.consecutiveFailures = 0;
+        indexerConsecutiveFailures.set(0);
+      } catch (err) {
+        this.log.error({ err }, "indexer startup failed");
+        this.consecutiveFailures += 1;
+        indexerConsecutiveFailures.set(this.consecutiveFailures);
+        const delay = this.backoffDelay();
+        this.nextPollAtMs = Date.now() + delay;
+        indexerNextPollAt.set(Math.floor(this.nextPollAtMs / 1000));
+        await sleep(delay);
+        this.nextPollAtMs = 0;
+        indexerNextPollAt.set(0);
+      }
+    }
+    if (!this.running || !position) return;
+    this.initialized = true;
     await this.runLoop(position);
+    this.initialized = false;
   }
 
   /** Owns scheduling and failure backoff; one tick is deliberately separate. */
