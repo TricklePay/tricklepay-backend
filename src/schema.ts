@@ -443,47 +443,29 @@ export const tokenListResponseSchema = {
 export const accountStreamSummarySchema = {
   $id: ACCOUNT_STREAM_SUMMARY_SCHEMA_ID,
   type: "object",
-  description: "Summary of stream counts and token totals for an address.",
-  required: [
-    "count",
-    "totalAmount",
-    "total",
-    "withdrawn",
-    "vested",
-    "withdrawable",
-  ],
+  description: "Stream count and amounts grouped by token for one direction.",
+  required: ["count", "byToken"],
   properties: {
     count: {
       type: "integer",
-      description: "Number of streams.",
+      description: "Number of streams in this direction across all tokens.",
       minimum: 0,
       examples: [3],
     },
-    totalAmount: {
-      type: "string",
-      description: "Total allocated tokens (uint128, decimal string).",
-      examples: ["100000000000000"],
-    },
-    total: {
-      type: "string",
-      deprecated: true,
-      description: "Deprecated alias for totalAmount; use totalAmount instead.",
-      examples: ["100000000000000"],
-    },
-    withdrawn: {
-      type: "string",
-      description: "Total tokens already withdrawn (uint128, decimal string).",
-      examples: ["25000000000000"],
-    },
-    vested: {
-      type: "string",
-      description: "Total tokens vested as of now (uint128, decimal string).",
-      examples: ["50000000000000"],
-    },
-    withdrawable: {
-      type: "string",
-      description: "Total tokens currently withdrawable (uint128, decimal string).",
-      examples: ["25000000000000"],
+    byToken: {
+      type: "object",
+      description: "Amount totals keyed by token contract address; no amounts from different tokens are added.",
+      additionalProperties: {
+        type: "object",
+        required: ["totalAmount", "total", "withdrawn", "vested", "withdrawable"],
+        properties: {
+          totalAmount: { type: "string", description: "Total allocated base units for this token." },
+          total: { type: "string", deprecated: true, description: "Deprecated alias for totalAmount." },
+          withdrawn: { type: "string", description: "Base units withdrawn for this token." },
+          vested: { type: "string", description: "Base units vested for this token as of now." },
+          withdrawable: { type: "string", description: "Base units currently withdrawable for this token." },
+        },
+      },
     },
   },
 } as const;
@@ -491,7 +473,7 @@ export const accountStreamSummarySchema = {
 export const accountSummaryResponseSchema = {
   $id: ACCOUNT_SUMMARY_RESPONSE_SCHEMA_ID,
   type: "object",
-  description: "Account summary containing incoming and outgoing stream totals.",
+  description: "Account summary containing incoming and outgoing counts with amount totals per token.",
   required: ["incoming", "outgoing"],
   properties: {
     incoming: { $ref: ACCOUNT_STREAM_SUMMARY_SCHEMA_ID },

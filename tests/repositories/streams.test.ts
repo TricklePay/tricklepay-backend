@@ -69,6 +69,7 @@ it("returns a bounded aggregate for an account with many streams", async () => {
   const query = vi.spyOn(prisma, "$queryRaw").mockResolvedValueOnce([
     {
       direction: "incoming",
+      token: "TOKEN",
       count: 50000n,
       totalAmount: new Prisma.Decimal(100000),
       withdrawn: new Prisma.Decimal(20000),
@@ -79,8 +80,26 @@ it("returns a bounded aggregate for an account with many streams", async () => {
 
   const summary = await getAccountSummary("ACCOUNT", 1500n);
   expect(query).toHaveBeenCalledTimes(1);
-  expect(summary.incoming).toMatchObject({ count: 50000, vested: "50000", withdrawable: "30000" });
+  expect(summary.incoming).toMatchObject({
+    count: 50000,
+    byToken: { TOKEN: { vested: "50000", withdrawable: "30000" } },
+  });
   expect(summary.outgoing.count).toBe(0);
+  query.mockRestore();
+});
+
+it("keeps account amounts separate for two tokens", async () => {
+  const amount = (value: number) => new Prisma.Decimal(value);
+  const query = vi.spyOn(prisma, "$queryRaw").mockResolvedValueOnce([
+    { direction: "incoming", token: "XLM", count: 2n, totalAmount: amount(1000), withdrawn: amount(100), vested: amount(500), withdrawable: amount(400) },
+    { direction: "incoming", token: "USDC", count: 1n, totalAmount: amount(2000), withdrawn: amount(200), vested: amount(1000), withdrawable: amount(800) },
+  ] as never);
+
+  const summary = await getAccountSummary("ACCOUNT", 1500n);
+  expect(summary.incoming.count).toBe(3);
+  expect(summary.incoming.byToken.XLM.totalAmount).toBe("1000");
+  expect(summary.incoming.byToken.USDC.totalAmount).toBe("2000");
+  expect(summary.incoming).not.toHaveProperty("totalAmount");
   query.mockRestore();
 });
 

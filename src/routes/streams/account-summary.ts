@@ -15,7 +15,7 @@ export function registerAccountSummaryRoute(app: FastifyInstance): void {
       schema: {
         summary: "Get account stream summary",
         description:
-          "Returns incoming and outgoing stream counts and exact amount totals for a single Stellar address. " +
+          "Returns incoming and outgoing stream counts with exact amount totals grouped by token for a single Stellar address. " +
           "Derived amounts (vested, withdrawable) are calculated against the current time using the same rules as the stream view.",
         tags: ["streams"],
         params: {

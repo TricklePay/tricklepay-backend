@@ -53,13 +53,28 @@ async function getAccountSummary(address: string) {
   return response;
 }
 
+function summarizeByToken(streams: any[], now: bigint) {
+  const groups = new Map<string, any[]>();
+  for (const stream of streams) {
+    const group = groups.get(stream.token) ?? [];
+    group.push(stream);
+    groups.set(stream.token, group);
+  }
+  const byToken: Record<string, Omit<ReturnType<typeof summarizeAccountStreams>, "count">> = {};
+  for (const [token, group] of groups) {
+    const { count: _count, ...totals } = summarizeAccountStreams(group, now);
+    byToken[token] = totals;
+  }
+  return { count: streams.length, byToken };
+}
+
 beforeEach(() => {
   vi.resetAllMocks();
   streamsRepo.getAccountSummary.mockImplementation(async (address: string, now: bigint) => {
     const { incoming, outgoing } = await streamsRepo.getAccountStreams(address);
     return {
-      incoming: summarizeAccountStreams(incoming, now),
-      outgoing: summarizeAccountStreams(outgoing, now),
+      incoming: summarizeByToken(incoming, now),
+      outgoing: summarizeByToken(outgoing, now),
     };
   });
 });
@@ -77,22 +92,8 @@ describe("GET /accounts/:address/summary", { timeout: 20000 }, () => {
     expect(response.statusCode).toBe(200);
     expect(response.headers["content-type"]).toContain("application/json");
     expect(response.json()).toEqual({
-      incoming: {
-        count: 0,
-        totalAmount: "0",
-        total: "0",
-        withdrawn: "0",
-        vested: "0",
-        withdrawable: "0",
-      },
-      outgoing: {
-        count: 0,
-        totalAmount: "0",
-        total: "0",
-        withdrawn: "0",
-        vested: "0",
-        withdrawable: "0",
-      },
+      incoming: { count: 0, byToken: {} },
+      outgoing: { count: 0, byToken: {} },
     });
     expect(streamsRepo.getAccountStreams).toHaveBeenCalledWith(ACCOUNT);
   });
@@ -148,22 +149,30 @@ describe("GET /accounts/:address/summary", { timeout: 20000 }, () => {
     // incoming totals: count = 2, totalAmount = 3000, withdrawn = 700, vested = 1500, withdrawable = 800
     expect(body.incoming).toEqual({
       count: 2,
-      totalAmount: "3000",
-      total: "3000",
-      withdrawn: "700",
-      vested: "1500",
-      withdrawable: "800",
+      byToken: {
+        [CONTRACT]: {
+          totalAmount: "3000",
+          total: "3000",
+          withdrawn: "700",
+          vested: "1500",
+          withdrawable: "800",
+        },
+      },
     });
 
     // stream 3: total = 5000, vested = 2500, withdrawn = 1000, withdrawable = 1500
     // outgoing totals: count = 1, totalAmount = 5000, withdrawn = 1000, vested = 2500, withdrawable = 1500
     expect(body.outgoing).toEqual({
       count: 1,
-      totalAmount: "5000",
-      total: "5000",
-      withdrawn: "1000",
-      vested: "2500",
-      withdrawable: "1500",
+      byToken: {
+        [CONTRACT]: {
+          totalAmount: "5000",
+          total: "5000",
+          withdrawn: "1000",
+          vested: "2500",
+          withdrawable: "1500",
+        },
+      },
     });
   });
 
@@ -195,11 +204,11 @@ describe("GET /accounts/:address/summary", { timeout: 20000 }, () => {
 
     expect(response.statusCode).toBe(200);
     const body = response.json();
-    expect(body.incoming.totalAmount).toBe(maxUint128);
-    expect(body.incoming.total).toBe(maxUint128);
-    expect(body.incoming.withdrawn).toBe(halfUint128);
-    expect(body.incoming.vested).toBe(maxUint128);
-    expect(body.incoming.withdrawable).toBe(withdrawableExpected);
+    expect(body.incoming.byToken[CONTRACT].totalAmount).toBe(maxUint128);
+    expect(body.incoming.byToken[CONTRACT].total).toBe(maxUint128);
+    expect(body.incoming.byToken[CONTRACT].withdrawn).toBe(halfUint128);
+    expect(body.incoming.byToken[CONTRACT].vested).toBe(maxUint128);
+    expect(body.incoming.byToken[CONTRACT].withdrawable).toBe(withdrawableExpected);
   });
 
   it("rejects an invalid address with 400 VALIDATION_ERROR", async () => {
@@ -257,11 +266,7 @@ describe("GET /accounts/:address/summary", { timeout: 20000 }, () => {
   });
 
   it("groups streams by token and sums amounts per token separately", async () => {
-    // This test documents the intended grouping behavior: streams are not
-    // grouped by token in the summary response. Instead, all incoming streams
-    // are aggregated together regardless of token, and all outgoing streams
-    // are aggregated together. A per-token breakdown is not provided by this
-    // endpoint; clients that need it should query /streams with a token filter.
+    // Amounts from different tokens must never be added together.
     vi.useFakeTimers();
     vi.setSystemTime(1500 * 1000); // 50% elapsed
 
@@ -303,19 +308,26 @@ describe("GET /accounts/:address/summary", { timeout: 20000 }, () => {
     expect(response.statusCode).toBe(200);
     const body = response.json();
 
-    // All incoming streams are aggregated together, not grouped by token:
-    // total = 1000 + 2000 = 3000
-    // vested = 500 + 1000 = 1500
-    // withdrawn = 100 + 200 = 300
-    // withdrawable = 400 + 800 = 1200
     expect(body.incoming).toEqual({
       count: 2,
-      totalAmount: "3000",
-      total: "3000",
-      withdrawn: "300",
-      vested: "1500",
-      withdrawable: "1200",
+      byToken: {
+        [TOKEN_A]: {
+          totalAmount: "1000",
+          total: "1000",
+          withdrawn: "100",
+          vested: "500",
+          withdrawable: "400",
+        },
+        [TOKEN_B]: {
+          totalAmount: "2000",
+          total: "2000",
+          withdrawn: "200",
+          vested: "1000",
+          withdrawable: "800",
+        },
+      },
     });
+    expect(body.incoming).not.toHaveProperty("totalAmount");
   });
 
   it("handles cancelled streams with frozen totals", async () => {
@@ -356,11 +368,15 @@ describe("GET /accounts/:address/summary", { timeout: 20000 }, () => {
     // withdrawable = 600 - 400 = 200
     expect(body.incoming).toEqual({
       count: 1,
-      totalAmount: "600",
-      total: "600",
-      withdrawn: "400",
-      vested: "600",
-      withdrawable: "200",
+      byToken: {
+        [CONTRACT]: {
+          totalAmount: "600",
+          total: "600",
+          withdrawn: "400",
+          vested: "600",
+          withdrawable: "200",
+        },
+      },
     });
   });
 
@@ -398,11 +414,15 @@ describe("GET /accounts/:address/summary", { timeout: 20000 }, () => {
     // withdrawable = totalAmount - withdrawn = 1000 - 800 = 200
     expect(body.incoming).toEqual({
       count: 1,
-      totalAmount: "1000",
-      total: "1000",
-      withdrawn: "800",
-      vested: "1000",
-      withdrawable: "200",
+      byToken: {
+        [CONTRACT]: {
+          totalAmount: "1000",
+          total: "1000",
+          withdrawn: "800",
+          vested: "1000",
+          withdrawable: "200",
+        },
+      },
     });
   });
 
@@ -459,21 +479,29 @@ describe("GET /accounts/:address/summary", { timeout: 20000 }, () => {
     // Incoming: 1000 total, 500 vested, 200 withdrawn, 300 withdrawable
     expect(body.incoming).toEqual({
       count: 1,
-      totalAmount: "1000",
-      total: "1000",
-      withdrawn: "200",
-      vested: "500",
-      withdrawable: "300",
+      byToken: {
+        [CONTRACT]: {
+          totalAmount: "1000",
+          total: "1000",
+          withdrawn: "200",
+          vested: "500",
+          withdrawable: "300",
+        },
+      },
     });
 
     // Outgoing: 2000 total, 1000 vested, 500 withdrawn, 500 withdrawable
     expect(body.outgoing).toEqual({
       count: 1,
-      totalAmount: "2000",
-      total: "2000",
-      withdrawn: "500",
-      vested: "1000",
-      withdrawable: "500",
+      byToken: {
+        [CONTRACT]: {
+          totalAmount: "2000",
+          total: "2000",
+          withdrawn: "500",
+          vested: "1000",
+          withdrawable: "500",
+        },
+      },
     });
   });
 
@@ -542,11 +570,15 @@ describe("GET /accounts/:address/summary", { timeout: 20000 }, () => {
     // withdrawable = 0 + 500 + 200 + 300 = 1000
     expect(body.incoming).toEqual({
       count: 4,
-      totalAmount: "3300",
-      total: "3300",
-      withdrawn: "800",
-      vested: "1800",
-      withdrawable: "1000",
+      byToken: {
+        [CONTRACT]: {
+          totalAmount: "3300",
+          total: "3300",
+          withdrawn: "800",
+          vested: "1800",
+          withdrawable: "1000",
+        },
+      },
     });
   });
 });

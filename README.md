@@ -697,19 +697,27 @@ curl -s http://localhost:3000/accounts/GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHO
 {
   "incoming": {
     "count": 3,
-    "totalAmount": "100000000000000",
-    "total": "100000000000000",
-    "withdrawn": "25000000000000",
-    "vested": "50000000000000",
-    "withdrawable": "25000000000000"
+    "byToken": {
+      "CBFS2HT4TIHTMWA5ZND6FEC27BRRA4V6JWOD7JIIDZVSPVAM7EJ2LZS7": {
+        "totalAmount": "100000000000000",
+        "total": "100000000000000",
+        "withdrawn": "25000000000000",
+        "vested": "50000000000000",
+        "withdrawable": "25000000000000"
+      }
+    }
   },
   "outgoing": {
     "count": 1,
-    "totalAmount": "40000000000000",
-    "total": "40000000000000",
-    "withdrawn": "10000000000000",
-    "vested": "20000000000000",
-    "withdrawable": "10000000000000"
+    "byToken": {
+      "CBFS2HT4TIHTMWA5ZND6FEC27BRRA4V6JWOD7JIIDZVSPVAM7EJ2LZS7": {
+        "totalAmount": "40000000000000",
+        "total": "40000000000000",
+        "withdrawn": "10000000000000",
+        "vested": "20000000000000",
+        "withdrawable": "10000000000000"
+      }
+    }
   }
 }
 ```
@@ -733,8 +741,10 @@ curl -s http://localhost:3000/tokens | jq
 For `/tokens`, use `totalStreamed`: it sums allocated amounts across active,
 completed, and cancelled streams, so it is not the amount still escrowed.
 `totalAmount` and `total` remain deprecated aliases. For
-`/accounts/:address/summary` and `/streams/summary`, use `totalAmount` for
-the amount total. The `total` amount alias in account summaries remains through at least one minor
+`/accounts/:address/summary` reports counts per direction and amounts under
+`byToken`, keyed by token contract. Use each token's `totalAmount` for its
+amount total. `/streams/summary` also uses `totalAmount`. The `total` alias in
+account summaries remains through at least one minor
 release; it is planned for removal in v2. The `total` field on paginated
 `/streams` responses is a stream count and is unaffected.
 

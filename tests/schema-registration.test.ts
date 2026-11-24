@@ -54,7 +54,6 @@ function countBy(values: string[]): Map<string, number> {
 describe("shared schema ids", () => {
   it("uses totalAmount for the amount total and deprecates legacy aliases", () => {
     const summaries = [
-      schemaModule.accountStreamSummarySchema,
       schemaModule.tokenSummarySchema,
       ...Object.values(schemaModule.streamSummaryResponseSchema.properties),
     ];
@@ -65,6 +64,12 @@ describe("shared schema ids", () => {
         expect(summary.properties.total.deprecated).toBe(true);
       }
     }
+  });
+
+  it("groups account amounts under token keys while keeping directional counts", () => {
+    const schema = schemaModule.accountStreamSummarySchema;
+    expect(schema.required).toEqual(["count", "byToken"]);
+    expect(schema.properties.byToken.additionalProperties.properties).toHaveProperty("totalAmount");
   });
 
   it("names the token total as total streamed", () => {
