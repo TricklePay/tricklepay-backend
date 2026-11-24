@@ -337,6 +337,17 @@ export function loadConfig(): Config {
   );
 
   const port = integer("PORT", 3000);
+  if (port < 1 || port > 65535) {
+    throw new Error("PORT must be between 1 and 65535");
+  }
+  const bodyLimit = integer("BODY_LIMIT", 1048576);
+  if (bodyLimit < 1) {
+    throw new Error("BODY_LIMIT must be at least 1");
+  }
+  const queryStringLimit = integer("QUERY_STRING_LIMIT", 2048);
+  if (queryStringLimit < 1) {
+    throw new Error("QUERY_STRING_LIMIT must be at least 1");
+  }
   const host = optional("HOST", "0.0.0.0");
 
   return {
@@ -366,8 +377,8 @@ export function loadConfig(): Config {
       "STREAM_SUMMARY_CACHE_TTL_MS",
       DEFAULT_STREAM_SUMMARY_CACHE_TTL_MS,
     ),
-    bodyLimit: integer("BODY_LIMIT", 1048576), // 1MB default
-    queryStringLimit: integer("QUERY_STRING_LIMIT", 2048), // 2KB default
+    bodyLimit,
+    queryStringLimit,
     connectionTimeoutMs: integer("CONNECTION_TIMEOUT_MS", DEFAULT_CONNECTION_TIMEOUT_MS),
     keepAliveTimeoutMs: integer("KEEP_ALIVE_TIMEOUT_MS", DEFAULT_KEEP_ALIVE_TIMEOUT_MS),
     requestTimeoutMs: integer("REQUEST_TIMEOUT_MS", DEFAULT_REQUEST_TIMEOUT_MS),

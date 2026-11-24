@@ -1368,14 +1368,14 @@ current template — copy it and fill in the required values.
 | `STREAM_CONTRACT_ID` | **Yes** | - | Deployed Soroban contract address. |
 | `NETWORK` | No | `testnet` | Stellar network (`testnet` or `mainnet`). |
 | `SOROBAN_RPC_URL` | No | *network dependent* | Soroban RPC endpoint. Defaults to the public endpoint for the selected network. Plain `http://` is only accepted for `localhost`, `127.0.0.0/8`, or `::1`/`[::1]`; any other host must use `https://` or startup fails — see [Plain HTTP is only allowed for local RPC hosts](docs/local-network.md#plain-http-is-only-allowed-for-local-rpc-hosts). |
-| `PORT` | No | `3000` | HTTP server listen port. |
+| `PORT` | No | `3000` | HTTP server listen port (1–65535). |
 | `HOST` | No | `0.0.0.0` | HTTP server bind address. |
 | `CORS_ORIGIN` | No | - | Allowed browser origin for the web client. Unset or blank reflects any request origin. Set to a single `https://` origin to pin the API to one frontend — see [CORS origin](#cors-origin). |
 | `PUBLIC_BASE_URL` | No | `http://<HOST>:<PORT>` | Base URL advertised in the generated OpenAPI document's `servers` entry. Defaults to a URL derived from `HOST` and `PORT`. Set it when running behind a reverse proxy — see [docs/public-url-and-metrics-token.md](docs/public-url-and-metrics-token.md). |
 | `LOG_LEVEL` | No | `info` | Log verbosity (`trace`, `debug`, `info`, `warn`, `error`, `fatal`, `silent`). |
 | `LOG_PRETTY` | No | - | Set to `true` for human-readable development logs; requires the `pino-pretty` dev dependency. Output stays JSON when unset. |
-| `BODY_LIMIT` | No | `1048576` | Largest accepted request body in bytes. |
-| `QUERY_STRING_LIMIT` | No | `2048` | Longest accepted URL query string in bytes. |
+| `BODY_LIMIT` | No | `1048576` | Largest accepted request body in bytes (at least 1). |
+| `QUERY_STRING_LIMIT` | No | `2048` | Longest accepted URL query string in bytes (at least 1). |
 | `CONNECTION_TIMEOUT_MS` | No | `10000` | Milliseconds a connection may sit with no bytes moving while a request is in flight before it is closed. `0` disables it. See [Server timeouts](docs/CONFIGURATION.md#server-timeouts). |
 | `KEEP_ALIVE_TIMEOUT_MS` | No | `72000` | Milliseconds an idle keep-alive connection is held open after a response. Keep it above any load balancer's idle timeout. `0` disables it. See [Server timeouts](docs/CONFIGURATION.md#server-timeouts). |
 | `REQUEST_TIMEOUT_MS` | No | `30000` | Milliseconds within which a request must be received and answered; past it the client gets `408`. `0` disables it. See [Server timeouts](docs/CONFIGURATION.md#server-timeouts). |
