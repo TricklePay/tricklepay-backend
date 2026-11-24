@@ -415,7 +415,7 @@ curl -s "http://localhost:3000/streams/42?at=1767225600" | jq '.vested,.status'
 |-----------|------|---------|-------|-------------|
 | `points` | integer | 50 | 2–100 | Desired number of points in the returned curve. |
 
-Values below 2 are clamped up to 2; values above 100 are clamped down to 100. A non-integer or empty string returns `400 VALIDATION_ERROR`.
+Values outside 2–100, non-integers, and empty strings return `400 VALIDATION_ERROR`.
 
 **How points are distributed:**
 
