@@ -15,6 +15,7 @@ import {
   getStream,
   listStreams,
   listTokens,
+  getAccountSummary,
   orderByFromFilter,
   statusWhere,
   upsertStream,
@@ -62,6 +63,25 @@ it("labels the unfiltered token aggregate as total streamed", async () => {
   expect(groupBy.mock.calls[0]?.[0]).not.toHaveProperty("where");
   expect(tokens[0]).toMatchObject({ count: 3, totalStreamed: "600" });
   groupBy.mockRestore();
+});
+
+it("returns a bounded aggregate for an account with many streams", async () => {
+  const query = vi.spyOn(prisma, "$queryRaw").mockResolvedValueOnce([
+    {
+      direction: "incoming",
+      count: 50000n,
+      totalAmount: new Prisma.Decimal(100000),
+      withdrawn: new Prisma.Decimal(20000),
+      vested: new Prisma.Decimal(50000),
+      withdrawable: new Prisma.Decimal(30000),
+    },
+  ] as never);
+
+  const summary = await getAccountSummary("ACCOUNT", 1500n);
+  expect(query).toHaveBeenCalledTimes(1);
+  expect(summary.incoming).toMatchObject({ count: 50000, vested: "50000", withdrawable: "30000" });
+  expect(summary.outgoing.count).toBe(0);
+  query.mockRestore();
 });
 
 describe("failed events repository", () => {

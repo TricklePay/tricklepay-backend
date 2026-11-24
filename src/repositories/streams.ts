@@ -460,3 +460,72 @@ export async function getAccountStreams(
   });
 }
 
+export interface AccountStreamTotals {
+  count: number;
+  totalAmount: string;
+  total: string;
+  withdrawn: string;
+  vested: string;
+  withdrawable: string;
+}
+
+export async function getAccountSummary(
+  address: string,
+  now: bigint,
+): Promise<{ incoming: AccountStreamTotals; outgoing: AccountStreamTotals }> {
+  return measureRepositoryCall("getAccountSummary", async () => {
+    const rows = await withQueryTimeout(prisma.$queryRaw<Array<{
+      direction: "incoming" | "outgoing";
+      count: bigint;
+      totalAmount: Prisma.Decimal;
+      withdrawn: Prisma.Decimal;
+      vested: Prisma.Decimal;
+      withdrawable: Prisma.Decimal;
+    }>>`
+      WITH matched AS (
+        SELECT 'incoming'::text AS direction, "totalAmount", "withdrawn", "startTime", "endTime", "cliffTime"
+        FROM "Stream" WHERE "recipient" = ${address}
+        UNION ALL
+        SELECT 'outgoing'::text AS direction, "totalAmount", "withdrawn", "startTime", "endTime", "cliffTime"
+        FROM "Stream" WHERE "sender" = ${address}
+      ), evaluated AS (
+        SELECT direction, "totalAmount", "withdrawn",
+          CASE
+            WHEN ${now} < "cliffTime" OR ${now} < "startTime" THEN 0::numeric
+            WHEN ${now} >= "endTime" THEN "totalAmount"
+            ELSE trunc("totalAmount" * (${now} - "startTime")::numeric / ("endTime" - "startTime")::numeric)
+          END AS vested
+        FROM matched
+      )
+      SELECT direction, COUNT(*) AS count,
+        SUM("totalAmount") AS "totalAmount",
+        SUM("withdrawn") AS withdrawn,
+        SUM(vested) AS vested,
+        SUM(GREATEST(vested - "withdrawn", 0)) AS withdrawable
+      FROM evaluated GROUP BY direction
+    `);
+
+    const empty = (): AccountStreamTotals => ({
+      count: 0,
+      totalAmount: "0",
+      total: "0",
+      withdrawn: "0",
+      vested: "0",
+      withdrawable: "0",
+    });
+    const summary = { incoming: empty(), outgoing: empty() };
+    for (const row of rows) {
+      const totalAmount = row.totalAmount.toString();
+      summary[row.direction] = {
+        count: Number(row.count),
+        totalAmount,
+        total: totalAmount,
+        withdrawn: row.withdrawn.toString(),
+        vested: row.vested.toString(),
+        withdrawable: row.withdrawable.toString(),
+      };
+    }
+    return summary;
+  });
+}
+

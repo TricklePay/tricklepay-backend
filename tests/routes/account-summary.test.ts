@@ -1,8 +1,10 @@
 import Fastify from "fastify";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { summarizeAccountStreams } from "../../src/lib/account-summary.js";
 
 const streamsRepo = vi.hoisted(() => ({
   getAccountStreams: vi.fn(),
+  getAccountSummary: vi.fn(),
 }));
 
 vi.mock("../../src/repositories/streams.js", async (importOriginal) => {
@@ -53,6 +55,13 @@ async function getAccountSummary(address: string) {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  streamsRepo.getAccountSummary.mockImplementation(async (address: string, now: bigint) => {
+    const { incoming, outgoing } = await streamsRepo.getAccountStreams(address);
+    return {
+      incoming: summarizeAccountStreams(incoming, now),
+      outgoing: summarizeAccountStreams(outgoing, now),
+    };
+  });
 });
 
 afterEach(() => {

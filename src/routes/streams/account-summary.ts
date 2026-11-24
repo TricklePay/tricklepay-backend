@@ -2,11 +2,10 @@
 
 import type { FastifyInstance } from "fastify";
 
-import { summarizeAccountStreams } from "../../lib/account-summary.js";
 import { normalizeAddress } from "../../lib/address.js";
 import { sendError } from "../../lib/response.js";
 import { nowSeconds } from "../../lib/time.js";
-import { getAccountStreams } from "../../repositories/streams.js";
+import { getAccountSummary } from "../../repositories/streams.js";
 import { ACCOUNT_SUMMARY_RESPONSE_SCHEMA_ID, ERROR_SCHEMA_ID } from "../../schema.js";
 
 export function registerAccountSummaryRoute(app: FastifyInstance): void {
@@ -43,14 +42,10 @@ export function registerAccountSummaryRoute(app: FastifyInstance): void {
         return sendError(reply, request, 400, "VALIDATION_ERROR", "invalid address");
       }
 
-      const { incoming, outgoing } = await getAccountStreams(normalized);
-      const now = nowSeconds();
+      const summary = await getAccountSummary(normalized, nowSeconds());
 
       reply.header("Cache-Control", "public, max-age=30");
-      return {
-        incoming: summarizeAccountStreams(incoming, now),
-        outgoing: summarizeAccountStreams(outgoing, now),
-      };
+      return summary;
     },
   );
 }
