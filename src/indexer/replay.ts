@@ -31,6 +31,7 @@ import { applyEvent } from "./apply.js";
 
 export interface ReplayFailedEventsOptions {
   limit?: number;
+  afterLedger?: number;
   dryRun?: boolean;
   maxPages?: number;
   silent?: boolean;
@@ -90,7 +91,7 @@ export async function replayFailedEvents(
   const dryRun = options.dryRun ?? false;
   const maxPages = options.maxPages ?? 20;
 
-  const rows = await listFailedEvents({ limit });
+  const rows = await listFailedEvents({ limit, afterLedger: options.afterLedger });
   let attempted = 0;
   let succeeded = 0;
   let failed = 0;
@@ -290,6 +291,7 @@ export async function replayOneFailedEvent(
 
 export const REPLAY_ALLOWED_FLAGS: readonly CliFlagDef[] = [
   { name: "--limit", type: "string" },
+  { name: "--after-ledger", type: "string" },
   { name: "--event-id", type: "string" },
   { name: "--dry-run", type: "boolean" },
   { name: "--json", type: "boolean" },
@@ -297,11 +299,12 @@ export const REPLAY_ALLOWED_FLAGS: readonly CliFlagDef[] = [
   { name: "-h", type: "boolean" },
 ];
 
-export const REPLAY_USAGE = `Usage: tsx src/indexer/replay.ts [--event-id=<id> | --limit=<n>] [--dry-run] [--json]
+export const REPLAY_USAGE = `Usage: tsx src/indexer/replay.ts [--event-id=<id> | --limit=<n>] [--after-ledger=<n>] [--dry-run] [--json]
 
 Options:
   --event-id=<id>  Replay a single failed event by id
   --limit=<n>      Maximum number of failed events to replay (default: 20)
+  --after-ledger=<n>  Start after this ledger, allowing operators to rotate past stuck rows
   --dry-run        Report what would be replayed without persisting
   --json           Output result as JSON
   --help, -h       Show this help message
@@ -377,6 +380,9 @@ export async function main(): Promise<void> {
 
     const result = await replayFailedEvents(server, config.contractId, config.networkPassphrase, {
       limit: Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 20,
+      afterLedger: typeof args.get("--after-ledger") === "string" && /^\d+$/.test(args.get("--after-ledger") as string)
+        ? Number(args.get("--after-ledger"))
+        : undefined,
       dryRun,
       silent: jsonOutput,
     });

@@ -82,12 +82,14 @@ export async function clearFailedEvent(
   await tx.failedEvent.deleteMany({ where: { eventId } });
 }
 
-// Returns failed events ordered by ledger ascending, so the oldest stuck
-// events surface first. Used by the status route to expose them to operators.
-export async function listFailedEvents({ limit = 100 }: { limit?: number } = {}) {
+// Returns failed events ordered by oldest failure timestamp, rotating rows
+// that were just retried behind newer candidates. Used by the status route and
+// replay tooling to expose the backlog without starving newer failures.
+export async function listFailedEvents({ limit = 100, afterLedger }: { limit?: number; afterLedger?: number } = {}) {
   return measureRepositoryCall("listFailedEvents", () =>
     prisma.failedEvent.findMany({
-      orderBy: [{ ledger: "asc" }, { eventId: "asc" }],
+      where: afterLedger === undefined ? undefined : { ledger: { gt: afterLedger } },
+      orderBy: [{ lastFailedAt: "asc" }, { ledger: "asc" }, { eventId: "asc" }],
       take: limit,
     })
   );

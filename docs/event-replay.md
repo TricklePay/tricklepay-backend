@@ -171,3 +171,9 @@ The lifecycle of each `FailedEvent` row depends on the outcome of the replay:
 - **In Dry-Run Mode**:
   - Neither `clearFailedEvent` nor `recordFailedEvent` mutates the database.
   - Failure rows in `FailedEvent` remain untouched.
+
+`failureCount` counts every indexing or replay failure for the event; it is not
+the number of distinct indexing incidents. Replay failures also update
+`lastFailedAt`, and candidates are ordered by that timestamp so repeatedly
+unreplayable rows rotate behind newer failures. Operators can additionally use
+`--after-ledger` to continue from a later ledger.

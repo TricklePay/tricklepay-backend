@@ -62,6 +62,12 @@ import { registerSharedSchemas } from "./schema-registration.js";
 
 import { registerSecurityHeaders } from "./security-headers.js";
 
+declare module "fastify" {
+  interface FastifyInstance {
+    apiRoutes: Array<{ method: string; url: string; schema?: { hide?: boolean } }>;
+  }
+}
+
 // Request-id sanitisation lives in `./request-id.ts`, the echo hook in
 // `./request-id-hook.ts`, error redaction in `./error-redaction.ts`, error
 // handlers in `./error-handlers.ts`, shared schemas in `./schema-registration.ts`, and
@@ -117,6 +123,11 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
     // query parameter (`limt=5`) is rejected with a 400 instead of silently
     // changing paging results.
     ajv: { customOptions: { removeAdditional: false } },
+  });
+
+  app.decorate("apiRoutes", [] as Array<{ method: string; url: string; schema?: { hide?: boolean } }>);
+  app.addHook("onRoute", (route) => {
+    app.apiRoutes.push({ method: route.method as string, url: route.url, schema: route.schema as { hide?: boolean } | undefined });
   });
 
   // Echo the request id header on every response. Registered as the first
