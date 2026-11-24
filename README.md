@@ -405,7 +405,7 @@ curl -s "http://localhost:3000/streams/42?at=1767225600" | jq '.vested,.status'
 "completed"
 ```
 
-**ETag behaviour with `?at=`:** The `ETag` for a request with `?at=` is `"<updatedLedger>-<at>"`, distinct from the bare `"<updatedLedger>"` for the same stream without the parameter. This ensures that two requests for the same stream at different timestamps produce separate cache entries and that a stale `If-None-Match` from a plain request cannot match a timestamped one.
+**ETag behaviour with `?at=`:** The `ETag` hashes the actual response body, including time-dependent fields. A change in any returned field produces a new tag.
 
 ### `?points=` — Vesting schedule points
 
@@ -467,8 +467,7 @@ Each point has three fields, all decimal strings:
 | Route | `ETag` value |
 |-------|-------------|
 | `GET /streams` | `W/"<sha256 of the response body>"` |
-| `GET /streams/:id` (no `?at=`) | `"<updatedLedger>"` |
-| `GET /streams/:id?at=<ts>` | `"<updatedLedger>-<ts>"` |
+| `GET /streams/:id` (with or without `?at=`) | `W/"<sha256 of the response body>"` |
 | `GET /streams/:id/schedule?points=<n>` | `"<updatedLedger>-schedule-<n>"` |
 
 `updatedLedger` is the ledger sequence of the last event applied to that stream. It advances whenever a `Withdrawn` or `Cancelled` event is indexed for the stream, and never otherwise.
@@ -479,10 +478,10 @@ Each point has three fields, all decimal strings:
 # First request — server returns 200 and the ETag
 curl -si http://localhost:3000/streams/42 | grep -E "HTTP|ETag"
 HTTP/1.1 200 OK
-ETag: "200"
+ETag: W/"<body hash>"
 
 # Second request — send the ETag back; server returns 304 with no body
-curl -si -H 'If-None-Match: "200"' http://localhost:3000/streams/42 | grep "HTTP"
+curl -si -H 'If-None-Match: W/"<body hash>"' http://localhost:3000/streams/42 | grep "HTTP"
 HTTP/1.1 304 Not Modified
 
 # Same for the schedule route
@@ -503,7 +502,7 @@ HTTP/1.1 304 Not Modified
 
 Entries that are not valid entity-tags (for example an unquoted `200`) are ignored. A header with no matching entry, or no header at all, always produces a full `200` response.
 
-**Caveat:** `?at=` and `?points=` are both encoded into the ETag, so changing either parameter on the same stream id produces a different ETag even when `updatedLedger` has not advanced. A client caching both `?at=1735689600` and the bare URL for stream 42 will hold two separate cache entries and must send the right `If-None-Match` for each request variant.
+**Caveat:** The detail tag reflects its returned fields, while the schedule tag includes `?points=`. A client should send the validator from the response for the same URL when revalidating.
 
 **Error responses never carry an ETag.** The `ETag` header (and `Cache-Control`) is set only after the stream is found and validated. A `400 VALIDATION_ERROR` or `404 NOT_FOUND` response carries neither header.
 
