@@ -16,6 +16,7 @@ import {
   eventsApplied,
   eventsFailed,
   indexerConsecutiveFailures,
+  indexerCursorRegressions,
   indexerLagLedgers,
   indexerNextPollAt,
   indexerPollLastSuccess,
@@ -209,6 +210,7 @@ export class Poller {
     let current = position;
     let pages = 0;
     let events = 0;
+    let cursorRegressed = false;
 
     // `running` is checked between pages as well, so a stop during a long
     // backfill takes effect at the next page boundary instead of at the end of
@@ -230,10 +232,12 @@ export class Poller {
       // corrupt state, so the tick stops and the next poll retries from the
       // last saved position.
       if (current.cursor !== undefined && page.cursor < current.cursor) {
+        indexerCursorRegressions.inc();
         this.log.warn(
           { previousCursor: current.cursor, regressedCursor: page.cursor },
           "cursor regression detected — skipping page",
         );
+        cursorRegressed = true;
         break;
       }
 
@@ -267,6 +271,8 @@ export class Poller {
     if (events > 0) {
       this.hasProgressed = true;
     }
+
+    if (cursorRegressed) return current;
 
     // A tick that reaches here completed without throwing, so the poller is
     // alive. Operators use the timestamp to tell a quiet chain (still polling
