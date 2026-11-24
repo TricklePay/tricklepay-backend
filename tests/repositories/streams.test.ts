@@ -14,6 +14,7 @@ import {
   countStreams,
   getStream,
   listStreams,
+  listTokens,
   orderByFromFilter,
   statusWhere,
   upsertStream,
@@ -46,6 +47,22 @@ function partialStream(overrides: Partial<StreamRow> = {}): StreamRow {
     ...overrides,
   } as StreamRow;
 }
+
+it("labels the unfiltered token aggregate as total streamed", async () => {
+  // An unfiltered sum includes active, completed, and cancelled streams.
+  const groupBy = vi.spyOn(prisma.stream, "groupBy").mockResolvedValueOnce([
+    {
+      token: "TOKEN",
+      _count: { streamId: 3 },
+      _sum: { totalAmount: new Prisma.Decimal(600) },
+    },
+  ] as never);
+
+  const tokens = await listTokens();
+  expect(groupBy.mock.calls[0]?.[0]).not.toHaveProperty("where");
+  expect(tokens[0]).toMatchObject({ count: 3, totalStreamed: "600" });
+  groupBy.mockRestore();
+});
 
 describe("failed events repository", () => {
   it("records the originating error message and event identity", async () => {

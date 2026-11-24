@@ -395,8 +395,8 @@ export const streamEventHistoryResponseSchema = {
 export const tokenSummarySchema = {
   $id: TOKEN_SUMMARY_SCHEMA_ID,
   type: "object",
-  description: "A distinct token with its stream count and total escrowed amount.",
-  required: ["token", "count", "totalAmount", "total"],
+  description: "A distinct token with its stream count and total streamed amount.",
+  required: ["token", "count", "totalStreamed", "totalAmount", "total"],
   properties: {
     token: {
       type: "string",
@@ -409,16 +409,22 @@ export const tokenSummarySchema = {
       minimum: 0,
       examples: [12],
     },
+    totalStreamed: {
+      type: "string",
+      description: "Sum of totalAmount over all streams for this token, including completed and cancelled streams (decimal base units).",
+      examples: ["1000000000000000"],
+    },
     totalAmount: {
       type: "string",
+      deprecated: true,
       description:
-        "Total amount escrowed across streams for this token (uint128, decimal string).",
+        "Deprecated alias for totalStreamed; use totalStreamed instead.",
       examples: ["1000000000000000"],
     },
     total: {
       type: "string",
       deprecated: true,
-      description: "Deprecated alias for totalAmount; use totalAmount instead.",
+      description: "Deprecated alias for totalStreamed; use totalStreamed instead.",
       examples: ["1000000000000000"],
     },
   },
@@ -427,7 +433,7 @@ export const tokenSummarySchema = {
 export const tokenListResponseSchema = {
   $id: TOKEN_LIST_RESPONSE_SCHEMA_ID,
   type: "array",
-  description: "List of distinct tokens with their stream counts and total escrowed amounts.",
+  description: "List of distinct tokens with their stream counts and total streamed amounts.",
   items: { $ref: TOKEN_SUMMARY_SCHEMA_ID },
 } as const;
 

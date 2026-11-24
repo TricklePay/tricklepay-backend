@@ -240,7 +240,7 @@ header there rather than appending to it.
 | `GET` | `/streams/{id}/events` | A single stream's indexed event history, in ascending chain order. Optional `kind` filter (`created`, `withdrawn`, `cancelled`). |
 | `GET` | `/streams/{id}/schedule` | Evenly spaced vesting curve points for charting, with the cliff step included. Optional `?points=<2–100>` (default 50). May return fewer points than requested for very short streams (zero-duration). Responds `304` to a matching `If-None-Match`. |
 | `GET` | `/accounts/{address}/summary` | Incoming and outgoing stream counts and amount totals for a single Stellar address. |
-| `GET` | `/tokens` | Each distinct streamed token, with its stream count and total escrowed amount. |
+| `GET` | `/tokens` | Each distinct streamed token, with its stream count and total streamed amount. |
 | `GET` | `/metrics` | Prometheus metrics. Optional bearer authentication via `METRICS_TOKEN`. |
 | `POST` | `/admin/replay` | Trigger failed event replay (admin). Requires bearer authentication via `ADMIN_TOKEN`. Only registered when `ADMIN_TOKEN` is set. See [docs/event-replay.md](docs/event-replay.md#admin-api-endpoint). |
 
@@ -723,15 +723,18 @@ curl -s http://localhost:3000/tokens | jq
   {
     "token": "CBFS2HT4TIHTMWA5ZND6FEC27BRRA4V6JWOD7JIIDZVSPVAM7EJ2LZS7",
     "count": 12,
+    "totalStreamed": "1000000000000000",
     "totalAmount": "1000000000000000",
     "total": "1000000000000000"
   }
 ]
 ```
 
-For `/accounts/:address/summary`, `/streams/summary`, and `/tokens`, use
-`totalAmount` for the amount total. The `total` amount alias in account
-summaries and `/tokens` is deprecated and remains through at least one minor
+For `/tokens`, use `totalStreamed`: it sums allocated amounts across active,
+completed, and cancelled streams, so it is not the amount still escrowed.
+`totalAmount` and `total` remain deprecated aliases. For
+`/accounts/:address/summary` and `/streams/summary`, use `totalAmount` for
+the amount total. The `total` amount alias in account summaries remains through at least one minor
 release; it is planned for removal in v2. The `total` field on paginated
 `/streams` responses is a stream count and is unaffected.
 

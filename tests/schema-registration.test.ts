@@ -67,6 +67,11 @@ describe("shared schema ids", () => {
     }
   });
 
+  it("names the token total as total streamed", () => {
+    expect(schemaModule.tokenSummarySchema.required).toContain("totalStreamed");
+    expect(schemaModule.tokenSummarySchema.properties.totalAmount.deprecated).toBe(true);
+  });
+
   it("finds the exported *_SCHEMA_ID constants", () => {
     // Guards the enumeration itself: if the naming convention changes and this
     // finds nothing, the checks below would pass vacuously.
