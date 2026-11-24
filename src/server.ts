@@ -133,7 +133,9 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
   // footgun. The parser itself must never throw: it runs during routing, where
   // an exception bypasses Fastify's error handler and crashes the process.
   app.addHook("onRequest", async (request, reply) => {
-    const rawQuery = request.raw.url?.split("?")[1] ?? "";
+    const rawUrl = request.raw.url ?? "";
+    const queryStart = rawUrl.indexOf("?");
+    const rawQuery = queryStart === -1 ? "" : rawUrl.slice(queryStart + 1);
 
     if (config?.queryStringLimit && rawQuery.length > config.queryStringLimit) {
       void reply.status(400).send({
