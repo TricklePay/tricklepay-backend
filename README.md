@@ -1289,7 +1289,7 @@ Before opening a pull request, run the local checks script to ensure everything 
 ```
 This script runs the typecheck, tests, and build in order. It will exit non-zero on the first failure.
 
-For global contributor guidelines across the organization, refer to the shared [TricklePay Documentation Guide](https://github.com/TricklePay/tricklepay-docs).
+For global contributor guidelines across the organization, refer to the shared [TricklePay Documentation Guide](https://github.com/TricklePay/docs).
 
 All contributors are expected to adhere to the project's [Code of Conduct](CODE_OF_CONDUCT.md).
 
@@ -2064,7 +2064,7 @@ Comprehensive technical documentation is maintained under the [`docs/`](docs/) d
 
 - **tricklepay-contracts** — the Soroban streaming contract this service indexes.
 - **tricklepay-frontend** — web client built on this API.
-- **tricklepay-docs** — architecture, security model, and contributor guides.
+- **docs** — architecture, security model, and contributor guides.
 
 ## License
 

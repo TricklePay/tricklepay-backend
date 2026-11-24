@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- API root endpoint listings now derive from registered routes, failed-event replay rotates past repeatedly unreplayable rows, and replay failure-count semantics are documented.
+- Documentation links now point to the `TricklePay/docs` repository.
 - `totalAmount` is the canonical amount total in account summaries, `/streams/summary`, and `/tokens`. The `total` amount field in account summaries and `/tokens` is deprecated; it remains through at least one minor release and is planned for removal in v2. Clients should switch to `totalAmount`.
 
 ### Added

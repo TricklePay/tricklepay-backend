@@ -166,6 +166,28 @@ describe("replayFailedEvents", () => {
     );
   });
 
+  it("continues past unreplayable rows and reaches a later replayable failure", async () => {
+    failedEvents.listFailedEvents.mockResolvedValue([
+      { eventId: "old-1", kind: "unknown", streamId: null, ledger: 1, failureCount: 1 },
+      { eventId: "old-2", kind: "unknown", streamId: null, ledger: 2, failureCount: 1 },
+      { eventId: WITHDRAWAL_EVENT_ID, kind: "withdrawn", streamId: "42", ledger: 3, failureCount: 1 },
+    ]);
+    indexer.applyEvent.mockResolvedValue("applied");
+
+    const result = await replayFailedEvents(
+      {} as rpc.Server,
+      CONTRACT_ID,
+      PASSPHRASE,
+      { limit: 2 },
+    );
+
+    expect(result).toEqual({ attempted: 3, succeeded: 1, failed: 2, dryRun: false });
+    expect(failedEvents.clearFailedEvent).toHaveBeenCalledWith(
+      { eventId: WITHDRAWAL_EVENT_ID },
+      database.tx,
+    );
+  });
+
   it("dry-run reports what would happen without touching the database", async () => {
     indexer.applyEvent.mockResolvedValue("applied");
 

@@ -6,6 +6,12 @@ import { describe, expect, it } from "vitest";
 // catch testnet/mainnet wiring mistakes without reading private configuration.
 
 const { rootRoutes } = await import("../../src/routes/root.js");
+const { buildServer } = await import("../../src/server.js");
+const { streamRoutes } = await import("../../src/routes/streams.js");
+const { streamUpdateRoutes } = await import("../../src/routes/stream-updates.js");
+const { statusRoutes } = await import("../../src/routes/status.js");
+const { metricsRoutes } = await import("../../src/routes/metrics.js");
+const { adminRoutes } = await import("../../src/routes/admin.js");
 
 const mockConfig = {
   network: "testnet",
@@ -105,5 +111,28 @@ describe("GET /", () => {
     for (const param of ["sender", "recipient", "token", "limit", "offset", "cursor", "cancelled", "includeTotal"]) {
       expect(streamsEndpoint.description).toContain(param);
     }
+  });
+
+  it("matches every registered production route, excluding documented-only routes explicitly", async () => {
+    const app = await buildServer(mockConfig as never);
+    await app.register(rootRoutes(mockConfig));
+    await app.register(streamRoutes);
+    await app.register(streamUpdateRoutes);
+    await app.register(statusRoutes, { startLedger: 0, poller: null as never });
+    await app.register(metricsRoutes, { token: undefined });
+    await app.register(adminRoutes(mockConfig));
+    await app.ready();
+
+    const response = await app.inject({ method: "GET", url: "/" });
+    const index = response.json() as { endpoints: Array<{ method: string; path: string }> };
+    const listed = new Set(index.endpoints.map(({ method, path }) => `${method} ${path}`));
+    const registered = new Set(
+      app.apiRoutes
+        .filter((route) => route.method !== "HEAD" && !route.schema?.hide && !route.url.startsWith("/docs"))
+        .map((route) => `${route.method} ${route.url}`),
+    );
+
+    expect(listed).toEqual(new Set([...registered, "GET /docs"]));
+    await app.close();
   });
 });
