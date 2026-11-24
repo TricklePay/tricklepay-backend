@@ -27,7 +27,7 @@ export function resetLagCache(): void {
 
 async function getLag(): Promise<number | null> {
   const now = Date.now();
-  if (now - cachedAt < CACHE_TTL_MS && cachedLag !== null) {
+  if (now - cachedAt < CACHE_TTL_MS) {
     return cachedLag;
   }
 
