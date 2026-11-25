@@ -134,3 +134,60 @@ two SBOMs. Deploy by digest rather than by tag, because tags can move:
 ```text
 ghcr.io/tricklepay/tricklepay-backend@sha256:<digest from the release notes>
 ```
+
+
+# Container Image Verification
+
+TricklePay container images are published to GitHub Container Registry (GHCR).
+
+Release images are signed using Sigstore Cosign keyless signing and include
+GitHub build provenance attestations.
+
+## Image
+
+```bash
+docker pull ghcr.io/TricklePay/tricklepay-backend:<tag>
+```
+
+## Verify image signature
+
+Install Cosign:
+
+https://docs.sigstore.dev/cosign/system_config/installation/
+
+Verify the image signature using the release workflow identity:
+
+```bash
+cosign verify \
+  --certificate-identity-regexp='https://github.com/TricklePay/tricklepay-backend/.github/workflows/.*@refs/tags/.*' \
+  --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+  ghcr.io/TricklePay/tricklepay-backend:<tag>
+```
+
+## Verify build provenance
+
+Install GitHub CLI:
+
+https://cli.github.com/
+
+Verify the image's build provenance:
+
+```bash
+gh attestation verify \
+  oci://ghcr.io/TricklePay/tricklepay-backend:<tag> \
+  --owner TricklePay
+```
+
+## Verify by digest
+
+For stronger reproducibility, verify an immutable image digest instead of a mutable tag.
+
+```bash
+cosign verify \
+  --certificate-identity-regexp='https://github.com/TricklePay/tricklepay-backend/.github/workflows/.*@refs/tags/.*' \
+  --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+  ghcr.io/TricklePay/tricklepay-backend@sha256:<digest>
+```
+
+Consumers should verify signatures and provenance before deploying
+release images in production.
