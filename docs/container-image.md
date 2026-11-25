@@ -31,6 +31,13 @@ Database migrations should be executed before starting or rolling out the API se
   ```
 - **Kubernetes / ECS**: Run the migration image (`target: migrate`) as an init container or pre-deployment task before the API pods or tasks start.
 
+## Dockerfile Linting with Hadolint
+
+The repository enforces Dockerfile best practices and security rules using [`hadolint`](https://github.com/hadolint/hadolint) in CI via `.github/workflows/container.yml`.
+
+- **Failure threshold**: The failure threshold is configured to `warning` in `.hadolint.yaml`. Any violation at severity `warning` or `error` fails the CI check.
+- **Rules configuration**: Configuration is stored in `.hadolint.yaml`. Rules that do not apply to our Alpine-based Node container (such as Debian-specific `DL3008` for `apt-get` and `DL3018` for `apk add` version pinning) are explicitly documented and ignored.
+
 ## Base image tag policy
 
 All stages use `node:22-alpine`: a floating tag that tracks the newest Node 22

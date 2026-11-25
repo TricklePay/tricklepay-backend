@@ -1,0 +1,93 @@
+name: OpenAPI Breaking Changes Check
+
+# Compares OpenAPI specification between PR and base branch using oasdiff (#778)
+on:
+  pull_request:
+    paths:
+      - 'src/routes/**'
+      - 'src/schema*.ts'
+      - 'src/api-spec.ts'
+      - 'scripts/export-openapi.ts'
+      - '.github/workflows/openapi-diff.yml'
+      - '.oasdiff.yaml'
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  check-openapi-breaking-changes:
+    name: Detect Breaking OpenAPI Changes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          path: pr
+
+      - name: Setup Node for PR
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: pr/package-lock.json
+
+      - name: Generate PR OpenAPI Document
+        working-directory: pr
+        run: |
+          npm ci
+          npm run export:openapi ../pr-openapi.json
+
+      - name: Checkout base branch (main)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.base_ref || 'main' }}
+          path: base
+
+      - name: Setup Node for base
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Generate Base OpenAPI Document
+        working-directory: base
+        run: |
+          npm ci
+          if grep -q '"export:openapi"' package.json; then
+            npm run export:openapi ../base-openapi.json
+          else
+            npx tsx ../pr/scripts/export-openapi.ts ../base-openapi.json
+          fi
+
+      - name: Install oasdiff
+        uses: oasdiff/oasdiff-action/install@v0.0.3
+
+      - name: Run oasdiff breaking check
+        id: oasdiff
+        run: |
+          echo "Checking for breaking changes between base and PR OpenAPI specs..."
+          set +e
+          oasdiff breaking base-openapi.json pr-openapi.json --format text > breaking-report.txt
+          EXIT_CODE=$?
+          set -e
+          cat breaking-report.txt
+
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "breaking_detected=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "breaking_detected=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Enforce Breaking Changes Policy
+        if: steps.oasdiff.outputs.breaking_detected == 'true'
+        run: |
+          echo "::warning::Breaking changes detected in OpenAPI document!"
+          HAS_LABEL="${{ contains(github.event.pull_request.labels.*.name, 'allow-breaking-changes') }}"
+          if [ "$HAS_LABEL" = "true" ]; then
+            echo "Breaking changes acknowledged via 'allow-breaking-changes' pull request label. Proceeding."
+          else
+            echo "::error::Breaking changes detected in OpenAPI specification without acknowledgment."
+            echo "To proceed with intentional breaking changes, apply the 'allow-breaking-changes' label to this pull request."
+            echo "Refer to docs/api-versioning.md and docs/openapi-client-generation.md for guidelines."
+            exit 1
+          fi

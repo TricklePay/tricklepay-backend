@@ -54,6 +54,17 @@ A change is considered **breaking** if it requires client authors to modify thei
 
 ---
 
+## Automated Breaking Change Detection in CI
+
+Every pull request is automatically checked for breaking changes to the OpenAPI specification using `oasdiff` in `.github/workflows/openapi-diff.yml`.
+
+- **Automated comparison**: The pull request's OpenAPI document is compared against `main`. Any breaking change (such as removed fields, altered types, or changed route paths) fails the CI check.
+- **Acknowledging breaking changes**: If a breaking change is intended as part of a planned deprecation or major version release:
+  1. Add the `allow-breaking-changes` label to the pull request.
+  2. Document the change and migration path in `CHANGELOG.md`.
+
+---
+
 ## Communication and Deprecation Process
 
 When a breaking change is deemed necessary:

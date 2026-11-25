@@ -1,0 +1,17 @@
+# zizmor configuration file
+# Reference: https://woodruffw.github.io/zizmor/configuration/
+
+rules:
+  unpinned-uses:
+    ignore:
+      # Official GitHub first-party actions pinned to major tags for automated security patches
+      - "actions/checkout@v4"
+      - "actions/setup-node@v4"
+      - "actions/upload-artifact@v4"
+      - "actions/github-script@v8"
+      - "docker/setup-buildx-action@v4"
+      - "docker/build-push-action@v7"
+      - "hadolint/hadolint-action@v3.1.0"
+      - "woodruffw/zizmor-action@v1"
+      - "github/codeql-action/upload-sarif@v3"
+      - "oasdiff/oasdiff-action/install@v0.0.3"

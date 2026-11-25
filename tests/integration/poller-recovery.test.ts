@@ -105,9 +105,10 @@ describe("poller recovery from mid-page failure", () => {
       rateLimitMax: 100,
       rateLimitWindowMs: 60000,
       readinessRetryAfterSeconds: 10,
-      publicBaseUrl: null,
-      metricsToken: null,
-      docsUiEnabled: true,
+      readyMaxStalenessMs: 0,
+      publicBaseUrl: "http://127.0.0.1:3000",
+      metricsToken: undefined,
+      enableDocsUi: true,
       connectionTimeoutMs: 30000,
       summaryCacheTtlMs: 30000,
       lagWarnLedgers: 0,
@@ -118,14 +119,14 @@ describe("poller recovery from mid-page failure", () => {
 
     // Inject a custom prisma transaction that fails after first event
     const originalTransaction = prisma.$transaction.bind(prisma);
-    prisma.$transaction = async (callback: any) => {
+    prisma.$transaction = (async (callback: any) => {
       applyCount++;
       if (shouldFail && applyCount === 2) {
         // Fail on the second event (withdrawn)
         throw new Error("Simulated database connection lost");
       }
       return originalTransaction(callback);
-    } as any;
+    }) as any;
 
     try {
       // First tick - will fail after applying first event
@@ -243,9 +244,10 @@ describe("poller recovery from mid-page failure", () => {
       rateLimitMax: 100,
       rateLimitWindowMs: 60000,
       readinessRetryAfterSeconds: 10,
-      publicBaseUrl: null,
-      metricsToken: null,
-      docsUiEnabled: true,
+      readyMaxStalenessMs: 0,
+      publicBaseUrl: "http://127.0.0.1:3000",
+      metricsToken: undefined,
+      enableDocsUi: true,
       connectionTimeoutMs: 30000,
       summaryCacheTtlMs: 30000,
       lagWarnLedgers: 0,
@@ -255,14 +257,14 @@ describe("poller recovery from mid-page failure", () => {
 
     // Inject failure after first event
     const originalTransaction = prisma.$transaction.bind(prisma);
-    prisma.$transaction = async (callback: any) => {
+    prisma.$transaction = (async (callback: any) => {
       eventCount++;
       if (eventCount === 2) {
         // Fail on second event
         throw new Error("Database failure");
       }
       return originalTransaction(callback);
-    } as any;
+    }) as any;
 
     const poller = new Poller(mockServer, config, logger);
 
@@ -324,9 +326,10 @@ describe("poller recovery from mid-page failure", () => {
       rateLimitMax: 100,
       rateLimitWindowMs: 60000,
       readinessRetryAfterSeconds: 10,
-      publicBaseUrl: null,
-      metricsToken: null,
-      docsUiEnabled: true,
+      readyMaxStalenessMs: 0,
+      publicBaseUrl: "http://127.0.0.1:3000",
+      metricsToken: undefined,
+      enableDocsUi: true,
       connectionTimeoutMs: 30000,
       summaryCacheTtlMs: 30000,
       lagWarnLedgers: 0,
@@ -336,13 +339,13 @@ describe("poller recovery from mid-page failure", () => {
 
     // Inject failure on first run, success on second
     const originalTransaction = prisma.$transaction.bind(prisma);
-    prisma.$transaction = async (callback: any) => {
+    prisma.$transaction = (async (callback: any) => {
       if (firstRun) {
         firstRun = false;
         throw new Error("First run fails");
       }
       return originalTransaction(callback);
-    } as any;
+    }) as any;
 
     const poller1 = new Poller(mockServer, config, logger);
 
