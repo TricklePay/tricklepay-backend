@@ -15,7 +15,12 @@ import {
 import { normalizeAddress } from "../../lib/address.js";
 import { nowSeconds } from "../../lib/time.js";
 import { countStreams, decodeCursor, listStreams } from "../../repositories/streams.js";
-import { ERROR_SCHEMA_ID, STREAM_LIST_RESPONSE_SCHEMA_ID } from "../../schema.js";
+import {
+  ERROR_SCHEMA_ID,
+  RATE_LIMITED_RESPONSE_SCHEMA_ID,
+  SERVER_ERROR_RESPONSE_SCHEMA_ID,
+  STREAM_LIST_RESPONSE_SCHEMA_ID,
+} from "../../schema.js";
 
 // Above this offset a scan gets expensive enough that callers should page
 // through results in order or narrow them with filters instead.
@@ -148,6 +153,8 @@ export function registerListStreamsRoute(app: FastifyInstance): void {
           200: { $ref: STREAM_LIST_RESPONSE_SCHEMA_ID },
           304: { type: "null" },
           400: { $ref: ERROR_SCHEMA_ID },
+          429: { $ref: RATE_LIMITED_RESPONSE_SCHEMA_ID },
+          500: { $ref: SERVER_ERROR_RESPONSE_SCHEMA_ID },
         },
       },
     },

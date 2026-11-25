@@ -29,6 +29,10 @@ import {
   accountSummaryResponseSchema,
   apiErrorSchema,
   ERROR_SCHEMA_ID,
+  rateLimitedResponseSchema,
+  RATE_LIMITED_RESPONSE_SCHEMA_ID,
+  serverErrorResponseSchema,
+  SERVER_ERROR_RESPONSE_SCHEMA_ID,
   streamEventHistoryResponseSchema,
   streamEventSchema,
   STREAM_EVENT_HISTORY_RESPONSE_SCHEMA_ID,
@@ -246,6 +250,8 @@ export async function streamRoutes(
     app.addSchema(streamScheduleResponseSchema);
   }
   if (!app.getSchema(ERROR_SCHEMA_ID)) app.addSchema(apiErrorSchema);
+  if (!app.getSchema(RATE_LIMITED_RESPONSE_SCHEMA_ID)) app.addSchema(rateLimitedResponseSchema);
+  if (!app.getSchema(SERVER_ERROR_RESPONSE_SCHEMA_ID)) app.addSchema(serverErrorResponseSchema);
 
   app.get<{ Querystring: ListStreamsQuery }>(
     "/streams",
@@ -347,6 +353,8 @@ export async function streamRoutes(
           200: { $ref: STREAM_LIST_RESPONSE_SCHEMA_ID },
           304: { type: "null" },
           400: { $ref: ERROR_SCHEMA_ID },
+          429: { $ref: RATE_LIMITED_RESPONSE_SCHEMA_ID },
+          500: { $ref: SERVER_ERROR_RESPONSE_SCHEMA_ID },
         },
       },
     },
@@ -494,6 +502,8 @@ export async function streamRoutes(
         tags: ["streams"],
         response: {
           200: { $ref: STREAM_SUMMARY_RESPONSE_SCHEMA_ID },
+          429: { $ref: RATE_LIMITED_RESPONSE_SCHEMA_ID },
+          500: { $ref: SERVER_ERROR_RESPONSE_SCHEMA_ID },
         },
       },
     },
@@ -568,6 +578,8 @@ export async function streamRoutes(
         tags: ["streams"],
         response: {
           200: { $ref: TOKEN_LIST_RESPONSE_SCHEMA_ID },
+          429: { $ref: RATE_LIMITED_RESPONSE_SCHEMA_ID },
+          500: { $ref: SERVER_ERROR_RESPONSE_SCHEMA_ID },
         },
       },
     },
@@ -613,6 +625,8 @@ export async function streamRoutes(
           200: { $ref: STREAM_EVENT_HISTORY_RESPONSE_SCHEMA_ID },
           400: { $ref: ERROR_SCHEMA_ID },
           404: { $ref: ERROR_SCHEMA_ID },
+          429: { $ref: RATE_LIMITED_RESPONSE_SCHEMA_ID },
+          500: { $ref: SERVER_ERROR_RESPONSE_SCHEMA_ID },
         },
       },
     },
@@ -701,6 +715,8 @@ export async function streamRoutes(
           304: { type: "null" },
           400: { $ref: ERROR_SCHEMA_ID },
           404: { $ref: ERROR_SCHEMA_ID },
+          429: { $ref: RATE_LIMITED_RESPONSE_SCHEMA_ID },
+          500: { $ref: SERVER_ERROR_RESPONSE_SCHEMA_ID },
         },
       },
     },
@@ -786,6 +802,8 @@ export async function streamRoutes(
           304: { type: "null" },
           400: { $ref: ERROR_SCHEMA_ID },
           404: { $ref: ERROR_SCHEMA_ID },
+          429: { $ref: RATE_LIMITED_RESPONSE_SCHEMA_ID },
+          500: { $ref: SERVER_ERROR_RESPONSE_SCHEMA_ID },
         },
       },
     },
@@ -861,6 +879,8 @@ export async function streamRoutes(
         response: {
           200: { $ref: ACCOUNT_SUMMARY_RESPONSE_SCHEMA_ID },
           400: { $ref: ERROR_SCHEMA_ID },
+          429: { $ref: RATE_LIMITED_RESPONSE_SCHEMA_ID },
+          500: { $ref: SERVER_ERROR_RESPONSE_SCHEMA_ID },
         },
       },
     },

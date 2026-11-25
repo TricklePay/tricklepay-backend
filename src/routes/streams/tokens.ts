@@ -3,7 +3,11 @@
 import type { FastifyInstance } from "fastify";
 
 import { listTokens } from "../../repositories/streams.js";
-import { TOKEN_LIST_RESPONSE_SCHEMA_ID } from "../../schema.js";
+import {
+  RATE_LIMITED_RESPONSE_SCHEMA_ID,
+  SERVER_ERROR_RESPONSE_SCHEMA_ID,
+  TOKEN_LIST_RESPONSE_SCHEMA_ID,
+} from "../../schema.js";
 
 export function registerTokensRoute(app: FastifyInstance): void {
   app.get(
@@ -17,6 +21,8 @@ export function registerTokensRoute(app: FastifyInstance): void {
         tags: ["streams"],
         response: {
           200: { $ref: TOKEN_LIST_RESPONSE_SCHEMA_ID },
+          429: { $ref: RATE_LIMITED_RESPONSE_SCHEMA_ID },
+          500: { $ref: SERVER_ERROR_RESPONSE_SCHEMA_ID },
         },
       },
     },
