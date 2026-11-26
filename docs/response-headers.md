@@ -150,9 +150,29 @@ as `lagLedgers` (see [indexer-lag.md](indexer-lag.md)).
   under `Cache-Control: public, max-age=30` carries the value from when it
   was stored, up to 30 seconds old. Use `GET /status` (`no-store`) when the
   current figure matters.
-- **Browsers.** It is not in the CORS exposed headers, so browser JavaScript
-  on another origin cannot read it — see
-  [CORS origin](../README.md#cors-origin).
+- **Browsers.** It is exposed through CORS, so browser JavaScript on another
+  origin can read it — see [CORS origin](../README.md#cors-origin).
+
+## `X-Data-Stale`
+
+[`src/indexer-lag-hook.ts`](../src/indexer-lag-hook.ts) adds `X-Data-Stale: true`
+when the indexer lag exceeds a configured threshold, so simple clients can show
+a warning without parsing the lag number. The threshold is controlled by
+`READY_MAX_STALENESS_MS` (default `0`, disabled) and converted to ledgers using
+an approximate 5-second ledger close time.
+
+- **Which responses carry it.** Same as `X-Indexer-Lag-Ledgers`: every `GET`
+  response except `/health`, `/ready`, and `/metrics`.
+- **When it appears.** Only when `READY_MAX_STALENESS_MS` is set to a positive
+  value and the current lag meets or exceeds the threshold. When the lag is
+  below the threshold or the threshold is disabled, the header is omitted
+  entirely (not set to `false`).
+- **Threshold configuration.** The setting reuses the readiness staleness check,
+  so the same value controls both when `/ready` reports not-ready and when data
+  routes show the stale indicator. See the
+  [configuration table](../README.md#configuration) for details.
+- **Browsers.** It is exposed through CORS, so browser JavaScript on another
+  origin can read it — see [CORS origin](../README.md#cors-origin).
 
 ## Compression: `Content-Encoding` and `Vary`
 
