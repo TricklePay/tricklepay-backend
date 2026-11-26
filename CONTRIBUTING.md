@@ -35,7 +35,8 @@ For overarching architecture, security models, and cross-repository contribution
 3. **Install Dependencies and Generate Prisma Client:**
 
    ```bash
-   npm install
+   npm ci --ignore-scripts
+   npx prisma generate
    ```
 
 4. **Start Development Stack:**
@@ -91,7 +92,7 @@ To also run the integration test suite:
 
 #### 1. TypeScript Type Checking (`npm run typecheck`)
 - **What it does**: Runs `tsc --noEmit` on the application source tree (`src/`) and `tsc -p tsconfig.test.json` on the test suite (`tests/`).
-- **Prerequisites**: `npm ci` (or `npm install`) to ensure `node_modules` and the generated Prisma client (`node_modules/@prisma/client`) exist.
+- **Prerequisites**: `npm ci --ignore-scripts` followed by `npx prisma generate`, so `node_modules` and the generated Prisma client (`node_modules/@prisma/client`) exist.
 - **CI**: Executed on every pull request and push to `main` across Node.js 20 and Node.js 22.
 
 #### 2. Unit Tests (`npm test`)
