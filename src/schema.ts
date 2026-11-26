@@ -398,8 +398,8 @@ export const streamEventHistoryResponseSchema = {
 export const tokenSummarySchema = {
   $id: TOKEN_SUMMARY_SCHEMA_ID,
   type: "object",
-  description: "A distinct token with its stream count and total escrowed amount.",
-  required: ["token", "count", "totalAmount", "total"],
+  description: "A distinct token with its stream count and total streamed amount.",
+  required: ["token", "count", "totalStreamed", "totalAmount", "total"],
   properties: {
     token: {
       type: "string",
@@ -412,16 +412,22 @@ export const tokenSummarySchema = {
       minimum: 0,
       examples: [12],
     },
+    totalStreamed: {
+      type: "string",
+      description: "Sum of totalAmount over all streams for this token, including completed and cancelled streams (decimal base units).",
+      examples: ["1000000000000000"],
+    },
     totalAmount: {
       type: "string",
+      deprecated: true,
       description:
-        "Total amount escrowed across streams for this token (uint128, decimal string).",
+        "Deprecated alias for totalStreamed; use totalStreamed instead.",
       examples: ["1000000000000000"],
     },
     total: {
       type: "string",
       deprecated: true,
-      description: "Deprecated alias for totalAmount; use totalAmount instead.",
+      description: "Deprecated alias for totalStreamed; use totalStreamed instead.",
       examples: ["1000000000000000"],
     },
   },
@@ -430,7 +436,7 @@ export const tokenSummarySchema = {
 export const tokenListResponseSchema = {
   $id: TOKEN_LIST_RESPONSE_SCHEMA_ID,
   type: "array",
-  description: "List of distinct tokens with their stream counts and total escrowed amounts.",
+  description: "List of distinct tokens with their stream counts and total streamed amounts.",
   items: { $ref: TOKEN_SUMMARY_SCHEMA_ID },
 } as const;
 
@@ -440,47 +446,29 @@ export const tokenListResponseSchema = {
 export const accountStreamSummarySchema = {
   $id: ACCOUNT_STREAM_SUMMARY_SCHEMA_ID,
   type: "object",
-  description: "Summary of stream counts and token totals for an address.",
-  required: [
-    "count",
-    "totalAmount",
-    "total",
-    "withdrawn",
-    "vested",
-    "withdrawable",
-  ],
+  description: "Stream count and amounts grouped by token for one direction.",
+  required: ["count", "byToken"],
   properties: {
     count: {
       type: "integer",
-      description: "Number of streams.",
+      description: "Number of streams in this direction across all tokens.",
       minimum: 0,
       examples: [3],
     },
-    totalAmount: {
-      type: "string",
-      description: "Total allocated tokens (uint128, decimal string).",
-      examples: ["100000000000000"],
-    },
-    total: {
-      type: "string",
-      deprecated: true,
-      description: "Deprecated alias for totalAmount; use totalAmount instead.",
-      examples: ["100000000000000"],
-    },
-    withdrawn: {
-      type: "string",
-      description: "Total tokens already withdrawn (uint128, decimal string).",
-      examples: ["25000000000000"],
-    },
-    vested: {
-      type: "string",
-      description: "Total tokens vested as of now (uint128, decimal string).",
-      examples: ["50000000000000"],
-    },
-    withdrawable: {
-      type: "string",
-      description: "Total tokens currently withdrawable (uint128, decimal string).",
-      examples: ["25000000000000"],
+    byToken: {
+      type: "object",
+      description: "Amount totals keyed by token contract address; no amounts from different tokens are added.",
+      additionalProperties: {
+        type: "object",
+        required: ["totalAmount", "total", "withdrawn", "vested", "withdrawable"],
+        properties: {
+          totalAmount: { type: "string", description: "Total allocated base units for this token." },
+          total: { type: "string", deprecated: true, description: "Deprecated alias for totalAmount." },
+          withdrawn: { type: "string", description: "Base units withdrawn for this token." },
+          vested: { type: "string", description: "Base units vested for this token as of now." },
+          withdrawable: { type: "string", description: "Base units currently withdrawable for this token." },
+        },
+      },
     },
   },
 } as const;
@@ -488,7 +476,7 @@ export const accountStreamSummarySchema = {
 export const accountSummaryResponseSchema = {
   $id: ACCOUNT_SUMMARY_RESPONSE_SCHEMA_ID,
   type: "object",
-  description: "Account summary containing incoming and outgoing stream totals.",
+  description: "Account summary containing incoming and outgoing counts with amount totals per token.",
   required: ["incoming", "outgoing"],
   properties: {
     incoming: { $ref: ACCOUNT_STREAM_SUMMARY_SCHEMA_ID },
@@ -509,11 +497,15 @@ export const indexerStatusSchema = {
   properties: {
     indexer: {
       type: "object",
-      required: ["initialized", "startLedger", "lastLedger", "cursor", "updatedAt", "consecutiveFailures", "nextPollAt"],
+      required: ["initialized", "running", "startLedger", "lastLedger", "cursor", "updatedAt", "consecutiveFailures", "nextPollAt"],
       properties: {
         initialized: {
           type: "boolean",
           description: "False until the indexer completes its first poll.",
+        },
+        running: {
+          type: "boolean",
+          description: "False while indexer startup is retrying or after it stops.",
         },
         startLedger: {
           type: "integer",

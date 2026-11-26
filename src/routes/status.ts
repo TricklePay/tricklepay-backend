@@ -28,6 +28,7 @@ export const STATUS_CACHE_TTL_MS = 2_000;
 type StatusPayload = {
   indexer: {
     initialized: boolean;
+    running: boolean;
     startLedger: number;
     lastLedger: number;
     cursor: string | null;
@@ -125,6 +126,7 @@ export async function statusRoutes(
       const payload: StatusPayload = {
         indexer: {
           initialized: position !== null,
+          running: poller?.isRunning() ?? false,
           startLedger,
           lastLedger: position?.lastLedger ?? 0,
           cursor: position?.cursor ?? null,

@@ -61,7 +61,10 @@ async function main(): Promise<void> {
   await app.register(adminRoutes(config));
 
   // Transient errors after the startup check are retried in the background.
-  poller.start().catch((err) => logger.error({ err }, "indexer stopped"));
+  poller.start().catch((err) => {
+    logger.error({ err }, "indexer stopped");
+    process.exit(1);
+  });
 
   // Graceful shutdown order (poller -> HTTP server -> database) is documented
   // and unit-tested in ./shutdown.ts.
