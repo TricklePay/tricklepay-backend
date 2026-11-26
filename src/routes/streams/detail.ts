@@ -3,7 +3,7 @@
 import type { FastifyInstance } from "fastify";
 
 import { QueryTimeoutError } from "../../db.js";
-import { ifNoneMatchMatches, strongEtag } from "../../lib/etag.js";
+import { ifNoneMatchMatches, weakEtagFromBody } from "../../lib/etag.js";
 import { sendError } from "../../lib/response.js";
 import { isStreamIdOutOfRange, parseStreamId } from "../../lib/stream-id.js";
 import { parseAtTimestamp } from "../../lib/stream-query.js";
@@ -101,10 +101,8 @@ export function registerStreamDetailRoute(app: FastifyInstance): void {
         return sendError(reply, request, 404, "NOT_FOUND", "stream not found");
       }
 
-      const etag =
-        asOfTime !== undefined
-          ? strongEtag(stream.updatedLedger, asOfTime, query.fields)
-          : strongEtag(stream.updatedLedger, undefined, query.fields);
+      const body = mapStreamResponse(stream, asOfTime, fields);
+      const etag = weakEtagFromBody(body);
       reply.header("Cache-Control", "public, max-age=30");
       reply.header("ETag", etag);
 
@@ -112,7 +110,7 @@ export function registerStreamDetailRoute(app: FastifyInstance): void {
         return reply.code(304).send();
       }
 
-      return mapStreamResponse(stream, asOfTime, fields);
+      return body;
     },
   );
 }

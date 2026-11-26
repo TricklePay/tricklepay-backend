@@ -47,12 +47,14 @@ describe("GET /tokens", { timeout: 20000 }, () => {
       {
         token: "CA111111111111111111111111111111111111111111111111111111",
         count: 5,
+        totalStreamed: "5000000000",
         totalAmount: "5000000000",
         total: "5000000000",
       },
       {
         token: "CB222222222222222222222222222222222222222222222222222222",
         count: 2,
+        totalStreamed: "1234567890",
         totalAmount: "1234567890",
         total: "1234567890",
       },
@@ -72,12 +74,14 @@ describe("GET /tokens", { timeout: 20000 }, () => {
       {
         token: "CBFS2HT4TIHTMWA5ZND6FEC27BRRA4V6JWOD7JIIDZVSPVAM7EJ2LZS7",
         count: 1,
+        totalStreamed: maxUint128,
         totalAmount: maxUint128,
         total: maxUint128,
       },
       {
         token: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
         count: 10,
+        totalStreamed: largeAmount,
         totalAmount: largeAmount,
         total: largeAmount,
       },
@@ -91,6 +95,7 @@ describe("GET /tokens", { timeout: 20000 }, () => {
     expect(body).toHaveLength(2);
     expect(typeof body[0].totalAmount).toBe("string");
     expect(body[0].totalAmount).toBe(maxUint128);
+    expect(body[0].totalStreamed).toBe(maxUint128);
     expect(typeof body[1].totalAmount).toBe("string");
     expect(body[1].totalAmount).toBe(largeAmount);
     expect(body[0].total).toBe(body[0].totalAmount);

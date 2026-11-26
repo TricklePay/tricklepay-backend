@@ -73,7 +73,7 @@ When a route accepts a body, Fastify rejects payloads above `BODY_LIMIT` with `4
 
 ## Query String Limit
 
-The query-string limit applies to the encoded portion of the URL after `?`, including parameter names, separators, and values. The server compares JavaScript string length (characters), not UTF-8 bytes. URL-encoded non-ASCII values are represented by ASCII percent-escape characters before this check.
+The query-string limit applies to the entire encoded portion of the URL after the first `?`, including any later `?`, parameter names, separators, and values. The server compares JavaScript string length (characters), not UTF-8 bytes. URL-encoded non-ASCII values are represented by ASCII percent-escape characters before this check.
 
 ### When the Limit is Exceeded
 
