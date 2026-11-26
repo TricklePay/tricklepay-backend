@@ -217,7 +217,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-- name: Validate and format-check Prisma schema
+      - name: Validate and format-check Prisma schema
         run: |
           npx prisma validate
           if ! npx prisma format --check; then
