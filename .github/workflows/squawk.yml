@@ -1,0 +1,55 @@
+name: Lint Prisma Migrations
+
+on:
+  pull_request:
+    paths:
+      - 'prisma/migrations/**/migration.sql'
+      - '.github/workflows/squawk.yml'
+      - '.squawk.toml'
+
+permissions:
+  contents: read
+
+jobs:
+  squawk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Squawk
+        env:
+          SQUAWK_VERSION: v2.74.0
+          # SHA-256 of the squawk-linux-x64 release asset for SQUAWK_VERSION.
+          SQUAWK_SHA256: 62e2df12169cfdc77bb5f151261cdce419db9b72c49816d6fbcc421314bf1083
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSfL \
+            "https://github.com/sbdchd/squawk/releases/download/${SQUAWK_VERSION}/squawk-linux-x64" \
+            -o "$RUNNER_TEMP/squawk"
+          echo "${SQUAWK_SHA256}  $RUNNER_TEMP/squawk" | sha256sum --check -
+          install -m 0755 "$RUNNER_TEMP/squawk" /usr/local/bin/squawk
+          squawk --version
+
+      - name: Lint added or modified migration SQL files
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          CHANGED_MIGRATIONS=$(git diff --name-only --diff-filter=AM "$BASE_SHA" "$HEAD_SHA" -- 'prisma/migrations/**/migration.sql')
+
+          if [ -z "$CHANGED_MIGRATIONS" ]; then
+            echo "No new or modified Prisma migration SQL files detected."
+            exit 0
+          fi
+
+          echo "Linting changed migration files:"
+          echo "$CHANGED_MIGRATIONS"
+
+          config_args=()
+          if [ -f .squawk.toml ]; then
+            config_args=(--config .squawk.toml)
+          fi
+
+          echo "$CHANGED_MIGRATIONS" | xargs squawk "${config_args[@]}"
