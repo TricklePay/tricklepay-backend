@@ -1,0 +1,22 @@
+
+extends:
+  - spectral:oas
+
+rules:
+  operation-operationId:
+    severity: error
+
+  operation-operationId-unique:
+    severity: error
+
+  operation-parameters:
+    severity: error
+
+  operation-success-response:
+    severity: error
+
+  oas3-valid-schema:
+    severity: error
+
+  oas3-valid-schema-example:
+    severity: error

@@ -39,7 +39,8 @@ export type ApiErrorCode =
   | "NOT_FOUND"
   | "RATE_LIMITED"
   | "REQUEST_ERROR"
-  | "INTERNAL_SERVER_ERROR";
+  | "INTERNAL_SERVER_ERROR"
+  | "SERVICE_UNAVAILABLE";
 
 /**
  * Maps an HTTP status code to a stable, machine-readable error code string

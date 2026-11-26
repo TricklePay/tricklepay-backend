@@ -290,6 +290,97 @@ describe("GET /docs/json (OpenAPI spec)", () => {
     expect(getById?.responses).toHaveProperty("404");
   });
 
+  it("declares 429 response on all routes", async () => {
+    const spec = await getSpec();
+    const paths = spec.paths as Record<string, Record<string, unknown>>;
+    const routesWithResponses = [
+      "/streams",
+      "/streams/summary",
+      "/tokens",
+      "/streams/{id}",
+      "/streams/{id}/events",
+      "/streams/{id}/schedule",
+      "/accounts/{address}/summary",
+      "/",
+      "/status",
+      "/health",
+      "/ready",
+      "/streams/{id}/updates",
+    ];
+    for (const path of routesWithResponses) {
+      const route = paths[path] as Record<string, unknown> | undefined;
+      if (route) {
+        for (const method of ["get", "post"] as const) {
+          const operation = route[method] as { responses?: Record<string, unknown> } | undefined;
+          if (operation?.responses) {
+            const response429 = (operation.responses as Record<string, any>)["429"];
+            expect(response429).toBeDefined();
+            expect(JSON.stringify(response429)).toContain("RateLimitedResponse");
+          }
+        }
+      }
+    }
+  });
+
+  it("declares 500 response on all routes", async () => {
+    const spec = await getSpec();
+    const paths = spec.paths as Record<string, Record<string, unknown>>;
+    const routesWithResponses = [
+      "/streams",
+      "/streams/summary",
+      "/tokens",
+      "/streams/{id}",
+      "/streams/{id}/events",
+      "/streams/{id}/schedule",
+      "/accounts/{address}/summary",
+      "/",
+      "/status",
+      "/health",
+      "/ready",
+      "/streams/{id}/updates",
+    ];
+    for (const path of routesWithResponses) {
+      const route = paths[path] as Record<string, unknown> | undefined;
+      if (route) {
+        for (const method of ["get", "post"] as const) {
+          const operation = route[method] as { responses?: Record<string, unknown> } | undefined;
+          if (operation?.responses) {
+            const response500 = (operation.responses as Record<string, any>)["500"];
+            expect(response500).toBeDefined();
+            expect(JSON.stringify(response500)).toContain("ServerErrorResponse");
+          }
+        }
+      }
+    }
+  });
+
+  it("documents Retry-After on the shared 429 response", async () => {
+    const spec = await getSpec();
+    const schemas =
+      (spec.components as { schemas?: Record<string, unknown> } | undefined)?.schemas ?? {};
+    const rateLimited = JSON.stringify(schemas.RateLimitedResponse ?? {});
+
+    expect(rateLimited).toContain("Retry-After");
+    expect(rateLimited).toContain("seconds");
+  });
+
+  it("documents both legacy errors and RFC 9457 problem details", async () => {
+    const spec = await getSpec();
+    const schemas =
+      (spec.components as { schemas?: Record<string, unknown> } | undefined)?.schemas ?? {};
+    const legacy = JSON.stringify(schemas.ApiError ?? {});
+    const problem = JSON.stringify(schemas.ProblemDetails ?? {});
+
+    expect(legacy).toContain('"code"');
+    expect(legacy).toContain('"error"');
+    expect(legacy).toContain('"requestId"');
+
+    for (const field of ["type", "title", "status", "detail", "code", "error", "requestId"]) {
+      expect(problem, `ProblemDetails must document ${field}`).toContain(`"${field}"`);
+    }
+    expect(problem).toContain("application/problem+json");
+  });
+
   it("includes every registered route in the specification", async () => {
     const app = await buildServer();
     

@@ -216,3 +216,12 @@ jobs:
           path: coverage/
           if-no-files-found: ignore
           retention-days: 14
+
+      - name: Validate and format-check Prisma schema
+        run: |
+          npx prisma validate
+          if ! npx prisma format --check; then
+            echo "::error::Prisma schema formatting check failed. Run 'npx prisma format' to format the schema."
+            echo "Fix formatting with: npx prisma format"
+            exit 1
+          fi

@@ -1,0 +1,42 @@
+
+name: Lockfile Lint
+
+on:
+  pull_request:
+    paths:
+      - package-lock.json
+      - .lockfile-lintrc.json
+      - .github/workflows/lockfile-lint.yml
+
+  push:
+    branches:
+      - main
+    paths:
+      - package-lock.json
+      - .lockfile-lintrc.json
+      - .github/workflows/lockfile-lint.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lockfile-lint-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lockfile-lint:
+    name: Validate dependency sources
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate package lockfile
+        run: npx --yes lockfile-lint@5.1.0

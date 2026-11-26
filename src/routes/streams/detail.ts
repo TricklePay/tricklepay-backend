@@ -3,13 +3,18 @@
 import type { FastifyInstance } from "fastify";
 
 import { QueryTimeoutError } from "../../db.js";
-import { ifNoneMatchMatches, strongEtag } from "../../lib/etag.js";
+import { ifNoneMatchMatches, weakEtagFromBody } from "../../lib/etag.js";
 import { sendError } from "../../lib/response.js";
 import { isStreamIdOutOfRange, parseStreamId } from "../../lib/stream-id.js";
 import { parseAtTimestamp } from "../../lib/stream-query.js";
 import { mapStreamResponse, parseFields } from "../../lib/stream-view.js";
 import { getStream } from "../../repositories/streams.js";
-import { ERROR_SCHEMA_ID, STREAM_VIEW_SCHEMA_ID } from "../../schema.js";
+import {
+  ERROR_SCHEMA_ID,
+  RATE_LIMITED_RESPONSE_SCHEMA_ID,
+  SERVER_ERROR_RESPONSE_SCHEMA_ID,
+  STREAM_VIEW_SCHEMA_ID,
+} from "../../schema.js";
 
 export function registerStreamDetailRoute(app: FastifyInstance): void {
   app.get(
@@ -53,6 +58,8 @@ export function registerStreamDetailRoute(app: FastifyInstance): void {
           304: { type: "null" },
           400: { $ref: ERROR_SCHEMA_ID },
           404: { $ref: ERROR_SCHEMA_ID },
+          429: { $ref: RATE_LIMITED_RESPONSE_SCHEMA_ID },
+          500: { $ref: SERVER_ERROR_RESPONSE_SCHEMA_ID },
         },
       },
     },
@@ -101,10 +108,8 @@ export function registerStreamDetailRoute(app: FastifyInstance): void {
         return sendError(reply, request, 404, "NOT_FOUND", "stream not found");
       }
 
-      const etag =
-        asOfTime !== undefined
-          ? strongEtag(stream.updatedLedger, asOfTime, query.fields)
-          : strongEtag(stream.updatedLedger, undefined, query.fields);
+      const body = mapStreamResponse(stream, asOfTime, fields);
+      const etag = weakEtagFromBody(body);
       reply.header("Cache-Control", "public, max-age=30");
       reply.header("ETag", etag);
 
@@ -112,7 +117,7 @@ export function registerStreamDetailRoute(app: FastifyInstance): void {
         return reply.code(304).send();
       }
 
-      return mapStreamResponse(stream, asOfTime, fields);
+      return body;
     },
   );
 }

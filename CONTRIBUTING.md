@@ -79,7 +79,13 @@ For quick local verification before opening a pull request, run the checks scrip
 ./scripts/check.sh
 ```
 
-This runs `npm run typecheck`, `npm test`, and `npm run build` in order, failing immediately on the first error.
+This runs `npm run typecheck`, `npm test`, `npm run build`, and `npm run depcheck` in order, failing immediately on the first error.
+
+To also run the integration test suite:
+
+```bash
+./scripts/check.sh --integration
+```
 
 ### Detailed Check Specifications
 
@@ -289,3 +295,12 @@ For broader guidelines on contract interaction, network configurations, and secu
 ## Code of Conduct
 
 Please note that this project adheres to a [Code of Conduct](CODE_OF_CONDUCT.md). By participating in this project, you agree to abide by its terms.
+
+### Prisma Schema Validation & Formatting
+
+CI runs `npx prisma validate` and `npx prisma format --check` on the Prisma schema. Before opening or updating a pull request that touches `prisma/schema.prisma`, verify your schema is valid and formatted:
+
+```bash
+npx prisma validate
+npx prisma format
+npx prisma format --check

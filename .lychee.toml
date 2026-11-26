@@ -1,0 +1,8 @@
+cache = true
+cache_location = ".lycheecache"
+max_cache_age = "1d"
+include_fragments = "full"
+exclude_loopback = true
+exclude = [
+    '^https?://api\.github\.com/',
+]

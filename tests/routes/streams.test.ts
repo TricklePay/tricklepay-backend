@@ -804,7 +804,8 @@ describe("GET /streams cursor pagination", () => {
     const encoded = encodeCursor(BigInt(42));
     expect(typeof encoded).toBe("string");
     expect(encoded).not.toContain("streamId");
-    expect(decodeCursor(encoded)).toBe(42n);
+    // The cursor now also carries optional sort data, so it decodes to an object.
+    expect(decodeCursor(encoded)).toEqual({ streamId: 42n });
   });
 
   it.each([

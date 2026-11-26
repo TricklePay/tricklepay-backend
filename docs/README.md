@@ -24,6 +24,8 @@ Listed alphabetically by file name, ignoring case.
 - [backfill-duration.md](backfill-duration.md): Explains what determines how long an indexer backfill takes, how to estimate remaining progress, and the metric that shows it.
 - [CONFIGURATION.md](CONFIGURATION.md): How configuration is loaded from the process environment and the optional `.env` file, which of the two wins when they disagree, and the variables that are read outside `loadConfig()`.
 - [container-image.md](container-image.md): What the two-stage Dockerfile builds, what the runtime image contains, and how the container starts; the base image tag policy; the CI build, health check and vulnerability scan; SBOMs; and the images published to GHCR on release tags.
+- [code-scanning.md](code-scanning.md): CodeQL static analysis for JavaScript and TypeScript, when it runs, and where to view alerts on GitHub.
+- [csv-export-design.md](csv-export-design.md): Design specification for CSV export support on `GET /streams` via `Accept: text/csv` header, covering RFC 4180 compliance, field formatting, content negotiation, and spreadsheet compatibility.
 - [DATABASE.md](DATABASE.md): Supported PostgreSQL versions and compatibility requirements; this is about the database server, whereas [database-schema.md](database-schema.md) documents the tables the application creates.
 - [database-migrations.md](database-migrations.md): Prisma workflow for creating, reviewing, and applying schema migrations.
 - [database-outage-runbook.md](database-outage-runbook.md): Operator checklist for database outage symptoms, relevant metrics, automatic recovery behavior, and actions for unresolved event failures.
@@ -42,6 +44,7 @@ Listed alphabetically by file name, ignoring case.
 - [load-testing.md](load-testing.md): Guide for running the load test script that seeds 100,000 streams and benchmarks query performance (list, filters, cursor pagination, aggregations) with recorded p95 latencies and advisory thresholds.
 - [local-network.md](local-network.md): Configuration and setup for running the indexer and API against a local Stellar/Soroban development network.
 - [logging.md](logging.md): Pino log structure, severity levels, standard fields, and how request logs are correlated.
+- [multi-contract-design.md](multi-contract-design.md): Design specification for indexing multiple stream contracts simultaneously, covering schema changes, API filters, per-contract cursors, and backward compatibility.
 - [node-version-policy.md](node-version-policy.md): States the minimum supported, CI-tested, and production Node versions, and why `.nvmrc` deliberately pins the floor rather than matching the Dockerfile.
 - [openapi-client-generation.md](openapi-client-generation.md): Guide for generating a typed TypeScript client from the `/docs/json` OpenAPI document, and why amount and time fields are decimal strings rather than numbers.
 - [poll-tick-sequence.md](poll-tick-sequence.md): Mermaid sequence diagram of a single poll tick, from fetching a page of events through decoding, applying, recording failures, and saving the new position.
@@ -56,6 +59,8 @@ Listed alphabetically by file name, ignoring case.
 - [response-headers.md](response-headers.md): Table of which `Cache-Control`, `ETag`, and other headers each endpoint sets, and why, matched against the route code.
 - [shutdown-ordering.md](shutdown-ordering.md): Ordered `SIGTERM`/`SIGINT` shutdown sequence and why each step must complete before the next.
 - [test-coverage.md](test-coverage.md): How unit test coverage is measured and reported in CI, and the recorded baseline figures.
+- [verification-cli-design.md](verification-cli-design.md): Design specification for the `npm run verify-streams` CLI tool that automates verification of indexed database state against on-chain state, including sampling strategies, output formats, and monitoring integration.
+- [webhook-design.md](webhook-design.md): Design specification for webhook notification system that delivers real-time stream events (created, withdrawn, cancelled) to registered HTTP endpoints with HMAC signatures, automatic retries, and SSRF protection.
 
 ## When to add a new document here
 

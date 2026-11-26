@@ -57,4 +57,14 @@ describe("Repeated query parameters (#519)", () => {
     expect(response.statusCode).toBe(400);
     expect(response.json()).toHaveProperty("error", "query string too long");
   });
+
+  it("counts characters after a second question mark toward the limit", async () => {
+    const app = await buildServer({ queryStringLimit: 5 });
+    await app.ready();
+    const response = await app.inject({ method: "GET", url: "/health?x?abcdef" });
+    await app.close();
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toHaveProperty("error", "query string too long");
+  });
 });

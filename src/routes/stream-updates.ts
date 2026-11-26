@@ -8,6 +8,12 @@ import { getStream } from "../repositories/streams.js";
 import { sendError } from "../lib/response.js";
 import { streamEventBus, type StreamUpdateEvent } from "../event-bus.js";
 import { toView } from "../lib/stream-view.js";
+import {
+  rateLimitedResponseSchema,
+  RATE_LIMITED_RESPONSE_SCHEMA_ID,
+  serverErrorResponseSchema,
+  SERVER_ERROR_RESPONSE_SCHEMA_ID,
+} from "../schema.js";
 
 const MAX_UINT64 = 18446744073709551615n;
 
@@ -38,6 +44,9 @@ const HEARTBEAT_INTERVAL_MS = 30 * 1000;
 let activeConnections = 0;
 
 export async function streamUpdateRoutes(app: FastifyInstance): Promise<void> {
+  if (!app.getSchema(RATE_LIMITED_RESPONSE_SCHEMA_ID)) app.addSchema(rateLimitedResponseSchema);
+  if (!app.getSchema(SERVER_ERROR_RESPONSE_SCHEMA_ID)) app.addSchema(serverErrorResponseSchema);
+
   app.get(
     "/streams/:id/updates",
     {
@@ -98,6 +107,12 @@ export async function streamUpdateRoutes(app: FastifyInstance): Promise<void> {
               error: { type: "string" },
               requestId: { type: "string" },
             },
+          },
+          429: {
+            $ref: RATE_LIMITED_RESPONSE_SCHEMA_ID,
+          },
+          500: {
+            $ref: SERVER_ERROR_RESPONSE_SCHEMA_ID,
           },
           503: {
             type: "object",

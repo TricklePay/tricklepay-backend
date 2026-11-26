@@ -50,6 +50,7 @@ registered by [`src/security-headers.ts`](../src/security-headers.ts):
 | `Content-Security-Policy` | `default-src 'self'; font-src 'self' data:; style-src 'self' 'unsafe-inline'; …; frame-ancestors 'none'` | Restricts what the docs page and any rendered response may load. Fonts are limited to `'self'` and `data:`; styles are limited to `'self'` and `'unsafe-inline'` (for Swagger UI inline styling). No remote `https:` sources are allowed for fonts or stylesheets. `script-src 'self'` ensures scripts stay restricted to same-origin assets; `upgrade-insecure-requests` is deliberately omitted so the docs work over plain HTTP in local development. |
 | `Referrer-Policy` | `no-referrer` | Query strings can carry addresses; never leak them to third parties. |
 | `Cross-Origin-Resource-Policy` | `cross-origin` | Matches the API's deliberate CORS policy for non-CORS consumers. |
+| `Permissions-Policy` | `camera=(), microphone=(), geolocation=(), payment=(), push=(), sync-xhr=(), gpu=(), usb=(), magnetometer=(), gyroscope=(), accelerometer=()` | Denies access to powerful browser features the docs UI does not use. This narrows the attack surface if a page is compromised. |
 
 HSTS is left at helmet's default: it is emitted on the response but only
 honoured by browsers when the request is actually served over HTTPS.
@@ -149,9 +150,29 @@ as `lagLedgers` (see [indexer-lag.md](indexer-lag.md)).
   under `Cache-Control: public, max-age=30` carries the value from when it
   was stored, up to 30 seconds old. Use `GET /status` (`no-store`) when the
   current figure matters.
-- **Browsers.** It is not in the CORS exposed headers, so browser JavaScript
-  on another origin cannot read it — see
-  [CORS origin](../README.md#cors-origin).
+- **Browsers.** It is exposed through CORS, so browser JavaScript on another
+  origin can read it — see [CORS origin](../README.md#cors-origin).
+
+## `X-Data-Stale`
+
+[`src/indexer-lag-hook.ts`](../src/indexer-lag-hook.ts) adds `X-Data-Stale: true`
+when the indexer lag exceeds a configured threshold, so simple clients can show
+a warning without parsing the lag number. The threshold is controlled by
+`READY_MAX_STALENESS_MS` (default `0`, disabled) and converted to ledgers using
+an approximate 5-second ledger close time.
+
+- **Which responses carry it.** Same as `X-Indexer-Lag-Ledgers`: every `GET`
+  response except `/health`, `/ready`, and `/metrics`.
+- **When it appears.** Only when `READY_MAX_STALENESS_MS` is set to a positive
+  value and the current lag meets or exceeds the threshold. When the lag is
+  below the threshold or the threshold is disabled, the header is omitted
+  entirely (not set to `false`).
+- **Threshold configuration.** The setting reuses the readiness staleness check,
+  so the same value controls both when `/ready` reports not-ready and when data
+  routes show the stale indicator. See the
+  [configuration table](../README.md#configuration) for details.
+- **Browsers.** It is exposed through CORS, so browser JavaScript on another
+  origin can read it — see [CORS origin](../README.md#cors-origin).
 
 ## Compression: `Content-Encoding` and `Vary`
 

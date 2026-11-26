@@ -3,7 +3,7 @@ import helmet from "@fastify/helmet";
 import type { FastifyInstance } from "fastify";
 
 // ---------------------------------------------------------------------------
-// Security headers (#520, #676).
+// Security headers (#520, #676, #746).
 //
 // This is a JSON API, but the interactive docs at /docs are served from the
 // same origin, so the policy has to be strict for API responses while still
@@ -16,7 +16,24 @@ import type { FastifyInstance } from "fastify";
 // working when the API is reached over plain HTTP in local development or
 // through a TLS-terminating proxy. HSTS still applies when the request is
 // actually served over HTTPS.
+//
+// Helmet 8 no longer manages Permissions-Policy, so that header is set with a
+// direct onRequest hook below instead of a helmet option.
 // ---------------------------------------------------------------------------
+
+const PERMISSIONS_POLICY = [
+  "camera=()",
+  "microphone=()",
+  "geolocation=()",
+  "payment=()",
+  "push=()",
+  "sync-xhr=()",
+  "gpu=()",
+  "usb=()",
+  "magnetometer=()",
+  "gyroscope=()",
+  "accelerometer=()",
+].join(", ");
 
 /**
  * Registers the hardening headers on every response:
@@ -24,11 +41,16 @@ import type { FastifyInstance } from "fastify";
  * - `X-Content-Type-Options: nosniff`, so an error body is never sniffed as HTML
  * - a restrictive `Content-Security-Policy`, including for the docs page
  * - `Referrer-Policy: no-referrer`
+ * - `Permissions-Policy` denying powerful features the docs UI does not use
  *
  * Call during server construction, before the routes are registered, so the
  * hooks cover the docs and the error handlers too.
  */
 export async function registerSecurityHeaders(app: FastifyInstance): Promise<void> {
+  app.addHook("onRequest", async (_request, reply) => {
+    void reply.header("Permissions-Policy", PERMISSIONS_POLICY);
+  });
+
   await app.register(helmet, {
     contentSecurityPolicy: {
       directives: {

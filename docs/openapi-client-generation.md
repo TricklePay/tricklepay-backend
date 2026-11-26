@@ -88,3 +88,20 @@ The OpenAPI document is generated automatically from the route schemas in
 hand. When those schemas change, re-run the `openapi-typescript` command
 above to regenerate the `.d.ts` file; a diff in the generated types is the
 signal that a consumer needs to update its code.
+
+## Detecting Breaking Changes in CI
+
+Pull requests are automatically validated for breaking OpenAPI schema changes using [`oasdiff`](https://github.com/Tufin/oasdiff) in the `OpenAPI Breaking Changes Check` workflow (`.github/workflows/openapi-diff.yml`).
+
+### Exporting the OpenAPI Spec Locally
+You can export the current OpenAPI JSON document using the project script:
+```bash
+npm run export:openapi [output-file.json]
+```
+By default, this writes `openapi.json` to the repository root.
+
+### Acknowledging Intentional Breaking Changes
+If a pull request introduces an intentional breaking API change (following the [API Versioning Policy](api-versioning.md)):
+1. Add the `allow-breaking-changes` label to the pull request on GitHub.
+2. The CI workflow detects the label and allows the breaking change to pass.
+3. Document the change in `CHANGELOG.md` under a new major version or `/v2` prefix as required by our stability policy.

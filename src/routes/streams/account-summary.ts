@@ -2,12 +2,16 @@
 
 import type { FastifyInstance } from "fastify";
 
-import { summarizeAccountStreams } from "../../lib/account-summary.js";
 import { normalizeAddress } from "../../lib/address.js";
 import { sendError } from "../../lib/response.js";
 import { nowSeconds } from "../../lib/time.js";
-import { getAccountStreams } from "../../repositories/streams.js";
-import { ACCOUNT_SUMMARY_RESPONSE_SCHEMA_ID, ERROR_SCHEMA_ID } from "../../schema.js";
+import { getAccountSummary } from "../../repositories/streams.js";
+import {
+  ACCOUNT_SUMMARY_RESPONSE_SCHEMA_ID,
+  ERROR_SCHEMA_ID,
+  RATE_LIMITED_RESPONSE_SCHEMA_ID,
+  SERVER_ERROR_RESPONSE_SCHEMA_ID,
+} from "../../schema.js";
 
 export function registerAccountSummaryRoute(app: FastifyInstance): void {
   app.get(
@@ -16,7 +20,7 @@ export function registerAccountSummaryRoute(app: FastifyInstance): void {
       schema: {
         summary: "Get account stream summary",
         description:
-          "Returns incoming and outgoing stream counts and exact amount totals for a single Stellar address. " +
+          "Returns incoming and outgoing stream counts with exact amount totals grouped by token for a single Stellar address. " +
           "Derived amounts (vested, withdrawable) are calculated against the current time using the same rules as the stream view.",
         tags: ["streams"],
         params: {
@@ -33,6 +37,8 @@ export function registerAccountSummaryRoute(app: FastifyInstance): void {
         response: {
           200: { $ref: ACCOUNT_SUMMARY_RESPONSE_SCHEMA_ID },
           400: { $ref: ERROR_SCHEMA_ID },
+          429: { $ref: RATE_LIMITED_RESPONSE_SCHEMA_ID },
+          500: { $ref: SERVER_ERROR_RESPONSE_SCHEMA_ID },
         },
       },
     },
@@ -43,14 +49,10 @@ export function registerAccountSummaryRoute(app: FastifyInstance): void {
         return sendError(reply, request, 400, "VALIDATION_ERROR", "invalid address");
       }
 
-      const { incoming, outgoing } = await getAccountStreams(normalized);
-      const now = nowSeconds();
+      const summary = await getAccountSummary(normalized, nowSeconds());
 
       reply.header("Cache-Control", "public, max-age=30");
-      return {
-        incoming: summarizeAccountStreams(incoming, now),
-        outgoing: summarizeAccountStreams(outgoing, now),
-      };
+      return summary;
     },
   );
 }
