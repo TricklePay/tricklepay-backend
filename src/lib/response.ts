@@ -7,12 +7,66 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import type { ApiErrorCode } from "../error-redaction.js";
 
 // ---------------------------------------------------------------------------
-// Error response helper (#160)
+// Error response helper (#160, #744)
 //
-// Every API error carries the same three-field envelope: a stable
-// machine-readable code, a human-readable message, and the request id so the
-// client can quote it back when reporting a problem.
+// Every API error carries a structured response that supports both the
+// legacy envelope (code, error, requestId) and RFC 9457 problem details
+// (type, title, status, detail plus extension members). The client's Accept
+// header determines which format is returned.
 // ---------------------------------------------------------------------------
+
+const ACCEPT_PROBLEM_JSON = "application/problem+json";
+const STATUS_TITLES: Record<number, string> = {
+  400: "Bad Request",
+  404: "Not Found",
+  429: "Too Many Requests",
+  500: "Internal Server Error",
+  503: "Service Unavailable",
+};
+
+/**
+ * Determines whether the client accepts RFC 9457 problem details.
+ */
+function acceptsProblemDetails(request: FastifyRequest): boolean {
+  const acceptHeader = request.headers.accept;
+  if (!acceptHeader) return false;
+  return String(acceptHeader).toLowerCase().includes(ACCEPT_PROBLEM_JSON);
+}
+
+/**
+ * Converts an error code to a human-readable title, e.g. `NOT_FOUND`
+ * becomes "Not Found".
+ */
+function titleForCode(code: ApiErrorCode): string {
+  return code
+    .toLowerCase()
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+/**
+ * Builds an RFC 9457 problem details object. The legacy fields stay as
+ * top-level extension members so existing clients keep reading the same
+ * names, and any route-specific extras are spread at the top level too.
+ */
+function buildProblemDetails(
+  statusCode: number,
+  code: ApiErrorCode,
+  message: string,
+  requestId: string,
+  extraExtensions: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    type: `https://api.tricklepay.example/errors/${code.toLowerCase()}`,
+    title: STATUS_TITLES[statusCode] ?? titleForCode(code),
+    status: statusCode,
+    detail: message,
+    code,
+    error: message,
+    requestId,
+    ...extraExtensions,
+  };
+}
 
 /**
  * Sends a structured JSON error response and returns the reply so handlers
@@ -23,6 +77,7 @@ import type { ApiErrorCode } from "../error-redaction.js";
  * @param statusCode - HTTP status code (400, 404, 500, …).
  * @param code - Stable machine-readable error code (`VALIDATION_ERROR`, `NOT_FOUND`, …).
  * @param message - Human-readable error description sent to the caller.
+ * @param extraExtensions - Optional top-level extension members for problem details.
  */
 export function sendError(
   reply: FastifyReply,
@@ -30,13 +85,27 @@ export function sendError(
   statusCode: number,
   code: ApiErrorCode,
   message: string,
+  extraExtensions: Record<string, unknown> = {},
 ): ReturnType<FastifyReply["send"]> {
   if (reply.sent) return reply as unknown as ReturnType<FastifyReply["send"]>;
-  return reply.code(statusCode).send({
-    code,
-    error: message,
-    requestId: request.id,
-  });
+
+  const problemDetails = acceptsProblemDetails(request);
+  const response = problemDetails
+    ? buildProblemDetails(statusCode, code, message, request.id, extraExtensions)
+    : {
+        code,
+        error: message,
+        requestId: request.id,
+        ...extraExtensions,
+      };
+
+  return reply
+    .code(statusCode)
+    .header(
+      "content-type",
+      problemDetails ? ACCEPT_PROBLEM_JSON : "application/json",
+    )
+    .send(response);
 }
 
 // ---------------------------------------------------------------------------

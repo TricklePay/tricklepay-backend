@@ -17,6 +17,9 @@ import {
   apiErrorSchema,
   apiIndexSchema,
   indexerStatusSchema,
+  problemDetailsSchema,
+  rateLimitedResponseSchema,
+  serverErrorResponseSchema,
   streamEventHistoryResponseSchema,
   streamEventSchema,
   streamListResponseSchema,
@@ -41,6 +44,9 @@ export const SHARED_SCHEMAS = [
   accountSummaryResponseSchema,
   indexerStatusSchema,
   apiErrorSchema,
+  problemDetailsSchema,
+  rateLimitedResponseSchema,
+  serverErrorResponseSchema,
   apiIndexSchema,
 ] as const;
 

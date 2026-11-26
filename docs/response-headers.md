@@ -50,6 +50,7 @@ registered by [`src/security-headers.ts`](../src/security-headers.ts):
 | `Content-Security-Policy` | `default-src 'self'; font-src 'self' data:; style-src 'self' 'unsafe-inline'; …; frame-ancestors 'none'` | Restricts what the docs page and any rendered response may load. Fonts are limited to `'self'` and `data:`; styles are limited to `'self'` and `'unsafe-inline'` (for Swagger UI inline styling). No remote `https:` sources are allowed for fonts or stylesheets. `script-src 'self'` ensures scripts stay restricted to same-origin assets; `upgrade-insecure-requests` is deliberately omitted so the docs work over plain HTTP in local development. |
 | `Referrer-Policy` | `no-referrer` | Query strings can carry addresses; never leak them to third parties. |
 | `Cross-Origin-Resource-Policy` | `cross-origin` | Matches the API's deliberate CORS policy for non-CORS consumers. |
+| `Permissions-Policy` | `camera=(), microphone=(), geolocation=(), payment=(), push=(), sync-xhr=(), gpu=(), usb=(), magnetometer=(), gyroscope=(), accelerometer=()` | Denies access to powerful browser features the docs UI does not use. This narrows the attack surface if a page is compromised. |
 
 HSTS is left at helmet's default: it is emitted on the response but only
 honoured by browsers when the request is actually served over HTTPS.
