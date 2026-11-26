@@ -19,6 +19,7 @@
     "replay-failed-events": "tsx src/indexer/replay.ts",
     "prune-failed-events": "tsx src/indexer/prune.ts",
     "print-config": "tsx src/print-config.ts",
+    "load-test": "tsx scripts/load-test-queries.ts",
     "depcheck": "depcheck",
     "postinstall": "prisma generate",
     "prisma:generate": "prisma generate",
@@ -32,7 +33,7 @@
     "@fastify/swagger-ui": "^6.1.1",
     "@prisma/client": "6.19.3",
     "@stellar/stellar-sdk": "17.3.0",
-    "fastify": "^5.2.1",
+    "fastify": "^5.12.8",
     "pino": "^9.6.0"
   },
   "devDependencies": {

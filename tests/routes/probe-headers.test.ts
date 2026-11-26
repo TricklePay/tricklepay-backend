@@ -40,8 +40,8 @@ describe("probe routes never get lag or cache headers (#722)", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.headers["x-indexer-lag-ledgers"]).toBeUndefined();
-    expect(response.headers["cache-control"]).not.toMatch(/public/);
-    expect(response.headers["cache-control"]).not.toMatch(/max-age/);
+    expect(response.headers["cache-control"] ?? "").not.toMatch(/public/);
+    expect(response.headers["cache-control"] ?? "").not.toMatch(/max-age/);
   });
 
   it("omits X-Indexer-Lag-Ledgers and Cache-Control from /health with query string", async () => {
@@ -51,8 +51,8 @@ describe("probe routes never get lag or cache headers (#722)", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.headers["x-indexer-lag-ledgers"]).toBeUndefined();
-    expect(response.headers["cache-control"]).not.toMatch(/public/);
-    expect(response.headers["cache-control"]).not.toMatch(/max-age/);
+    expect(response.headers["cache-control"] ?? "").not.toMatch(/public/);
+    expect(response.headers["cache-control"] ?? "").not.toMatch(/max-age/);
   });
 
   it("omits X-Indexer-Lag-Ledgers and Cache-Control from /ready", async () => {
@@ -62,8 +62,8 @@ describe("probe routes never get lag or cache headers (#722)", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.headers["x-indexer-lag-ledgers"]).toBeUndefined();
-    expect(response.headers["cache-control"]).not.toMatch(/public/);
-    expect(response.headers["cache-control"]).not.toMatch(/max-age/);
+    expect(response.headers["cache-control"] ?? "").not.toMatch(/public/);
+    expect(response.headers["cache-control"] ?? "").not.toMatch(/max-age/);
   });
 
   it("omits X-Indexer-Lag-Ledgers and Cache-Control from /ready with query string", async () => {
@@ -73,8 +73,8 @@ describe("probe routes never get lag or cache headers (#722)", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.headers["x-indexer-lag-ledgers"]).toBeUndefined();
-    expect(response.headers["cache-control"]).not.toMatch(/public/);
-    expect(response.headers["cache-control"]).not.toMatch(/max-age/);
+    expect(response.headers["cache-control"] ?? "").not.toMatch(/public/);
+    expect(response.headers["cache-control"] ?? "").not.toMatch(/max-age/);
   });
 
   it("omits X-Indexer-Lag-Ledgers and Cache-Control from /metrics", async () => {
@@ -84,8 +84,8 @@ describe("probe routes never get lag or cache headers (#722)", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.headers["x-indexer-lag-ledgers"]).toBeUndefined();
-    expect(response.headers["cache-control"]).not.toMatch(/public/);
-    expect(response.headers["cache-control"]).not.toMatch(/max-age/);
+    expect(response.headers["cache-control"] ?? "").not.toMatch(/public/);
+    expect(response.headers["cache-control"] ?? "").not.toMatch(/max-age/);
   });
 
   it("omits X-Indexer-Lag-Ledgers and Cache-Control from /metrics with query string", async () => {
@@ -95,8 +95,8 @@ describe("probe routes never get lag or cache headers (#722)", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.headers["x-indexer-lag-ledgers"]).toBeUndefined();
-    expect(response.headers["cache-control"]).not.toMatch(/public/);
-    expect(response.headers["cache-control"]).not.toMatch(/max-age/);
+    expect(response.headers["cache-control"] ?? "").not.toMatch(/public/);
+    expect(response.headers["cache-control"] ?? "").not.toMatch(/max-age/);
   });
 
   it("includes X-Indexer-Lag-Ledgers and Cache-Control on data route /status", async () => {

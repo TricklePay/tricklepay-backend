@@ -2,7 +2,7 @@
 
 Thank you for contributing to `tricklepay-backend`! This guide covers local environment setup, mandatory quality checks, coding conventions, repository layer standards, and instructions for submitting a pull request.
 
-For overarching architecture, security models, and cross-repository contribution standards, please refer to the shared [TricklePay Documentation Guide](https://github.com/TricklePay/tricklepay-docs).
+For overarching architecture, security models, and cross-repository contribution standards, please refer to the shared [TricklePay Documentation Guide](https://github.com/TricklePay/docs).
 
 ---
 
@@ -54,13 +54,75 @@ For overarching architecture, security models, and cross-repository contribution
 
 ## Code Quality Checks
 
-Before submitting a pull request, run the local checks script to ensure type safety, test validity, and build success:
+TricklePay Backend enforces comprehensive code quality verification across type checking, unit tests, production compilation, dependency integrity, integration testing, test coverage, and container builds.
+
+### Required Checks Summary
+
+The table below outlines each check, its command, prerequisites, and CI status:
+
+| Check | Command | Prerequisites | CI Status |
+| --- | --- | --- | --- |
+| TypeScript type check | `npm run typecheck` | Dependencies installed (`npm ci`) | Executed in `CI` (`build` matrix: Node 20, 22) |
+| Unit tests | `npm test` | Dependencies installed (`npm ci`) | Executed in `CI` (`build` matrix: Node 20, 22) |
+| Production build | `npm run build` | Dependencies installed (`npm ci`) | Executed in `CI` (`build` matrix: Node 20, 22) |
+| Dependency check | `npm run depcheck` | Dependencies installed (`npm ci`) | Executed in `CI` (`depcheck` job: Node 22) |
+| Integration tests | `npm run test:integration` | Running PostgreSQL instance with migrations and shadow DB | Executed in `CI` (`migration-check` matrix: Postgres 16, 17) |
+| Test coverage | `npm run test:coverage` | Dependencies installed (`npm ci`) | Executed in `CI` (`coverage` job: Node 22) |
+| Container image build | `docker build --tag tricklepay-backend:ci .` | Running Docker daemon | Executed in `CI` (`docker-build`) and `Container image` |
+| Dependency security audit | `npm audit` | Dependencies installed (`npm ci`) | Executed in `Dependency Audit` workflow |
+
+### Local Verification Script
+
+For quick local verification before opening a pull request, run the checks script:
 
 ```bash
 ./scripts/check.sh
 ```
 
-This script will run type checking, unit tests, and the build step in order, exiting non-zero on the first failure.
+This runs `npm run typecheck`, `npm test`, and `npm run build` in order, failing immediately on the first error.
+
+### Detailed Check Specifications
+
+#### 1. TypeScript Type Checking (`npm run typecheck`)
+- **What it does**: Runs `tsc --noEmit` on the application source tree (`src/`) and `tsc -p tsconfig.test.json` on the test suite (`tests/`).
+- **Prerequisites**: `npm ci` (or `npm install`) to ensure `node_modules` and the generated Prisma client (`node_modules/@prisma/client`) exist.
+- **CI**: Executed on every pull request and push to `main` across Node.js 20 and Node.js 22.
+
+#### 2. Unit Tests (`npm test`)
+- **What it does**: Runs the Vitest unit test suite (`vitest run --project unit`). Mocks database calls and chain RPC endpoints to isolate business logic, vesting schedules, and route handlers.
+- **Prerequisites**: Installed dependencies.
+- **CI**: Executed on every pull request and push to `main` across Node.js 20 and Node.js 22.
+
+#### 3. Production Build (`npm run build`)
+- **What it does**: Compiles all TypeScript files in `src/` to JavaScript files in `dist/` using the production `tsconfig.json`.
+- **Prerequisites**: Installed dependencies.
+- **CI**: Executed on every pull request and push to `main` across Node.js 20 and Node.js 22.
+
+#### 4. Dependency Audit and Unused Package Check (`npm run depcheck`)
+- **What it does**: Scans the codebase with `depcheck` to guarantee there are no undeclared dependencies in `package.json` and no obsolete or unused packages (configured in `.depcheckrc.yml`).
+- **Prerequisites**: Installed dependencies.
+- **CI**: Executed on every pull request and push to `main` in the `depcheck` job.
+
+#### 5. Integration Tests (`npm run test:integration`)
+- **What it does**: Executes end-to-end repository and database integration tests (`vitest run --project integration`) against real PostgreSQL schemas.
+- **Prerequisites**: A running PostgreSQL database and empty shadow database. You can launch the dedicated test database container via:
+  ```bash
+  docker compose --profile test up -d postgres-test
+  DATABASE_URL=postgresql://tricklepay_test:tricklepay_test@localhost:5433/tricklepay_test npx prisma migrate deploy
+  docker compose exec postgres-test createdb -U tricklepay_test tricklepay_shadow
+  DATABASE_URL=postgresql://tricklepay_test:tricklepay_test@localhost:5433/tricklepay_test SHADOW_DATABASE_URL=postgresql://tricklepay_test:tricklepay_test@localhost:5433/tricklepay_shadow npm run test:integration
+  ```
+- **CI**: Executed in the `migration-check` workflow matrix across both PostgreSQL 16 and PostgreSQL 17.
+
+#### 6. Test Coverage (`npm run test:coverage`)
+- **What it does**: Runs the unit test suite with the V8 coverage provider, generating human-readable tables, HTML reports, and `coverage/coverage-summary.json`.
+- **Prerequisites**: Installed dependencies.
+- **CI**: Executed in the `coverage` job.
+
+#### 7. Container Build and Health Check
+- **What it does**: Verifies that the multi-stage Dockerfile compiles properly, builds both the migration image and the lean runtime image, and passes the HTTP `/health` probe.
+- **Prerequisites**: Local Docker daemon.
+- **CI**: Executed in `CI` (`docker-build`) and `Container image` (`smoke-test` and `scan`).
 
 ### Code Quality Standards
 
@@ -160,7 +222,7 @@ Add a new file under `src/routes/`. The file should export an async plugin funct
 
 Import the plugin function and call `app.register(yourRoutes)` inside `buildServer` in [`src/server.ts`](src/server.ts). The order matters: register the plugin _after_ the shared schemas are added (the `app.addSchema(...)` block) but before the server is returned.
 
-### 3. Attach a JSON Schema — required for the published specification
+### 3. Attach a JSON Schema - required for the published specification
 
 Every route that returns a response body **must** attach a JSON Schema to its route definition via the `schema.response` option. This is not optional: `@fastify/swagger` generates the published OpenAPI specification by inspecting those schemas at startup, so a route without one is invisible to consumers of the spec.
 
@@ -183,7 +245,7 @@ Every route that returns a response body **must** attach a JSON Schema to its ro
 
 Routes that read from the database import their data through a repository function in `src/repositories/`. Routes that do not need the database (like `/health`) can be registered directly in `server.ts` without a separate repository file. Choose the approach that matches the responsibility of the route and document the decision in a short comment at the top of the file.
 
-**Example reference:** [`src/routes/status.ts`](src/routes/status.ts) is a good starting point — it is short, touches the database through two repository functions, registers a response schema, and includes a server-side cache with an injectable TTL for testability.
+**Example reference:** [`src/routes/status.ts`](src/routes/status.ts) is a good starting point - it is short, touches the database through two repository functions, registers a response schema, and includes a server-side cache with an injectable TTL for testability.
 
 ---
 
@@ -201,16 +263,26 @@ Routes that read from the database import their data through a repository functi
    Write concise, descriptive commit messages matching conventional commit format:
    `feat(<scope>): description (#issue)` or `docs(<scope>): description (#issue)`.
 
-3. **Open a Pull Request:**
+3. **Update CHANGELOG.md:**
+   If your pull request changes the API surface (routes, schemas, response shapes) or configuration options (environment variables, command-line flags), add an entry under the `[Unreleased]` section in `CHANGELOG.md`. Follow the [Keep a Changelog](https://keepachangelog.com/) format:
+   - Use `### Added` for new endpoints, query parameters, response fields, or config variables.
+   - Use `### Changed` for breaking changes or behaviour modifications.
+   - Use `### Fixed` for bug fixes.
+   - Use `### Removed` for deleted endpoints or deprecated config.
+   
+   Internal refactors, test additions, or doc-only changes that have no observable effect on the API or config may skip the CHANGELOG by applying the `no-changelog` label to the pull request.
+
+4. **Open a Pull Request:**
    - Push your branch to `origin`.
    - Open a PR against the `main` branch.
    - Include `Closes #<ISSUE_NUMBER>` in the PR description to link and automatically close relevant issues.
+   - The `CHANGELOG check` workflow will verify that API or config changes include a CHANGELOG entry (or the `no-changelog` label is present).
 
 ---
 
 ## Shared Guidelines
 
-For broader guidelines on contract interaction, network configurations, and security practices across all TricklePay repositories, visit the [TricklePay Shared Docs](https://github.com/TricklePay/tricklepay-docs).
+For broader guidelines on contract interaction, network configurations, and security practices across all TricklePay repositories, visit the [TricklePay Shared Docs](https://github.com/TricklePay/docs).
 
 ---
 

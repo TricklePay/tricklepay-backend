@@ -240,8 +240,9 @@ header there rather than appending to it.
 | `GET` | `/streams/{id}/events` | A single stream's indexed event history, in ascending chain order. Optional `kind` filter (`created`, `withdrawn`, `cancelled`). |
 | `GET` | `/streams/{id}/schedule` | Evenly spaced vesting curve points for charting, with the cliff step included. Optional `?points=<2–100>` (default 50). May return fewer points than requested for very short streams (zero-duration). Responds `304` to a matching `If-None-Match`. |
 | `GET` | `/accounts/{address}/summary` | Incoming and outgoing stream counts and amount totals for a single Stellar address. |
-| `GET` | `/tokens` | Each distinct streamed token, with its stream count and total escrowed amount. |
-| `GET` | `/tokens` | Each distinct streamed token, with its stream count and total escrowed amount. |
+| `GET` | `/tokens` | Each distinct streamed token, with its stream count and total streamed amount. |
+| `GET` | `/metrics` | Prometheus metrics. Optional bearer authentication via `METRICS_TOKEN`. |
+| `POST` | `/admin/replay` | Trigger failed event replay (admin). Requires bearer authentication via `ADMIN_TOKEN`. Only registered when `ADMIN_TOKEN` is set. See [docs/event-replay.md](docs/event-replay.md#admin-api-endpoint). |
 
 Each stream is returned with its stored fields plus derived `vested`,
 `withdrawable`, `locked`, `progress`, and `status` (`pending`, `streaming`,
@@ -404,7 +405,7 @@ curl -s "http://localhost:3000/streams/42?at=1767225600" | jq '.vested,.status'
 "completed"
 ```
 
-**ETag behaviour with `?at=`:** The `ETag` for a request with `?at=` is `"<updatedLedger>-<at>"`, distinct from the bare `"<updatedLedger>"` for the same stream without the parameter. This ensures that two requests for the same stream at different timestamps produce separate cache entries and that a stale `If-None-Match` from a plain request cannot match a timestamped one.
+**ETag behaviour with `?at=`:** The `ETag` hashes the actual response body, including time-dependent fields. A change in any returned field produces a new tag.
 
 ### `?points=` — Vesting schedule points
 
@@ -414,7 +415,7 @@ curl -s "http://localhost:3000/streams/42?at=1767225600" | jq '.vested,.status'
 |-----------|------|---------|-------|-------------|
 | `points` | integer | 50 | 2–100 | Desired number of points in the returned curve. |
 
-Values below 2 are clamped up to 2; values above 100 are clamped down to 100. A non-integer or empty string returns `400 VALIDATION_ERROR`.
+Values outside 2–100, non-integers, and empty strings return `400 VALIDATION_ERROR`.
 
 **How points are distributed:**
 
@@ -466,8 +467,7 @@ Each point has three fields, all decimal strings:
 | Route | `ETag` value |
 |-------|-------------|
 | `GET /streams` | `W/"<sha256 of the response body>"` |
-| `GET /streams/:id` (no `?at=`) | `"<updatedLedger>"` |
-| `GET /streams/:id?at=<ts>` | `"<updatedLedger>-<ts>"` |
+| `GET /streams/:id` (with or without `?at=`) | `W/"<sha256 of the response body>"` |
 | `GET /streams/:id/schedule?points=<n>` | `"<updatedLedger>-schedule-<n>"` |
 
 `updatedLedger` is the ledger sequence of the last event applied to that stream. It advances whenever a `Withdrawn` or `Cancelled` event is indexed for the stream, and never otherwise.
@@ -478,10 +478,10 @@ Each point has three fields, all decimal strings:
 # First request — server returns 200 and the ETag
 curl -si http://localhost:3000/streams/42 | grep -E "HTTP|ETag"
 HTTP/1.1 200 OK
-ETag: "200"
+ETag: W/"<body hash>"
 
 # Second request — send the ETag back; server returns 304 with no body
-curl -si -H 'If-None-Match: "200"' http://localhost:3000/streams/42 | grep "HTTP"
+curl -si -H 'If-None-Match: W/"<body hash>"' http://localhost:3000/streams/42 | grep "HTTP"
 HTTP/1.1 304 Not Modified
 
 # Same for the schedule route
@@ -502,7 +502,7 @@ HTTP/1.1 304 Not Modified
 
 Entries that are not valid entity-tags (for example an unquoted `200`) are ignored. A header with no matching entry, or no header at all, always produces a full `200` response.
 
-**Caveat:** `?at=` and `?points=` are both encoded into the ETag, so changing either parameter on the same stream id produces a different ETag even when `updatedLedger` has not advanced. A client caching both `?at=1735689600` and the bare URL for stream 42 will hold two separate cache entries and must send the right `If-None-Match` for each request variant.
+**Caveat:** The detail tag reflects its returned fields, while the schedule tag includes `?points=`. A client should send the validator from the response for the same URL when revalidating.
 
 **Error responses never carry an ETag.** The `ETag` header (and `Cache-Control`) is set only after the stream is found and validated. A `400 VALIDATION_ERROR` or `404 NOT_FOUND` response carries neither header.
 
@@ -696,19 +696,27 @@ curl -s http://localhost:3000/accounts/GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHO
 {
   "incoming": {
     "count": 3,
-    "totalAmount": "100000000000000",
-    "total": "100000000000000",
-    "withdrawn": "25000000000000",
-    "vested": "50000000000000",
-    "withdrawable": "25000000000000"
+    "byToken": {
+      "CBFS2HT4TIHTMWA5ZND6FEC27BRRA4V6JWOD7JIIDZVSPVAM7EJ2LZS7": {
+        "totalAmount": "100000000000000",
+        "total": "100000000000000",
+        "withdrawn": "25000000000000",
+        "vested": "50000000000000",
+        "withdrawable": "25000000000000"
+      }
+    }
   },
   "outgoing": {
     "count": 1,
-    "totalAmount": "40000000000000",
-    "total": "40000000000000",
-    "withdrawn": "10000000000000",
-    "vested": "20000000000000",
-    "withdrawable": "10000000000000"
+    "byToken": {
+      "CBFS2HT4TIHTMWA5ZND6FEC27BRRA4V6JWOD7JIIDZVSPVAM7EJ2LZS7": {
+        "totalAmount": "40000000000000",
+        "total": "40000000000000",
+        "withdrawn": "10000000000000",
+        "vested": "20000000000000",
+        "withdrawable": "10000000000000"
+      }
+    }
   }
 }
 ```
@@ -722,15 +730,20 @@ curl -s http://localhost:3000/tokens | jq
   {
     "token": "CBFS2HT4TIHTMWA5ZND6FEC27BRRA4V6JWOD7JIIDZVSPVAM7EJ2LZS7",
     "count": 12,
+    "totalStreamed": "1000000000000000",
     "totalAmount": "1000000000000000",
     "total": "1000000000000000"
   }
 ]
 ```
 
-For `/accounts/:address/summary`, `/streams/summary`, and `/tokens`, use
-`totalAmount` for the amount total. The `total` amount alias in account
-summaries and `/tokens` is deprecated and remains through at least one minor
+For `/tokens`, use `totalStreamed`: it sums allocated amounts across active,
+completed, and cancelled streams, so it is not the amount still escrowed.
+`totalAmount` and `total` remain deprecated aliases. For
+`/accounts/:address/summary` reports counts per direction and amounts under
+`byToken`, keyed by token contract. Use each token's `totalAmount` for its
+amount total. `/streams/summary` also uses `totalAmount`. The `total` alias in
+account summaries remains through at least one minor
 release; it is planned for removal in v2. The `total` field on paginated
 `/streams` responses is a stream count and is unaffected.
 
@@ -1084,7 +1097,7 @@ npm install
 For the image contents, runtime user, entrypoint, and exposed port, see
 [docs/container-image.md](docs/container-image.md).
 
-The repository includes a multi-container setup in `docker-compose.yml` that starts both the PostgreSQL database and the API service (which automatically runs pending database migrations on startup).
+The repository includes a multi-container setup in `docker-compose.yml` that starts PostgreSQL, runs pending database migrations via a dedicated `migrate` service, and starts the lean `api` service.
 
 #### Environment Variables for Docker
 
@@ -1092,7 +1105,7 @@ When running with Docker Compose, the service requires or configures the followi
 
 | Variable | Required | Description / Default |
 | --- | --- | --- |
-| `STREAM_CONTRACT_ID` | **Yes** | Deployed Soroban contract address (56 characters starting with `C`). Must be provided in `.env` or set in shell environment. |
+| `STREAM_CONTRACT_ID` | **Yes** | Deployed Soroban contract address (56 characters starting with `C`). Must be provided in `.env` or set in the shell environment. If unset, Docker Compose fails fast immediately with a clear error message. |
 | `DATABASE_URL` | Yes | Pre-configured in compose to `postgresql://tricklepay:tricklepay@postgres:5432/tricklepay`. |
 | `NETWORK` | No | Stellar network (`testnet` or `mainnet`). Default in compose: `testnet`. |
 | `PORT` | No | Container HTTP listen port. Default: `3000`. |
@@ -1108,7 +1121,19 @@ When running with Docker Compose, the service requires or configures the followi
 
    Edit `.env` and set `STREAM_CONTRACT_ID` to your deployed stream contract address (e.g., `STREAM_CONTRACT_ID=C...`).
 
-2. **Start the database and API containers:**
+   Alternatively, you can provide `STREAM_CONTRACT_ID` directly in your shell:
+   ```bash
+   export STREAM_CONTRACT_ID=CDMB62RVYAXJJNYYH7K442SHSAJIXTZ6K7JANGSMQF2T7MHCTVSK75SW
+   # or run inline with docker compose:
+   STREAM_CONTRACT_ID=CDMB62RVYAXJJNYYH7K442SHSAJIXTZ6K7JANGSMQF2T7MHCTVSK75SW docker compose up
+   ```
+
+   If `STREAM_CONTRACT_ID` is missing or unset, `docker compose up api` fails fast immediately with:
+   ```text
+   STREAM_CONTRACT_ID must be set to the deployed Soroban stream contract address
+   ```
+
+2. **Start the database, migration, and API containers:**
 
    ```bash
    docker compose up --build
@@ -1120,7 +1145,7 @@ When running with Docker Compose, the service requires or configures the followi
    docker compose up -d
    ```
 
-   The `api` container waits for the `postgres` healthcheck to pass, runs `npx prisma migrate deploy` automatically, and then starts the API service.
+   The `migrate` container waits for the `postgres` healthcheck to pass, runs `npx prisma migrate deploy` automatically to completion, and then the `api` container starts the API service.
 
 3. **Verify and view logs:**
 
@@ -1276,7 +1301,7 @@ Before opening a pull request, run the local checks script to ensure everything 
 ```
 This script runs the typecheck, tests, and build in order. It will exit non-zero on the first failure.
 
-For global contributor guidelines across the organization, refer to the shared [TricklePay Documentation Guide](https://github.com/TricklePay/tricklepay-docs).
+For global contributor guidelines across the organization, refer to the shared [TricklePay Documentation Guide](https://github.com/TricklePay/docs).
 
 All contributors are expected to adhere to the project's [Code of Conduct](CODE_OF_CONDUCT.md).
 
@@ -1356,19 +1381,20 @@ current template — copy it and fill in the required values.
 | `STREAM_CONTRACT_ID` | **Yes** | - | Deployed Soroban contract address. |
 | `NETWORK` | No | `testnet` | Stellar network (`testnet` or `mainnet`). |
 | `SOROBAN_RPC_URL` | No | *network dependent* | Soroban RPC endpoint. Defaults to the public endpoint for the selected network. Plain `http://` is only accepted for `localhost`, `127.0.0.0/8`, or `::1`/`[::1]`; any other host must use `https://` or startup fails — see [Plain HTTP is only allowed for local RPC hosts](docs/local-network.md#plain-http-is-only-allowed-for-local-rpc-hosts). |
-| `PORT` | No | `3000` | HTTP server listen port. |
+| `PORT` | No | `3000` | HTTP server listen port (1–65535). |
 | `HOST` | No | `0.0.0.0` | HTTP server bind address. |
-| `CORS_ORIGIN` | No | - | Allowed browser origin for the web client. Unset reflects any request origin (development default). Set to a single `https://` origin to pin the API to one frontend. Empty string disables browser access entirely. Only one origin is supported — see [CORS origin](#cors-origin). |
+| `CORS_ORIGIN` | No | - | Allowed browser origin for the web client. Unset or blank reflects any request origin. Set to a single `https://` origin to pin the API to one frontend — see [CORS origin](#cors-origin). |
 | `PUBLIC_BASE_URL` | No | `http://<HOST>:<PORT>` | Base URL advertised in the generated OpenAPI document's `servers` entry. Defaults to a URL derived from `HOST` and `PORT`. Set it when running behind a reverse proxy — see [docs/public-url-and-metrics-token.md](docs/public-url-and-metrics-token.md). |
 | `LOG_LEVEL` | No | `info` | Log verbosity (`trace`, `debug`, `info`, `warn`, `error`, `fatal`, `silent`). |
 | `LOG_PRETTY` | No | - | Set to `true` for human-readable development logs; requires the `pino-pretty` dev dependency. Output stays JSON when unset. |
-| `BODY_LIMIT` | No | `1048576` | Largest accepted request body in bytes. |
-| `QUERY_STRING_LIMIT` | No | `2048` | Longest accepted URL query string in bytes. |
+| `BODY_LIMIT` | No | `1048576` | Largest accepted request body in bytes (at least 1). |
+| `QUERY_STRING_LIMIT` | No | `2048` | Longest accepted URL query string in bytes (at least 1). |
 | `CONNECTION_TIMEOUT_MS` | No | `10000` | Milliseconds a connection may sit with no bytes moving while a request is in flight before it is closed. `0` disables it. See [Server timeouts](docs/CONFIGURATION.md#server-timeouts). |
 | `KEEP_ALIVE_TIMEOUT_MS` | No | `72000` | Milliseconds an idle keep-alive connection is held open after a response. Keep it above any load balancer's idle timeout. `0` disables it. See [Server timeouts](docs/CONFIGURATION.md#server-timeouts). |
 | `REQUEST_TIMEOUT_MS` | No | `30000` | Milliseconds within which a request must be received and answered; past it the client gets `408`. `0` disables it. See [Server timeouts](docs/CONFIGURATION.md#server-timeouts). |
 | `ENABLE_DOCS_UI` | No | `true` | Serve the interactive Swagger UI at `/docs`. Set to `false` to disable the page and its static assets while `/docs/json` and `/docs/yaml` stay available. Accepts `true/false` (also `1/0`, `yes/no`, `on/off`); anything else fails startup. |
 | `METRICS_TOKEN` | No | - | Bearer token required on `/metrics` when set; unset keeps the endpoint unauthenticated. Only send it over TLS and keep the recommended network restriction. Prometheus scrape example in [docs/public-url-and-metrics-token.md](docs/public-url-and-metrics-token.md#prometheus-scrape-example). |
+| `ADMIN_TOKEN` | No | - | Bearer token required on admin endpoints (`POST /admin/replay`) when set. When unset or empty, admin endpoints are not registered. Allows remote triggering of failed event replay from orchestration tools. See [docs/event-replay.md](docs/event-replay.md#admin-api-endpoint). |
 | `COMPRESSION_THRESHOLD_BYTES` | No | `1024` | Responses at least this many bytes are compressed when the client accepts `gzip` or `br`. Smaller responses are sent uncompressed. |
 | `RATE_LIMIT_MAX` | No | `100` | Maximum requests per client IP per window for the default route group. Must be greater than zero. See [Per-route-group rate limiting](#per-route-group-rate-limiting). |
 | `RATE_LIMIT_WINDOW_MS` | No | `60000` | Length of the rate-limit window in milliseconds for the default group. Must be greater than zero. |
@@ -1496,7 +1522,7 @@ is preserved.
 | `CORS_ORIGIN` value | Behaviour |
 |---------------------|-----------|
 | Unset (variable absent) | Reflects the request's `Origin` back — any origin is allowed. Safe for local development; not recommended for production because any website can call the API from a browser. |
-| Empty string (`""`) | Disables CORS entirely: no `Access-Control-Allow-Origin` header is set, so browsers block every cross-origin request. Use this when the API should not be callable from a browser at all. |
+| Empty or whitespace-only string | Same as unset. |
 | A URL string (e.g. `https://app.example.com`) | Only requests from that exact origin are allowed. All other origins receive no `Access-Control-Allow-Origin` header, which browsers treat as a refusal. |
 
 **Accepted format:** a single `https://` URL with no trailing slash, exactly as a browser sends in the `Origin` header. The match is case-sensitive and exact — `https://app.example.com` does not match `https://app.example.com/` (trailing slash) or `https://App.Example.Com` (different casing).
@@ -1508,14 +1534,12 @@ is preserved.
 **Preflight requests:** browsers send an `OPTIONS` preflight before cross-origin requests that use non-simple methods or headers. The plugin answers these with `204 No Content` and the appropriate `Access-Control-Allow-Methods` and `Access-Control-Allow-Headers` headers.
 
 ```
-# Development — any origin (unset, leave this line absent or commented out)
-# CORS_ORIGIN=
+# Development — any origin
+CORS_ORIGIN=
 
 # Production — pin to the deployed frontend
 CORS_ORIGIN=https://app.example.com
 
-# No browser access allowed
-CORS_ORIGIN=
 ```
 
 ### Logging
@@ -1672,13 +1696,17 @@ they answer different questions:
 
 ### Migrations
 
-Apply pending Prisma migrations before the process starts serving traffic —
+Apply pending Prisma migrations before the process starts serving traffic -
 `npx prisma migrate deploy`, never `prisma migrate dev`, which is interactive.
-`docker-compose.yml` shows the pattern: the migration runs as a startup step
-ahead of `node dist/index.js`, in the same container command. On a platform
-with a dedicated pre-deploy hook or init-container step, use that instead of
-chaining commands; either way, migrations must complete before the app process
-accepts connections.
+`docker-compose.yml` shows the pattern: the migration runs as a dedicated `migrate`
+service ahead of `node dist/index.js` in the `api` service. On a platform
+with a dedicated pre-deploy hook or init-container step, use the migration image
+instead of running migrations inside the API container; either way, migrations
+must complete before the app process accepts connections.
+
+### Prisma Pin and Dependency Policy
+
+`prisma` and `@prisma/client` are pinned to exact versions (`6.19.3`) to prevent drift across environments and avoid unexpected breaking changes between contributors and deployments (#396). The `deepmerge-ts` (<8.0.0) stack exhaustion advisory (GHSA-ggr8-5vv4-36mx) reported via `prisma -> @prisma/config -> deepmerge-ts` is not reachable in production: `@prisma/config` is only invoked during local development and build/generate/migration CLI operations with trusted configuration files, not during runtime request handling or against untrusted inputs (#557). Upgrading to Prisma 7.x (which requires breaking config and schema changes) is deferred until a planned major version milestone. The advisory is accepted by ID in `.github/workflows/audit.yml`; any other high or critical advisory still fails the audit.
 
 ### Resetting the local database
 
@@ -1691,7 +1719,7 @@ removing the containers:
 
 ```bash
 docker compose exec postgres psql -U tricklepay -d tricklepay -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
-docker compose exec api npx prisma migrate deploy
+docker compose run --rm migrate
 ```
 
 This drops the existing schema and then applies the Prisma migrations again,
@@ -1705,8 +1733,8 @@ docker compose up -d
 ```
 
 The `-v` flag removes the named PostgreSQL volume, so all local data is wiped.
-After startup, the API's container command runs `npx prisma migrate deploy`
-automatically before starting the app.
+After startup, Docker Compose runs the dedicated `migrate` service
+automatically before starting the `api` service.
 
 ### Graceful termination
 
@@ -2046,7 +2074,7 @@ Comprehensive technical documentation is maintained under the [`docs/`](docs/) d
 
 - **tricklepay-contracts** — the Soroban streaming contract this service indexes.
 - **tricklepay-frontend** — web client built on this API.
-- **tricklepay-docs** — architecture, security model, and contributor guides.
+- **docs** — architecture, security model, and contributor guides.
 
 ## License
 

@@ -2,11 +2,9 @@ import { prisma } from "../db.js";
 import {
   isMainModule,
   parseAndValidateCli,
-  parseCliArgs,
   wantsJsonOutput,
   type CliFlagDef,
 } from "../lib/cli-args.js";
-import { logger } from "../logger.js";
 import { pruneFailedEvents, type PruneFailedEventsResult } from "../repositories/failed-events.js";
 
 export const PRUNE_ALLOWED_FLAGS: readonly CliFlagDef[] = [
@@ -70,23 +68,22 @@ export async function runPrune(options: PruneCommandOptions): Promise<PruneFaile
   return pruneFailedEvents({ olderThan: cutoff, dryRun: options.dryRun });
 }
 
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
   const rawArgv = process.argv.slice(2);
   if (rawArgv.length === 0) {
-    console.error(PRUNE_USAGE);
+    process.stderr.write(`${PRUNE_USAGE}\n`);
     process.exitCode = 1;
     return;
   }
 
   const parsed = parseAndValidateCli(rawArgv, PRUNE_ALLOWED_FLAGS, PRUNE_USAGE);
   if (parsed.isHelp) {
-    console.log(PRUNE_USAGE);
+    process.stdout.write(`${PRUNE_USAGE}\n`);
     process.exitCode = 0;
     return;
   }
   if (!parsed.ok) {
-    console.error(`Error: ${parsed.error}\n`);
-    console.error(PRUNE_USAGE);
+    process.stderr.write(`Error: ${parsed.error}\n\n${PRUNE_USAGE}\n`);
     process.exitCode = 2;
     return;
   }
@@ -97,12 +94,21 @@ async function main(): Promise<void> {
   const rawOlderThan = args.get("--older-than");
 
   if (!rawOlderThan || typeof rawOlderThan !== "string") {
-    console.error(PRUNE_USAGE);
+    process.stderr.write(`${PRUNE_USAGE}\n`);
     process.exitCode = 1;
     return;
   }
 
-  const result = await runPrune({ olderThan: rawOlderThan, dryRun });
+  let result: PruneFailedEventsResult;
+  try {
+    result = await runPrune({ olderThan: rawOlderThan, dryRun });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`prune failed: ${message}\n`);
+    process.exitCode = 1;
+    await prisma.$disconnect();
+    return;
+  }
 
   if (jsonOutput) {
     process.stdout.write(
@@ -113,14 +119,12 @@ async function main(): Promise<void> {
       }) + "\n",
     );
   } else if (result.dryRun) {
-    logger.info(
-      { deletedCount: result.deletedCount, cutoff: result.cutoff.toISOString(), dryRun: true },
-      `dry-run: ${result.deletedCount} failed event(s) older than ${result.cutoff.toISOString()} would be pruned`,
+    process.stdout.write(
+      `dry-run: ${result.deletedCount} failed event(s) older than ${result.cutoff.toISOString()} would be pruned\n`,
     );
   } else {
-    logger.info(
-      { deletedCount: result.deletedCount, cutoff: result.cutoff.toISOString(), dryRun: false },
-      `pruned ${result.deletedCount} failed event(s) older than ${result.cutoff.toISOString()}`,
+    process.stdout.write(
+      `pruned ${result.deletedCount} failed event(s) older than ${result.cutoff.toISOString()}\n`,
     );
   }
 
@@ -128,8 +132,9 @@ async function main(): Promise<void> {
 }
 
 if (isMainModule(import.meta.url)) {
-  void main().catch((err) => {
-    logger.error({ err }, "failed to prune failed events");
+  void main().catch((err: unknown) => {
+    const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
+    process.stderr.write(`failed to prune failed events: ${message}\n`);
     process.exitCode = 1;
   });
 }

@@ -62,6 +62,12 @@ import { registerSharedSchemas } from "./schema-registration.js";
 
 import { registerSecurityHeaders } from "./security-headers.js";
 
+declare module "fastify" {
+  interface FastifyInstance {
+    apiRoutes: Array<{ method: string; url: string; schema?: { hide?: boolean } }>;
+  }
+}
+
 // Request-id sanitisation lives in `./request-id.ts`, the echo hook in
 // `./request-id-hook.ts`, error redaction in `./error-redaction.ts`, error
 // handlers in `./error-handlers.ts`, shared schemas in `./schema-registration.ts`, and
@@ -109,12 +115,19 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
     // logger, so it lands in every structured request log line as `reqId`.
     genReqId: (req) =>
       sanitizeRequestId(req.headers[REQUEST_ID_HEADER]) ?? randomUUID(),
-    querystringParser: parseQueryString,
+    routerOptions: {
+      querystringParser: parseQueryString,
+    },
     // Fastify's default Ajv strips properties a schema forbids with
     // `additionalProperties: false`. Turn that off so an unknown or misspelt
     // query parameter (`limt=5`) is rejected with a 400 instead of silently
     // changing paging results.
     ajv: { customOptions: { removeAdditional: false } },
+  });
+
+  app.decorate("apiRoutes", [] as Array<{ method: string; url: string; schema?: { hide?: boolean } }>);
+  app.addHook("onRoute", (route) => {
+    app.apiRoutes.push({ method: route.method as string, url: route.url, schema: route.schema as { hide?: boolean } | undefined });
   });
 
   // Echo the request id header on every response. Registered as the first
@@ -131,7 +144,9 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
   // footgun. The parser itself must never throw: it runs during routing, where
   // an exception bypasses Fastify's error handler and crashes the process.
   app.addHook("onRequest", async (request, reply) => {
-    const rawQuery = request.raw.url?.split("?")[1] ?? "";
+    const rawUrl = request.raw.url ?? "";
+    const queryStart = rawUrl.indexOf("?");
+    const rawQuery = queryStart === -1 ? "" : rawUrl.slice(queryStart + 1);
 
     if (config?.queryStringLimit && rawQuery.length > config.queryStringLimit) {
       void reply.status(400).send({
@@ -240,33 +255,32 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
   // every error response.
   registerErrorHandlers(app);
 
-  const configuredCorsOrigin = process.env.CORS_ORIGIN?.trim();
+  const configuredCorsOrigin = config?.corsOrigin;
   const corsOrigin =
     configuredCorsOrigin === undefined
       ? true
-      : configuredCorsOrigin === ""
-        ? false
-        : (origin: string | undefined, cb: (err: Error | null, allow: boolean) => void) => {
-            if (!origin || origin === configuredCorsOrigin) {
-              cb(null, true);
-            } else {
-              cb(null, false);
-            }
-          };
+      : (origin: string | undefined, cb: (err: Error | null, allow: boolean) => void) => {
+          cb(null, !origin || origin === configuredCorsOrigin);
+        };
 
   // The web client fetches this API from the browser, so it is always a
   // cross-origin caller once the two run on separate ports or hosts. The data
   // served here is public and read-only, so any origin is reflected by
-  // default; set CORS_ORIGIN to pin deployments to a known frontend. A blank
-  // value disables browser access altogether, rather than passing an empty
-  // origin string through to the CORS plugin. Not awaited because Fastify
+  // default; set CORS_ORIGIN to pin deployments to a known frontend. Blank
+  // values are treated as unset by loadConfig. Not awaited because Fastify
   // defers plugin loading until ready/listen, which keeps this builder
   // synchronous for its callers.
   void app.register(cors, {
     origin: corsOrigin,
     allowedHeaders: ["*"],
-    // Expose custom response headers to clients, including those added by hooks.
-    exposedHeaders: ["X-Indexer-Lag-Ledgers", "X-Data-Stale"],
+    exposedHeaders: [
+      "ETag",
+      "Retry-After",
+      "X-Request-Id",
+      "Link",
+      "X-Indexer-Lag-Ledgers",
+      "X-Data-Stale",
+    ],
   });
 
   // Compress responses at or above the configured threshold when the client

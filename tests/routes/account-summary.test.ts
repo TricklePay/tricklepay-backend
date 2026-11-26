@@ -1,8 +1,10 @@
 import Fastify from "fastify";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { summarizeAccountStreams } from "../../src/lib/account-summary.js";
 
 const streamsRepo = vi.hoisted(() => ({
   getAccountStreams: vi.fn(),
+  getAccountSummary: vi.fn(),
 }));
 
 vi.mock("../../src/repositories/streams.js", async (importOriginal) => {
@@ -51,8 +53,30 @@ async function getAccountSummary(address: string) {
   return response;
 }
 
+function summarizeByToken(streams: any[], now: bigint) {
+  const groups = new Map<string, any[]>();
+  for (const stream of streams) {
+    const group = groups.get(stream.token) ?? [];
+    group.push(stream);
+    groups.set(stream.token, group);
+  }
+  const byToken: Record<string, Omit<ReturnType<typeof summarizeAccountStreams>, "count">> = {};
+  for (const [token, group] of groups) {
+    const { count: _count, ...totals } = summarizeAccountStreams(group, now);
+    byToken[token] = totals;
+  }
+  return { count: streams.length, byToken };
+}
+
 beforeEach(() => {
   vi.resetAllMocks();
+  streamsRepo.getAccountSummary.mockImplementation(async (address: string, now: bigint) => {
+    const { incoming, outgoing } = await streamsRepo.getAccountStreams(address);
+    return {
+      incoming: summarizeByToken(incoming, now),
+      outgoing: summarizeByToken(outgoing, now),
+    };
+  });
 });
 
 afterEach(() => {
@@ -68,22 +92,8 @@ describe("GET /accounts/:address/summary", { timeout: 20000 }, () => {
     expect(response.statusCode).toBe(200);
     expect(response.headers["content-type"]).toContain("application/json");
     expect(response.json()).toEqual({
-      incoming: {
-        count: 0,
-        totalAmount: "0",
-        total: "0",
-        withdrawn: "0",
-        vested: "0",
-        withdrawable: "0",
-      },
-      outgoing: {
-        count: 0,
-        totalAmount: "0",
-        total: "0",
-        withdrawn: "0",
-        vested: "0",
-        withdrawable: "0",
-      },
+      incoming: { count: 0, byToken: {} },
+      outgoing: { count: 0, byToken: {} },
     });
     expect(streamsRepo.getAccountStreams).toHaveBeenCalledWith(ACCOUNT);
   });
@@ -139,22 +149,30 @@ describe("GET /accounts/:address/summary", { timeout: 20000 }, () => {
     // incoming totals: count = 2, totalAmount = 3000, withdrawn = 700, vested = 1500, withdrawable = 800
     expect(body.incoming).toEqual({
       count: 2,
-      totalAmount: "3000",
-      total: "3000",
-      withdrawn: "700",
-      vested: "1500",
-      withdrawable: "800",
+      byToken: {
+        [CONTRACT]: {
+          totalAmount: "3000",
+          total: "3000",
+          withdrawn: "700",
+          vested: "1500",
+          withdrawable: "800",
+        },
+      },
     });
 
     // stream 3: total = 5000, vested = 2500, withdrawn = 1000, withdrawable = 1500
     // outgoing totals: count = 1, totalAmount = 5000, withdrawn = 1000, vested = 2500, withdrawable = 1500
     expect(body.outgoing).toEqual({
       count: 1,
-      totalAmount: "5000",
-      total: "5000",
-      withdrawn: "1000",
-      vested: "2500",
-      withdrawable: "1500",
+      byToken: {
+        [CONTRACT]: {
+          totalAmount: "5000",
+          total: "5000",
+          withdrawn: "1000",
+          vested: "2500",
+          withdrawable: "1500",
+        },
+      },
     });
   });
 
@@ -186,11 +204,11 @@ describe("GET /accounts/:address/summary", { timeout: 20000 }, () => {
 
     expect(response.statusCode).toBe(200);
     const body = response.json();
-    expect(body.incoming.totalAmount).toBe(maxUint128);
-    expect(body.incoming.total).toBe(maxUint128);
-    expect(body.incoming.withdrawn).toBe(halfUint128);
-    expect(body.incoming.vested).toBe(maxUint128);
-    expect(body.incoming.withdrawable).toBe(withdrawableExpected);
+    expect(body.incoming.byToken[CONTRACT].totalAmount).toBe(maxUint128);
+    expect(body.incoming.byToken[CONTRACT].total).toBe(maxUint128);
+    expect(body.incoming.byToken[CONTRACT].withdrawn).toBe(halfUint128);
+    expect(body.incoming.byToken[CONTRACT].vested).toBe(maxUint128);
+    expect(body.incoming.byToken[CONTRACT].withdrawable).toBe(withdrawableExpected);
   });
 
   it("rejects an invalid address with 400 VALIDATION_ERROR", async () => {
@@ -245,5 +263,322 @@ describe("GET /accounts/:address/summary", { timeout: 20000 }, () => {
     const spec = response.json() as { paths?: Record<string, { get?: unknown }> };
     expect(spec.paths).toHaveProperty("/accounts/{address}/summary");
     expect(spec.paths?.["/accounts/{address}/summary"]).toHaveProperty("get");
+  });
+
+  it("groups streams by token and sums amounts per token separately", async () => {
+    // Amounts from different tokens must never be added together.
+    vi.useFakeTimers();
+    vi.setSystemTime(1500 * 1000); // 50% elapsed
+
+    const TOKEN_A = "CBFS2HT4TIHTMWA5ZND6FEC27BRRA4V6JWOD7JIIDZVSPVAM7EJ2LZS7";
+    const TOKEN_B = "CBFS2HT4TIHTMWA5ZND6FEC27BRRA4V6JWOD7JIIDZVSPVAM7EJ2LZZZ";
+
+    const incomingStreams = [
+      // Token A: 1000 total, 500 vested, 100 withdrawn, 400 withdrawable
+      makeStream({
+        streamId: 1n,
+        token: TOKEN_A,
+        totalAmount: { toString: () => "1000" },
+        withdrawn: { toString: () => "100" },
+        startTime: 1000n,
+        endTime: 2000n,
+        cliffTime: 1000n,
+        cancelled: false,
+      }),
+      // Token B: 2000 total, 1000 vested, 200 withdrawn, 800 withdrawable
+      makeStream({
+        streamId: 2n,
+        token: TOKEN_B,
+        totalAmount: { toString: () => "2000" },
+        withdrawn: { toString: () => "200" },
+        startTime: 1000n,
+        endTime: 2000n,
+        cliffTime: 1000n,
+        cancelled: false,
+      }),
+    ];
+
+    streamsRepo.getAccountStreams.mockResolvedValue({
+      incoming: incomingStreams as any,
+      outgoing: [],
+    });
+
+    const response = await getAccountSummary(ACCOUNT);
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+
+    expect(body.incoming).toEqual({
+      count: 2,
+      byToken: {
+        [TOKEN_A]: {
+          totalAmount: "1000",
+          total: "1000",
+          withdrawn: "100",
+          vested: "500",
+          withdrawable: "400",
+        },
+        [TOKEN_B]: {
+          totalAmount: "2000",
+          total: "2000",
+          withdrawn: "200",
+          vested: "1000",
+          withdrawable: "800",
+        },
+      },
+    });
+    expect(body.incoming).not.toHaveProperty("totalAmount");
+  });
+
+  it("handles cancelled streams with frozen totals", async () => {
+    // A cancelled stream's totalAmount is frozen to the amount vested at
+    // cancellation. The vested figure never increases past that point, and
+    // withdrawable is capped at totalAmount - withdrawn.
+    vi.useFakeTimers();
+    vi.setSystemTime(2500 * 1000); // Well past the original end time
+
+    const incomingStreams = [
+      // Cancelled stream: frozen at 600 total, 400 withdrawn, so 200 withdrawable
+      // even though time has moved on
+      makeStream({
+        streamId: 10n,
+        totalAmount: { toString: () => "600" }, // Frozen at cancellation
+        withdrawn: { toString: () => "400" },
+        startTime: 1000n,
+        endTime: 2000n,
+        cliffTime: 1000n,
+        cancelled: true,
+      }),
+    ];
+
+    streamsRepo.getAccountStreams.mockResolvedValue({
+      incoming: incomingStreams as any,
+      outgoing: [],
+    });
+
+    const response = await getAccountSummary(ACCOUNT);
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+
+    // For a cancelled stream:
+    // totalAmount = 600 (frozen)
+    // vested = 600 (capped at totalAmount)
+    // withdrawn = 400
+    // withdrawable = 600 - 400 = 200
+    expect(body.incoming).toEqual({
+      count: 1,
+      byToken: {
+        [CONTRACT]: {
+          totalAmount: "600",
+          total: "600",
+          withdrawn: "400",
+          vested: "600",
+          withdrawable: "200",
+        },
+      },
+    });
+  });
+
+  it("handles completed streams with all funds vested", async () => {
+    // A completed stream has passed its endTime, so vested = totalAmount and
+    // withdrawable = totalAmount - withdrawn.
+    vi.useFakeTimers();
+    vi.setSystemTime(3000 * 1000); // Past end time
+
+    const incomingStreams = [
+      // Completed stream: 1000 total, 800 withdrawn, 200 withdrawable
+      makeStream({
+        streamId: 20n,
+        totalAmount: { toString: () => "1000" },
+        withdrawn: { toString: () => "800" },
+        startTime: 1000n,
+        endTime: 2000n,
+        cliffTime: 1000n,
+        cancelled: false,
+      }),
+    ];
+
+    streamsRepo.getAccountStreams.mockResolvedValue({
+      incoming: incomingStreams as any,
+      outgoing: [],
+    });
+
+    const response = await getAccountSummary(ACCOUNT);
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+
+    // For a completed stream:
+    // vested = totalAmount = 1000
+    // withdrawable = totalAmount - withdrawn = 1000 - 800 = 200
+    expect(body.incoming).toEqual({
+      count: 1,
+      byToken: {
+        [CONTRACT]: {
+          totalAmount: "1000",
+          total: "1000",
+          withdrawn: "800",
+          vested: "1000",
+          withdrawable: "200",
+        },
+      },
+    });
+  });
+
+  it("handles an address that is both sender and recipient", async () => {
+    // An address can send some streams and receive others. The summary
+    // separates them into incoming (where the address is recipient) and
+    // outgoing (where the address is sender), with no overlap or double
+    // counting.
+    vi.useFakeTimers();
+    vi.setSystemTime(1500 * 1000); // 50% elapsed
+
+    const OTHER = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H";
+
+    const incomingStreams = [
+      // Incoming: ACCOUNT receives 1000 from OTHER
+      makeStream({
+        streamId: 30n,
+        sender: OTHER,
+        recipient: ACCOUNT,
+        totalAmount: { toString: () => "1000" },
+        withdrawn: { toString: () => "200" },
+        startTime: 1000n,
+        endTime: 2000n,
+        cliffTime: 1000n,
+        cancelled: false,
+      }),
+    ];
+
+    const outgoingStreams = [
+      // Outgoing: ACCOUNT sends 2000 to OTHER
+      makeStream({
+        streamId: 31n,
+        sender: ACCOUNT,
+        recipient: OTHER,
+        totalAmount: { toString: () => "2000" },
+        withdrawn: { toString: () => "500" },
+        startTime: 1000n,
+        endTime: 2000n,
+        cliffTime: 1000n,
+        cancelled: false,
+      }),
+    ];
+
+    streamsRepo.getAccountStreams.mockResolvedValue({
+      incoming: incomingStreams as any,
+      outgoing: outgoingStreams as any,
+    });
+
+    const response = await getAccountSummary(ACCOUNT);
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+
+    // Incoming: 1000 total, 500 vested, 200 withdrawn, 300 withdrawable
+    expect(body.incoming).toEqual({
+      count: 1,
+      byToken: {
+        [CONTRACT]: {
+          totalAmount: "1000",
+          total: "1000",
+          withdrawn: "200",
+          vested: "500",
+          withdrawable: "300",
+        },
+      },
+    });
+
+    // Outgoing: 2000 total, 1000 vested, 500 withdrawn, 500 withdrawable
+    expect(body.outgoing).toEqual({
+      count: 1,
+      byToken: {
+        [CONTRACT]: {
+          totalAmount: "2000",
+          total: "2000",
+          withdrawn: "500",
+          vested: "1000",
+          withdrawable: "500",
+        },
+      },
+    });
+  });
+
+  it("handles mixed stream states: pending, streaming, completed, cancelled", async () => {
+    // A comprehensive test covering all stream lifecycle states in one summary.
+    vi.useFakeTimers();
+    vi.setSystemTime(1500 * 1000); // t = 1500
+
+    const incomingStreams = [
+      // Pending (not yet started): vested = 0, withdrawable = 0
+      makeStream({
+        streamId: 40n,
+        totalAmount: { toString: () => "1000" },
+        withdrawn: { toString: () => "0" },
+        startTime: 2000n, // Starts in the future
+        endTime: 3000n,
+        cliffTime: 2000n,
+        cancelled: false,
+      }),
+      // Streaming (50% elapsed): vested = 500, withdrawable = 500
+      makeStream({
+        streamId: 41n,
+        totalAmount: { toString: () => "1000" },
+        withdrawn: { toString: () => "0" },
+        startTime: 1000n,
+        endTime: 2000n,
+        cliffTime: 1000n,
+        cancelled: false,
+      }),
+      // Completed (fully vested): vested = 1000, withdrawable = 200
+      makeStream({
+        streamId: 42n,
+        totalAmount: { toString: () => "1000" },
+        withdrawn: { toString: () => "800" },
+        startTime: 500n,
+        endTime: 1000n,
+        cliffTime: 500n,
+        cancelled: false,
+      }),
+      // Cancelled (frozen at 300): vested = 300, withdrawable = 300
+      makeStream({
+        streamId: 43n,
+        totalAmount: { toString: () => "300" },
+        withdrawn: { toString: () => "0" },
+        startTime: 1000n,
+        endTime: 2000n,
+        cliffTime: 1000n,
+        cancelled: true,
+      }),
+    ];
+
+    streamsRepo.getAccountStreams.mockResolvedValue({
+      incoming: incomingStreams as any,
+      outgoing: [],
+    });
+
+    const response = await getAccountSummary(ACCOUNT);
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+
+    // Aggregated:
+    // totalAmount = 1000 + 1000 + 1000 + 300 = 3300
+    // withdrawn = 0 + 0 + 800 + 0 = 800
+    // vested = 0 + 500 + 1000 + 300 = 1800
+    // withdrawable = 0 + 500 + 200 + 300 = 1000
+    expect(body.incoming).toEqual({
+      count: 4,
+      byToken: {
+        [CONTRACT]: {
+          totalAmount: "3300",
+          total: "3300",
+          withdrawn: "800",
+          vested: "1800",
+          withdrawable: "1000",
+        },
+      },
+    });
   });
 });

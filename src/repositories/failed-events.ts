@@ -13,7 +13,7 @@ import type { Prisma } from "@prisma/client";
 
 import type { StreamEvent } from "../chain/events.js";
 
-import { prisma } from "../db.js";
+import { prisma, measureRepositoryCall } from "../db.js";
 
 import { failedEventBacklog } from "../metrics.js";
 
@@ -35,23 +35,25 @@ export interface FailedEventInput {
 // failures increment `failureCount` and refresh `error` rather than inserting
 // duplicate rows. `firstFailedAt` is only written on the initial insert.
 export async function recordFailedEvent(input: FailedEventInput): Promise<void> {
-  await prisma.failedEvent.upsert({
-    where: { eventId: input.eventId },
-    create: {
-      eventId: input.eventId,
-      kind: input.kind,
-      streamId: input.streamId,
-      ledger: input.ledger,
-      txHash: input.txHash ?? null,
-      error: input.error,
-      failureCount: 1,
-    },
-    update: {
-      txHash: input.txHash ?? undefined,
-      error: input.error,
-      failureCount: { increment: 1 },
-    },
-  });
+  return measureRepositoryCall("recordFailedEvent", () =>
+    prisma.failedEvent.upsert({
+      where: { eventId: input.eventId },
+      create: {
+        eventId: input.eventId,
+        kind: input.kind,
+        streamId: input.streamId,
+        ledger: input.ledger,
+        txHash: input.txHash ?? null,
+        error: input.error,
+        failureCount: 1,
+      },
+      update: {
+        txHash: input.txHash ?? undefined,
+        error: input.error,
+        failureCount: { increment: 1 },
+      },
+    })
+  );
 }
 
 // Returns the total count of unresolved failed events.
@@ -80,18 +82,24 @@ export async function clearFailedEvent(
   await tx.failedEvent.deleteMany({ where: { eventId } });
 }
 
-// Returns failed events ordered by ledger ascending, so the oldest stuck
-// events surface first. Used by the status route to expose them to operators.
-export async function listFailedEvents({ limit = 100 }: { limit?: number } = {}) {
-  return prisma.failedEvent.findMany({
-    orderBy: [{ ledger: "asc" }, { eventId: "asc" }],
-    take: limit,
-  });
+// Returns failed events ordered by oldest failure timestamp, rotating rows
+// that were just retried behind newer candidates. Used by the status route and
+// replay tooling to expose the backlog without starving newer failures.
+export async function listFailedEvents({ limit = 100, afterLedger }: { limit?: number; afterLedger?: number } = {}) {
+  return measureRepositoryCall("listFailedEvents", () =>
+    prisma.failedEvent.findMany({
+      where: afterLedger === undefined ? undefined : { ledger: { gt: afterLedger } },
+      orderBy: [{ lastFailedAt: "asc" }, { ledger: "asc" }, { eventId: "asc" }],
+      take: limit,
+    })
+  );
 }
 
 // Returns a single failed event row by its eventId, or null when not found.
 export async function getFailedEventById(eventId: string) {
-  return prisma.failedEvent.findUnique({ where: { eventId } });
+  return measureRepositoryCall("getFailedEventById", () =>
+    prisma.failedEvent.findUnique({ where: { eventId } })
+  );
 }
 
 // Builds a FailedEventInput from a decoded event and an error.

@@ -1,7 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 
 import { requestSignalStorage } from "./lib/request-context.js";
-import { databaseQueryDuration } from "./metrics.js";
+import { databaseQueryDuration, repositoryQueryDuration } from "./metrics.js";
 
 // A single Prisma client shared across the process. Each new client opens its
 // own connection pool, so every module imports this one instance rather than
@@ -79,14 +79,51 @@ export async function disconnect(): Promise<void> {
 }
 
 export async function checkHealth(timeoutMs = 5000): Promise<{ status: "up" | "down"; error?: string }> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([
       prisma.$queryRaw`SELECT 1`,
-      new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), timeoutMs)),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("timeout")), timeoutMs);
+      }),
     ]);
     return { status: "up" };
   } catch (err: unknown) {
     const error = err instanceof Error && err.message === "timeout" ? "timeout" : "database unavailable";
     return { status: "down", error };
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Repository function instrumentation
+//
+// Wraps repository functions to record their execution duration in the
+// repositoryQueryDuration histogram. This provides observability into which
+// repository operations are slow and where optimization is needed.
+// ---------------------------------------------------------------------------
+
+/**
+ * Wraps a repository function to measure its duration and record it in the
+ * repositoryQueryDuration histogram with the function name as a label.
+ *
+ * Usage:
+ *   export async function getStream(...): Promise<Stream | null> {
+ *     return measureRepositoryCall("getStream", () =>
+ *       withQueryTimeout(prisma.stream.findUnique({ where: { streamId } }))
+ *     );
+ *   }
+ */
+export async function measureRepositoryCall<T>(
+  functionName: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const start = Date.now();
+  try {
+    return await operation();
+  } finally {
+    const duration = Date.now() - start;
+    repositoryQueryDuration.observe({ function: functionName }, duration);
   }
 }

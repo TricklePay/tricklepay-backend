@@ -1,0 +1,29 @@
+// TricklePay contract event interface definitions
+// Commit: example-commit-hash-abc123
+// Repository: https://github.com/TricklePay/tricklepay-contracts
+
+// Event: Created
+// Topics: [event_name: Symbol, sender: Address, recipient: Address]
+// Value: Map {
+//   id: u64,
+//   token: Address,
+//   total_amount: i128,
+//   start_time: u64,
+//   end_time: u64,
+//   cliff_time: u64
+// }
+
+// Event: Withdrawn
+// Topics: [event_name: Symbol, recipient: Address]
+// Value: Map {
+//   id: u64,
+//   amount: i128
+// }
+
+// Event: Cancelled
+// Topics: [event_name: Symbol, sender: Address]
+// Value: Map {
+//   id: u64,
+//   recipient_amount: i128,
+//   sender_refund: i128
+// }

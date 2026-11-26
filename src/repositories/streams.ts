@@ -10,7 +10,7 @@
 
 import { Prisma, type Stream } from "@prisma/client";
 
-import { prisma, withQueryTimeout } from "../db.js";
+import { prisma, withQueryTimeout, measureRepositoryCall } from "../db.js";
 import { parseStreamId } from "../lib/stream-id.js";
 import { indexedStreams } from "../metrics.js";
 
@@ -105,8 +105,10 @@ export function encodeCursor(
   sortDirection?: SortDirection,
   sortValue?: bigint | number,
 ): string {
-  const data: CursorData = {
-    streamId,
+  // The stream id is a bigint, which JSON.stringify cannot serialize, so it is
+  // written as a decimal string and parsed back in decodeCursor.
+  const data = {
+    streamId: streamId.toString(),
     ...(sortKey && { sortKey }),
     ...(sortDirection && { sortDirection }),
     ...(sortValue !== undefined && { sortValue: sortValue.toString() }),
@@ -182,8 +184,9 @@ function notYetApplied(streamId: bigint, eventId: string): Prisma.StreamWhereInp
 // the reconciling write: it overwrites whatever the row held, so it needs no
 // replay guard, and it is authoritative regardless of which event prompted it.
 export async function upsertStream(input: UpsertStreamInput, tx: Prisma.TransactionClient = prisma): Promise<void> {
-  const totalAmount = decimal(input.totalAmount);
-  const withdrawn = decimal(input.withdrawn);
+  return measureRepositoryCall("upsertStream", async () => {
+    const totalAmount = decimal(input.totalAmount);
+    const withdrawn = decimal(input.withdrawn);
 
   await tx.stream.upsert({
     where: { streamId: input.streamId },
@@ -213,6 +216,7 @@ export async function upsertStream(input: UpsertStreamInput, tx: Prisma.Transact
       lastEventId: input.eventId,
     },
   });
+  });
 }
 
 // Records a stream from its `created` event alone. The insert is skipped if the
@@ -220,6 +224,7 @@ export async function upsertStream(input: UpsertStreamInput, tx: Prisma.Transact
 // had at creation, which must not overwrite withdrawals or a cancellation that
 // have since been applied to the row.
 export async function insertStream(input: InsertStreamInput, tx: Prisma.TransactionClient = prisma): Promise<ApplyResult> {
+  return measureRepositoryCall("insertStream", async () => {
   const result = await tx.stream.createMany({
     data: [
       {
@@ -246,12 +251,14 @@ export async function insertStream(input: InsertStreamInput, tx: Prisma.Transact
     return "applied";
   }
   return "duplicate";
+  });
 }
 
 // Applies a `withdrawn` event as a delta on the stored row. The event carries
 // only the amount moved, so the balance is incremented in the database rather
 // than recomputed, which needs no read of contract state.
 export async function applyWithdrawal(input: WithdrawalInput, tx: Prisma.TransactionClient = prisma): Promise<ApplyResult> {
+  return measureRepositoryCall("applyWithdrawal", async () => {
   const result = await tx.stream.updateMany({
     where: notYetApplied(input.streamId, input.eventId),
     data: {
@@ -263,6 +270,7 @@ export async function applyWithdrawal(input: WithdrawalInput, tx: Prisma.Transac
 
   if (result.count > 0) return "applied";
   return classifyMiss(input.streamId, tx);
+  });
 }
 
 // Applies a `cancelled` event. The contract refunds the sender and freezes the
@@ -274,6 +282,7 @@ export async function applyWithdrawal(input: WithdrawalInput, tx: Prisma.Transac
 // withdrawal cannot change `withdrawn` between the two operations, which would
 // freeze the stream at a stale total.
 export async function applyCancellation(input: CancellationInput, tx: Prisma.TransactionClient = prisma): Promise<ApplyResult> {
+  return measureRepositoryCall("applyCancellation", async () => {
   const applyFn = async (t: Prisma.TransactionClient) => {
     const stored = await t.stream.findUnique({ where: { streamId: input.streamId } });
     if (!stored) return "missing";
@@ -299,6 +308,7 @@ export async function applyCancellation(input: CancellationInput, tx: Prisma.Tra
     return applyFn(tx);
   }
   return prisma.$transaction(applyFn);
+  });
 }
 
 // Tells the two reasons a guarded update matched nothing apart: the stream was
@@ -312,7 +322,9 @@ async function classifyMiss(streamId: bigint, tx: Prisma.TransactionClient = pri
 }
 
 export async function getStream({ streamId }: { streamId: bigint }): Promise<Stream | null> {
-  return withQueryTimeout(prisma.stream.findUnique({ where: { streamId } }));
+  return measureRepositoryCall("getStream", () =>
+    withQueryTimeout(prisma.stream.findUnique({ where: { streamId } }))
+  );
 }
 
 // Repository naming convention: use `get` for one record, `list` for
@@ -453,6 +465,7 @@ export function statusWhere(status: StreamStatus, now: bigint): Prisma.StreamWhe
 }
 
 export async function listStreams(filter: StreamFilter, now?: bigint): Promise<StreamListResult> {
+  return measureRepositoryCall("listStreams", async () => {
   const limit = filter.limit ?? 50;
   const useCursor = filter.cursor !== undefined;
   const take = limit + 1;
@@ -489,12 +502,15 @@ export async function listStreams(filter: StreamFilter, now?: bigint): Promise<S
     streams,
     nextCursor: encodeCursor(last.streamId, sortKey, sortDirection, sortValue),
   };
+  });
 }
 
 // Total number of streams matching the filter, ignoring limit and offset, so a
 // client can tell how many pages exist.
 export async function countStreams(filter: StreamFilter, now?: bigint): Promise<number> {
-  return withQueryTimeout(prisma.stream.count({ where: whereFromFilter(filter, now) }));
+  return measureRepositoryCall("countStreams", () =>
+    withQueryTimeout(prisma.stream.count({ where: whereFromFilter(filter, now) }))
+  );
 }
 
 export interface StreamAggregate {
@@ -507,6 +523,7 @@ export interface StreamAggregate {
 // over the decimal columns, so totals stay exact no matter how wide the
 // amounts get; they come back as Decimal rather than a JavaScript number.
 export async function aggregateStreams(where: Prisma.StreamWhereInput): Promise<StreamAggregate> {
+  return measureRepositoryCall("aggregateStreams", async () => {
   const result = await withQueryTimeout(
     prisma.stream.aggregate({
       where,
@@ -520,19 +537,22 @@ export async function aggregateStreams(where: Prisma.StreamWhereInput): Promise<
     totalAmount: result._sum.totalAmount ?? new Prisma.Decimal(0),
     withdrawn: result._sum.withdrawn ?? new Prisma.Decimal(0),
   };
+  });
 }
 
 export interface TokenSummary {
   token: string;
   count: number;
+  totalStreamed: string;
   totalAmount: string;
   total: string;
 }
 
 // Groups streams by token and returns the distinct tokens with stream count
-// and total escrowed amount. The sums run in Postgres over decimal columns so
-// amounts stay exact.
+// and total streamed amount, including completed and cancelled streams. The
+// sums run in Postgres over decimal columns so amounts stay exact.
 export async function listTokens(): Promise<TokenSummary[]> {
+  return measureRepositoryCall("listTokens", async () => {
   const groups = await withQueryTimeout(
     prisma.stream.groupBy({
       by: ["token"],
@@ -547,9 +567,11 @@ export async function listTokens(): Promise<TokenSummary[]> {
     return {
       token: group.token,
       count: group._count.streamId,
+      totalStreamed: totalAmount,
       totalAmount,
       total: totalAmount,
     };
+  });
   });
 }
 
@@ -558,10 +580,79 @@ export async function listTokens(): Promise<TokenSummary[]> {
 export async function getAccountStreams(
   address: string,
 ): Promise<{ incoming: Stream[]; outgoing: Stream[] }> {
+  return measureRepositoryCall("getAccountStreams", async () => {
   const [incoming, outgoing] = await Promise.all([
     withQueryTimeout(prisma.stream.findMany({ where: { recipient: address } })),
     withQueryTimeout(prisma.stream.findMany({ where: { sender: address } })),
   ]);
   return { incoming, outgoing };
+  });
+}
+
+export interface AccountTokenTotals {
+  totalAmount: string;
+  total: string;
+  withdrawn: string;
+  vested: string;
+  withdrawable: string;
+}
+
+export interface AccountDirectionSummary {
+  count: number;
+  byToken: Record<string, AccountTokenTotals>;
+}
+
+export async function getAccountSummary(
+  address: string,
+  now: bigint,
+): Promise<{ incoming: AccountDirectionSummary; outgoing: AccountDirectionSummary }> {
+  return measureRepositoryCall("getAccountSummary", async () => {
+    const rows = await withQueryTimeout(prisma.$queryRaw<Array<{
+      direction: "incoming" | "outgoing";
+      token: string;
+      count: bigint;
+      totalAmount: Prisma.Decimal;
+      withdrawn: Prisma.Decimal;
+      vested: Prisma.Decimal;
+      withdrawable: Prisma.Decimal;
+    }>>`
+      WITH matched AS (
+        SELECT 'incoming'::text AS direction, "token", "totalAmount", "withdrawn", "startTime", "endTime", "cliffTime"
+        FROM "Stream" WHERE "recipient" = ${address}
+        UNION ALL
+        SELECT 'outgoing'::text AS direction, "token", "totalAmount", "withdrawn", "startTime", "endTime", "cliffTime"
+        FROM "Stream" WHERE "sender" = ${address}
+      ), evaluated AS (
+        SELECT direction, "token", "totalAmount", "withdrawn",
+          CASE
+            WHEN ${now} < "cliffTime" OR ${now} < "startTime" THEN 0::numeric
+            WHEN ${now} >= "endTime" THEN "totalAmount"
+            ELSE trunc("totalAmount" * (${now} - "startTime")::numeric / ("endTime" - "startTime")::numeric)
+          END AS vested
+        FROM matched
+      )
+      SELECT direction, "token", COUNT(*) AS count,
+        SUM("totalAmount") AS "totalAmount",
+        SUM("withdrawn") AS withdrawn,
+        SUM(vested) AS vested,
+        SUM(GREATEST(vested - "withdrawn", 0)) AS withdrawable
+      FROM evaluated GROUP BY direction, "token"
+    `);
+
+    const empty = (): AccountDirectionSummary => ({ count: 0, byToken: {} });
+    const summary = { incoming: empty(), outgoing: empty() };
+    for (const row of rows) {
+      const totalAmount = row.totalAmount.toString();
+      summary[row.direction].count += Number(row.count);
+      summary[row.direction].byToken[row.token] = {
+        totalAmount,
+        total: totalAmount,
+        withdrawn: row.withdrawn.toString(),
+        vested: row.vested.toString(),
+        withdrawable: row.withdrawable.toString(),
+      };
+    }
+    return summary;
+  });
 }
 

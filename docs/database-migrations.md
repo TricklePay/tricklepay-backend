@@ -179,6 +179,87 @@ npx prisma migrate reset
 4. **Commit migrations with schema changes:** The `.prisma` file and the `migrations/` folder should be committed together.
 5. **Never edit applied migrations:** Once a migration is applied and pushed, treat it as immutable. Create a new migration to fix issues.
 6. **Use `migrate deploy` in production:** Never use `migrate dev` in production — it can prompt for input and is not idempotent.
+7. **Mark destructive statements explicitly:** Migrations that drop tables, columns, indexes, or change column types in a way that could cause data loss must include a `-- destructive: <justification>` comment. This policy is enforced by `tests/migrations-safety.test.ts`.
+
+## Destructive Migration Policy
+
+A **forward-only migration policy** is enforced to prevent accidental data loss. Destructive statements such as `DROP TABLE`, `DROP COLUMN`, `ALTER COLUMN ... TYPE`, or `DELETE FROM` must carry an explicit justification comment in the migration SQL.
+
+### Marking Destructive Statements
+
+When a migration includes a destructive operation, add a comment on the same line or immediately before the statement:
+
+```sql
+-- destructive: removing legacy table no longer used after v2.0 migration
+DROP TABLE old_legacy_data;
+```
+
+```sql
+-- destructive: column was replaced by normalizedAddress in v3.0
+ALTER TABLE "Stream" DROP COLUMN "legacyAddress";
+```
+
+The comment must follow this format:
+- Start with `-- destructive:`
+- Include a brief justification explaining why the destructive change is safe or necessary
+
+### What Counts as Destructive
+
+The following SQL patterns are considered destructive and require a justification:
+
+- `DROP TABLE`
+- `DROP COLUMN`
+- `DROP INDEX`
+- `DROP CONSTRAINT`
+- `ALTER TABLE ... DROP`
+- `ALTER COLUMN ... TYPE` (type changes that could truncate or lose data)
+- `ALTER COLUMN ... SET NOT NULL` (could fail if existing rows have NULL values)
+- `TRUNCATE`
+- `DELETE FROM`
+
+### Why This Policy Exists
+
+Destructive statements can:
+- Cause irreversible data loss in production
+- Break rollback compatibility with the previous application version
+- Fail when applied to a live database with existing data
+
+By requiring an explicit marker, the policy ensures that destructive changes are:
+1. **Deliberate:** The developer consciously chose to make the change
+2. **Documented:** The justification is in the migration file for reviewers and operators
+3. **Auditable:** A future operator can see why the change was made
+
+### Testing
+
+The migration safety policy is enforced by an automated test:
+
+```bash
+npm test tests/migrations-safety.test.ts
+```
+
+This test scans all migration files in `prisma/migrations/` and fails if any destructive statement lacks a `-- destructive:` comment.
+
+### Example: Safe Destructive Migration
+
+```sql
+-- AlterTable: remove legacy field after data migration to new schema
+-- destructive: legacyAmount was fully migrated to normalizedAmount in v4.0
+ALTER TABLE "Stream" DROP COLUMN "legacyAmount";
+```
+
+Without the `-- destructive:` comment, this migration would fail CI and be blocked from merging.
+
+### Example: Non-Destructive Migration (No Marker Needed)
+
+```sql
+-- CreateIndex
+CREATE INDEX "Stream_token_idx" ON "Stream"("token");
+
+-- AlterTable
+ALTER TABLE "Stream" ADD COLUMN "description" TEXT;
+```
+
+These statements are additive and require no marker.
 
 ## Common Issues
 
