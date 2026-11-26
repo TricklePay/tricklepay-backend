@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { prisma } from "../../src/db.js";
-import { countStreams, listStreams } from "../../src/repositories/streams.js";
+import { countStreams, encodeCursor, listStreams } from "../../src/repositories/streams.js";
 
 describe("streams repository ids filter", () => {
   afterEach(() => {
@@ -10,7 +10,7 @@ describe("streams repository ids filter", () => {
 
   it("combines ids, cursor and other filters in the database query", async () => {
     const findMany = vi.spyOn(prisma.stream, "findMany").mockResolvedValueOnce([]);
-    await listStreams({ ids: [1n, 3n, 5n], cursor: 5n, cancelled: false });
+    await listStreams({ ids: [1n, 3n, 5n], cursor: encodeCursor(5n), cancelled: false });
     expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { streamId: { in: [1n, 3n, 5n], lt: 5n }, cancelled: false },
       skip: 0,
@@ -36,7 +36,7 @@ describe("streams repository ids filter", () => {
   it("combines ids and cursor with lifecycle status for lists and totals", async () => {
     const findMany = vi.spyOn(prisma.stream, "findMany").mockResolvedValueOnce([]);
     const count = vi.spyOn(prisma.stream, "count").mockResolvedValueOnce(0);
-    const filter = { ids: [1n, 3n], cursor: 5n, status: "streaming" as const };
+    const filter = { ids: [1n, 3n], cursor: encodeCursor(5n), status: "streaming" as const };
     await listStreams(filter, 100n);
     await countStreams(filter, 100n);
     const where = {
