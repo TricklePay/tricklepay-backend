@@ -1,0 +1,31 @@
+name: actionlint
+
+# Catches invalid workflow syntax, expressions, and shell issues before a
+# workflow runs in Actions.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+
+permissions:
+  contents: read
+
+env:
+  # https://github.com/rhysd/actionlint/releases/tag/v1.7.7
+  ACTIONLINT_VERSION: 1.7.7
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run actionlint
+        run: |
+          set -euo pipefail
+          curl -fsSL -o actionlint.tar.gz \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          tar xzf actionlint.tar.gz
+          chmod +x actionlint
+          ./actionlint .github/workflows/*.yml

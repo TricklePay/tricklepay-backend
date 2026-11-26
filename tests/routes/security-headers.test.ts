@@ -55,6 +55,22 @@ describe("Security headers (#520)", () => {
     expect(response.headers["cross-origin-resource-policy"]).toBe("cross-origin");
   });
 
+  it("sets Permissions-Policy header denying unused features", async () => {
+    const response = await request("/health");
+    const policy = String(response.headers["permissions-policy"]);
+    expect(policy).toContain("camera=()");
+    expect(policy).toContain("microphone=()");
+    expect(policy).toContain("geolocation=()");
+    expect(policy).toContain("payment=()");
+    expect(policy).toContain("push=()");
+    expect(policy).toContain("sync-xhr=()");
+    expect(policy).toContain("gpu=()");
+    expect(policy).toContain("usb=()");
+    expect(policy).toContain("magnetometer=()");
+    expect(policy).toContain("gyroscope=()");
+    expect(policy).toContain("accelerometer=()");
+  });
+
   it("applies the headers to error responses too", async () => {
     const response = await request("/does-not-exist");
     expect(response.statusCode).toBe(404);

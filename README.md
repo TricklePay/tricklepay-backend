@@ -240,7 +240,7 @@ header there rather than appending to it.
 | `GET` | `/streams/{id}/events` | A single stream's indexed event history, in ascending chain order. Optional `kind` filter (`created`, `withdrawn`, `cancelled`). |
 | `GET` | `/streams/{id}/schedule` | Evenly spaced vesting curve points for charting, with the cliff step included. Optional `?points=<2–100>` (default 50). May return fewer points than requested for very short streams (zero-duration). Responds `304` to a matching `If-None-Match`. |
 | `GET` | `/accounts/{address}/summary` | Incoming and outgoing stream counts and amount totals for a single Stellar address. |
-| `GET` | `/tokens` | Each distinct streamed token, with its stream count and total escrowed amount. |
+| `GET` | `/tokens` | Each distinct streamed token, with its stream count and total streamed amount. |
 | `GET` | `/metrics` | Prometheus metrics. Optional bearer authentication via `METRICS_TOKEN`. |
 | `POST` | `/admin/replay` | Trigger failed event replay (admin). Requires bearer authentication via `ADMIN_TOKEN`. Only registered when `ADMIN_TOKEN` is set. See [docs/event-replay.md](docs/event-replay.md#admin-api-endpoint). |
 
@@ -405,7 +405,7 @@ curl -s "http://localhost:3000/streams/42?at=1767225600" | jq '.vested,.status'
 "completed"
 ```
 
-**ETag behaviour with `?at=`:** The `ETag` for a request with `?at=` is `"<updatedLedger>-<at>"`, distinct from the bare `"<updatedLedger>"` for the same stream without the parameter. This ensures that two requests for the same stream at different timestamps produce separate cache entries and that a stale `If-None-Match` from a plain request cannot match a timestamped one.
+**ETag behaviour with `?at=`:** The `ETag` hashes the actual response body, including time-dependent fields. A change in any returned field produces a new tag.
 
 ### `?points=` — Vesting schedule points
 
@@ -415,7 +415,7 @@ curl -s "http://localhost:3000/streams/42?at=1767225600" | jq '.vested,.status'
 |-----------|------|---------|-------|-------------|
 | `points` | integer | 50 | 2–100 | Desired number of points in the returned curve. |
 
-Values below 2 are clamped up to 2; values above 100 are clamped down to 100. A non-integer or empty string returns `400 VALIDATION_ERROR`.
+Values outside 2–100, non-integers, and empty strings return `400 VALIDATION_ERROR`.
 
 **How points are distributed:**
 
@@ -467,8 +467,7 @@ Each point has three fields, all decimal strings:
 | Route | `ETag` value |
 |-------|-------------|
 | `GET /streams` | `W/"<sha256 of the response body>"` |
-| `GET /streams/:id` (no `?at=`) | `"<updatedLedger>"` |
-| `GET /streams/:id?at=<ts>` | `"<updatedLedger>-<ts>"` |
+| `GET /streams/:id` (with or without `?at=`) | `W/"<sha256 of the response body>"` |
 | `GET /streams/:id/schedule?points=<n>` | `"<updatedLedger>-schedule-<n>"` |
 
 `updatedLedger` is the ledger sequence of the last event applied to that stream. It advances whenever a `Withdrawn` or `Cancelled` event is indexed for the stream, and never otherwise.
@@ -479,10 +478,10 @@ Each point has three fields, all decimal strings:
 # First request — server returns 200 and the ETag
 curl -si http://localhost:3000/streams/42 | grep -E "HTTP|ETag"
 HTTP/1.1 200 OK
-ETag: "200"
+ETag: W/"<body hash>"
 
 # Second request — send the ETag back; server returns 304 with no body
-curl -si -H 'If-None-Match: "200"' http://localhost:3000/streams/42 | grep "HTTP"
+curl -si -H 'If-None-Match: W/"<body hash>"' http://localhost:3000/streams/42 | grep "HTTP"
 HTTP/1.1 304 Not Modified
 
 # Same for the schedule route
@@ -503,7 +502,7 @@ HTTP/1.1 304 Not Modified
 
 Entries that are not valid entity-tags (for example an unquoted `200`) are ignored. A header with no matching entry, or no header at all, always produces a full `200` response.
 
-**Caveat:** `?at=` and `?points=` are both encoded into the ETag, so changing either parameter on the same stream id produces a different ETag even when `updatedLedger` has not advanced. A client caching both `?at=1735689600` and the bare URL for stream 42 will hold two separate cache entries and must send the right `If-None-Match` for each request variant.
+**Caveat:** The detail tag reflects its returned fields, while the schedule tag includes `?points=`. A client should send the validator from the response for the same URL when revalidating.
 
 **Error responses never carry an ETag.** The `ETag` header (and `Cache-Control`) is set only after the stream is found and validated. A `400 VALIDATION_ERROR` or `404 NOT_FOUND` response carries neither header.
 
@@ -697,19 +696,27 @@ curl -s http://localhost:3000/accounts/GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHO
 {
   "incoming": {
     "count": 3,
-    "totalAmount": "100000000000000",
-    "total": "100000000000000",
-    "withdrawn": "25000000000000",
-    "vested": "50000000000000",
-    "withdrawable": "25000000000000"
+    "byToken": {
+      "CBFS2HT4TIHTMWA5ZND6FEC27BRRA4V6JWOD7JIIDZVSPVAM7EJ2LZS7": {
+        "totalAmount": "100000000000000",
+        "total": "100000000000000",
+        "withdrawn": "25000000000000",
+        "vested": "50000000000000",
+        "withdrawable": "25000000000000"
+      }
+    }
   },
   "outgoing": {
     "count": 1,
-    "totalAmount": "40000000000000",
-    "total": "40000000000000",
-    "withdrawn": "10000000000000",
-    "vested": "20000000000000",
-    "withdrawable": "10000000000000"
+    "byToken": {
+      "CBFS2HT4TIHTMWA5ZND6FEC27BRRA4V6JWOD7JIIDZVSPVAM7EJ2LZS7": {
+        "totalAmount": "40000000000000",
+        "total": "40000000000000",
+        "withdrawn": "10000000000000",
+        "vested": "20000000000000",
+        "withdrawable": "10000000000000"
+      }
+    }
   }
 }
 ```
@@ -723,15 +730,20 @@ curl -s http://localhost:3000/tokens | jq
   {
     "token": "CBFS2HT4TIHTMWA5ZND6FEC27BRRA4V6JWOD7JIIDZVSPVAM7EJ2LZS7",
     "count": 12,
+    "totalStreamed": "1000000000000000",
     "totalAmount": "1000000000000000",
     "total": "1000000000000000"
   }
 ]
 ```
 
-For `/accounts/:address/summary`, `/streams/summary`, and `/tokens`, use
-`totalAmount` for the amount total. The `total` amount alias in account
-summaries and `/tokens` is deprecated and remains through at least one minor
+For `/tokens`, use `totalStreamed`: it sums allocated amounts across active,
+completed, and cancelled streams, so it is not the amount still escrowed.
+`totalAmount` and `total` remain deprecated aliases. For
+`/accounts/:address/summary` reports counts per direction and amounts under
+`byToken`, keyed by token contract. Use each token's `totalAmount` for its
+amount total. `/streams/summary` also uses `totalAmount`. The `total` alias in
+account summaries remains through at least one minor
 release; it is planned for removal in v2. The `total` field on paginated
 `/streams` responses is a stream count and is unaffected.
 
@@ -1369,14 +1381,14 @@ current template — copy it and fill in the required values.
 | `STREAM_CONTRACT_ID` | **Yes** | - | Deployed Soroban contract address. |
 | `NETWORK` | No | `testnet` | Stellar network (`testnet` or `mainnet`). |
 | `SOROBAN_RPC_URL` | No | *network dependent* | Soroban RPC endpoint. Defaults to the public endpoint for the selected network. Plain `http://` is only accepted for `localhost`, `127.0.0.0/8`, or `::1`/`[::1]`; any other host must use `https://` or startup fails — see [Plain HTTP is only allowed for local RPC hosts](docs/local-network.md#plain-http-is-only-allowed-for-local-rpc-hosts). |
-| `PORT` | No | `3000` | HTTP server listen port. |
+| `PORT` | No | `3000` | HTTP server listen port (1–65535). |
 | `HOST` | No | `0.0.0.0` | HTTP server bind address. |
-| `CORS_ORIGIN` | No | - | Allowed browser origin for the web client. Unset reflects any request origin (development default). Set to a single `https://` origin to pin the API to one frontend. Empty string disables browser access entirely. Only one origin is supported — see [CORS origin](#cors-origin). |
+| `CORS_ORIGIN` | No | - | Allowed browser origin for the web client. Unset or blank reflects any request origin. Set to a single `https://` origin to pin the API to one frontend — see [CORS origin](#cors-origin). |
 | `PUBLIC_BASE_URL` | No | `http://<HOST>:<PORT>` | Base URL advertised in the generated OpenAPI document's `servers` entry. Defaults to a URL derived from `HOST` and `PORT`. Set it when running behind a reverse proxy — see [docs/public-url-and-metrics-token.md](docs/public-url-and-metrics-token.md). |
 | `LOG_LEVEL` | No | `info` | Log verbosity (`trace`, `debug`, `info`, `warn`, `error`, `fatal`, `silent`). |
 | `LOG_PRETTY` | No | - | Set to `true` for human-readable development logs; requires the `pino-pretty` dev dependency. Output stays JSON when unset. |
-| `BODY_LIMIT` | No | `1048576` | Largest accepted request body in bytes. |
-| `QUERY_STRING_LIMIT` | No | `2048` | Longest accepted URL query string in bytes. |
+| `BODY_LIMIT` | No | `1048576` | Largest accepted request body in bytes (at least 1). |
+| `QUERY_STRING_LIMIT` | No | `2048` | Longest accepted URL query string in bytes (at least 1). |
 | `CONNECTION_TIMEOUT_MS` | No | `10000` | Milliseconds a connection may sit with no bytes moving while a request is in flight before it is closed. `0` disables it. See [Server timeouts](docs/CONFIGURATION.md#server-timeouts). |
 | `KEEP_ALIVE_TIMEOUT_MS` | No | `72000` | Milliseconds an idle keep-alive connection is held open after a response. Keep it above any load balancer's idle timeout. `0` disables it. See [Server timeouts](docs/CONFIGURATION.md#server-timeouts). |
 | `REQUEST_TIMEOUT_MS` | No | `30000` | Milliseconds within which a request must be received and answered; past it the client gets `408`. `0` disables it. See [Server timeouts](docs/CONFIGURATION.md#server-timeouts). |
@@ -1395,7 +1407,7 @@ current template — copy it and fill in the required values.
 | `RATE_LIMIT_ALLOWLIST` | No | - | Client addresses that bypass the rate limiter entirely (never counted, never sent a `429`). Comma-separated list of IPv4/IPv6 addresses or IPv4 CIDR blocks, e.g. `10.0.0.5,10.0.1.0/24,::1`; whitespace around entries is ignored. IPv6 CIDR blocks are not supported, and an invalid entry or a prefix outside `0`–`32` fails startup. Matched against the resolved client address, so behind a proxy it only works together with `TRUSTED_PROXIES`. Unset or empty exempts no one. See [docs/rate-limiting.md](docs/rate-limiting.md). |
 | `TRUSTED_PROXIES` | No | - | Comma-separated list of trusted reverse-proxy addresses or IPv4 CIDR blocks. Forwarded headers are ignored when unset. |
 | `READINESS_RETRY_AFTER_SECONDS` | No | `5` | Seconds advertised in the `Retry-After` header when `GET /ready` returns 503, so orchestrators and load balancers know when to probe again. |
-| `READY_MAX_STALENESS_MS` | No | `0` | Maximum age in milliseconds of the indexer position before `GET /ready` returns 503 with `indexer position is stale`. `0` disables the staleness check. |
+| `READY_MAX_STALENESS_MS` | No | `0` | Maximum age in milliseconds of the indexer position before `GET /ready` returns 503 with `indexer position is stale`. When positive, also controls the threshold for the `X-Data-Stale` header on data routes. `0` disables both checks. |
 | `INDEXER_POLL_INTERVAL_MS` | No | `5000` | Milliseconds between polls of the chain. |
 | `INDEXER_BACKOFF_MAX_MS` | No | `60000` | Maximum poll retry delay (ms) on RPC failures. |
 | `INDEXER_START_LEDGER` | No | `0` | Ledger to begin indexing from. `0` starts at the chain's latest ledger. |
@@ -1510,26 +1522,24 @@ is preserved.
 | `CORS_ORIGIN` value | Behaviour |
 |---------------------|-----------|
 | Unset (variable absent) | Reflects the request's `Origin` back — any origin is allowed. Safe for local development; not recommended for production because any website can call the API from a browser. |
-| Empty string (`""`) | Disables CORS entirely: no `Access-Control-Allow-Origin` header is set, so browsers block every cross-origin request. Use this when the API should not be callable from a browser at all. |
+| Empty or whitespace-only string | Same as unset. |
 | A URL string (e.g. `https://app.example.com`) | Only requests from that exact origin are allowed. All other origins receive no `Access-Control-Allow-Origin` header, which browsers treat as a refusal. |
 
 **Accepted format:** a single `https://` URL with no trailing slash, exactly as a browser sends in the `Origin` header. The match is case-sensitive and exact — `https://app.example.com` does not match `https://app.example.com/` (trailing slash) or `https://App.Example.Com` (different casing).
 
 **One origin only:** the setting does not accept a comma-separated list, a wildcard, or a regular expression. If you need to allow several origins, put a reverse proxy in front of the service and handle the CORS logic there.
 
-**What browsers can read:** when an origin is allowed, `@fastify/cors` sets `Access-Control-Allow-Origin` to the matched origin. No additional headers are explicitly exposed, so browsers can access only the [CORS-safelisted response headers](https://developer.mozilla.org/en-US/docs/Glossary/CORS-safelisted_response_header) (`Cache-Control`, `Content-Language`, `Content-Length`, `Content-Type`, `Expires`, `Last-Modified`, `Pragma`). Custom headers such as `ETag`, `x-request-id`, and `X-Indexer-Lag-Ledgers` are **not** exposed by default and cannot be read from browser JavaScript.
+**What browsers can read:** when an origin is allowed, `@fastify/cors` sets `Access-Control-Allow-Origin` to the matched origin. Custom response headers `X-Indexer-Lag-Ledgers` and `X-Data-Stale` are explicitly exposed through `Access-Control-Expose-Headers`, so browser JavaScript can read them. Other custom headers such as `ETag` and `x-request-id` are **not** exposed and cannot be read from browser JavaScript. The [CORS-safelisted response headers](https://developer.mozilla.org/en-US/docs/Glossary/CORS-safelisted_response_header) (`Cache-Control`, `Content-Language`, `Content-Length`, `Content-Type`, `Expires`, `Last-Modified`, `Pragma`) are always accessible.
 
 **Preflight requests:** browsers send an `OPTIONS` preflight before cross-origin requests that use non-simple methods or headers. The plugin answers these with `204 No Content` and the appropriate `Access-Control-Allow-Methods` and `Access-Control-Allow-Headers` headers.
 
 ```
-# Development — any origin (unset, leave this line absent or commented out)
-# CORS_ORIGIN=
+# Development — any origin
+CORS_ORIGIN=
 
 # Production — pin to the deployed frontend
 CORS_ORIGIN=https://app.example.com
 
-# No browser access allowed
-CORS_ORIGIN=
 ```
 
 ### Logging

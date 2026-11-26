@@ -16,6 +16,13 @@ import { replayFailedEvents, type ReplayFailedEventsSummary } from "../indexer/r
 
 import { createRpcServer } from "../chain/rpc.js";
 
+import {
+  rateLimitedResponseSchema,
+  RATE_LIMITED_RESPONSE_SCHEMA_ID,
+  serverErrorResponseSchema,
+  SERVER_ERROR_RESPONSE_SCHEMA_ID,
+} from "../schema.js";
+
 // Tracks whether a replay is currently running to prevent concurrent runs.
 let replayInProgress = false;
 
@@ -33,6 +40,9 @@ export function adminRoutes(config: Config) {
     }
 
     const server = createRpcServer(config);
+
+    if (!app.getSchema(RATE_LIMITED_RESPONSE_SCHEMA_ID)) app.addSchema(rateLimitedResponseSchema);
+    if (!app.getSchema(SERVER_ERROR_RESPONSE_SCHEMA_ID)) app.addSchema(serverErrorResponseSchema);
 
     app.post<{ Body: ReplayRequestBody }>(
       "/admin/replay",
@@ -101,6 +111,12 @@ export function adminRoutes(config: Config) {
                 error: { type: "string" },
                 requestId: { type: "string" },
               },
+            },
+            429: {
+              $ref: RATE_LIMITED_RESPONSE_SCHEMA_ID,
+            },
+            500: {
+              $ref: SERVER_ERROR_RESPONSE_SCHEMA_ID,
             },
           },
         },

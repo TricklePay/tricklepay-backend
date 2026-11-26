@@ -79,7 +79,13 @@ For quick local verification before opening a pull request, run the checks scrip
 ./scripts/check.sh
 ```
 
-This runs `npm run typecheck`, `npm test`, and `npm run build` in order, failing immediately on the first error.
+This runs `npm run typecheck`, `npm test`, `npm run build`, and `npm run depcheck` in order, failing immediately on the first error.
+
+To also run the integration test suite:
+
+```bash
+./scripts/check.sh --integration
+```
 
 ### Detailed Check Specifications
 
