@@ -12,13 +12,24 @@ const indexerState = vi.hoisted(() => ({
   hasIndexerProgress: vi.fn(),
 }));
 
+const failedEvents = vi.hoisted(() => ({
+  recordFailedEvent: vi.fn(),
+  clearFailedEvent: vi.fn(),
+  listFailedEvents: vi.fn(),
+  countFailedEvents: vi.fn(),
+  failedEventFromDecoded: vi.fn(),
+}));
+
 vi.mock("../../src/db.js", () => ({ checkHealth: db.checkHealth }));
+vi.mock("../../src/repositories/failed-events.js", () => failedEvents);
 vi.mock("../../src/repositories/indexer-state.js", () => ({
   getIndexerPosition: indexerState.getIndexerPosition,
   hasIndexerProgress: indexerState.hasIndexerProgress,
 }));
 
 const { buildServer } = await import("../../src/server.js");
+const { metricsRoutes } = await import("../../src/routes/metrics.js");
+const { statusRoutes } = await import("../../src/routes/status.js");
 
 describe("probe routes never get lag or cache headers (#722)", () => {
   beforeEach(() => {
@@ -79,6 +90,7 @@ describe("probe routes never get lag or cache headers (#722)", () => {
 
   it("omits X-Indexer-Lag-Ledgers and Cache-Control from /metrics", async () => {
     const app = await buildServer();
+    await app.register(metricsRoutes);
     const response = await app.inject({ method: "GET", url: "/metrics" });
     await app.close();
 
@@ -90,6 +102,7 @@ describe("probe routes never get lag or cache headers (#722)", () => {
 
   it("omits X-Indexer-Lag-Ledgers and Cache-Control from /metrics with query string", async () => {
     const app = await buildServer();
+    await app.register(metricsRoutes);
     const response = await app.inject({ method: "GET", url: "/metrics?format=text" });
     await app.close();
 
@@ -101,6 +114,7 @@ describe("probe routes never get lag or cache headers (#722)", () => {
 
   it("includes X-Indexer-Lag-Ledgers and Cache-Control on data route /status", async () => {
     const app = await buildServer();
+    await app.register(statusRoutes);
     const response = await app.inject({ method: "GET", url: "/status" });
     await app.close();
 

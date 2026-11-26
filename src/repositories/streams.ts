@@ -352,6 +352,12 @@ function whereFromFilter(filter: StreamFilter, now?: bigint): Prisma.StreamWhere
   if (filter.token) where.token = filter.token;
   if (filter.cancelled !== undefined) where.cancelled = filter.cancelled;
 
+  if (filter.ids !== undefined) {
+    // PostgreSQL BIGINT cannot store the upper half of uint64. Those valid
+    // contract ids cannot match a row, so omit them before binding parameters.
+    where.streamId = { in: filter.ids.filter((id) => id <= 9223372036854775807n) };
+  }
+
   // Handle cursor-based pagination with sort awareness
   if (filter.cursor) {
     const cursorData = decodeCursor(filter.cursor);
@@ -361,7 +367,11 @@ function whereFromFilter(filter: StreamFilter, now?: bigint): Prisma.StreamWhere
 
       // Build the cursor condition based on the sort key
       if (sortKey === "streamId") {
-        where.streamId = sortDirection === "desc" ? { lt: cursorData.streamId } : { gt: cursorData.streamId };
+        // Merge with the ids filter above instead of replacing it.
+        where.streamId = {
+          ...(where.streamId as Prisma.BigIntFilter | undefined),
+          ...(sortDirection === "desc" ? { lt: cursorData.streamId } : { gt: cursorData.streamId }),
+        };
       } else if (cursorData.sortValue !== undefined) {
         // For compound sort (sortKey + streamId tiebreaker), use OR condition
         const sortValueBigInt = sortKey === "totalAmount"
@@ -399,10 +409,6 @@ function whereFromFilter(filter: StreamFilter, now?: bigint): Prisma.StreamWhere
         }
       }
     }
-  } else if (filter.ids !== undefined) {
-    // PostgreSQL BIGINT cannot store the upper half of uint64. Those valid
-    // contract ids cannot match a row, so omit them before binding parameters.
-    where.streamId = { in: filter.ids.filter((id) => id <= 9223372036854775807n) };
   }
 
   if (filter.minAmount !== undefined || filter.maxAmount !== undefined) {
