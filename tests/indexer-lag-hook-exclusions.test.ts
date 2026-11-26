@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { resetLagCache } from "../src/indexer-lag-hook.js";
 import * as indexerStateRepo from "../src/repositories/indexer-state.js";
 import { streamRoutes } from "../src/routes/streams.js";
 import { buildServer } from "../src/server.js";
@@ -9,7 +8,6 @@ describe("Indexer lag header exclusions and error handling (#674)", () => {
   let getPositionSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    resetLagCache();
     getPositionSpy = vi.spyOn(indexerStateRepo, "getIndexerPosition").mockResolvedValue({
       lastLedger: 100,
       chainLedger: 150,
@@ -20,7 +18,6 @@ describe("Indexer lag header exclusions and error handling (#674)", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
-    resetLagCache();
   });
 
   it("adds X-Indexer-Lag-Ledgers to successful GET read endpoints", async () => {

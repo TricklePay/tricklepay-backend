@@ -23,14 +23,17 @@ export function registerStreamScheduleRoute(app: FastifyInstance): void {
         summary: "Get stream vesting schedule",
         description:
           "Returns evenly spaced points along the stream's vesting curve between start and end, " +
-          "with the cliff step included, suitable for client-side charting.",
+          "with the cliff step included, suitable for client-side charting. " +
+          "Points outside 2–100 are rejected with 400.",
         tags: ["streams"],
         params: {
           type: "object",
           required: ["id"],
           properties: {
             id: {
-              type: "string",
+              type: "integer",
+              minimum: MIN_SCHEDULE_POINTS,
+              maximum: MAX_SCHEDULE_POINTS,
               description: "Stream id (uint64, decimal string).",
               examples: ["42"],
             },
@@ -65,20 +68,8 @@ export function registerStreamScheduleRoute(app: FastifyInstance): void {
         return sendError(reply, request, 400, "VALIDATION_ERROR", "invalid stream id");
       }
 
-      const query = request.query as { points?: string; count?: string; limit?: string };
-      const rawPoints = query.points ?? query.count ?? query.limit;
-      let requestedPoints = DEFAULT_SCHEDULE_POINTS;
-      if (rawPoints !== undefined) {
-        const trimmed = rawPoints.trim();
-        if (trimmed.length === 0 || !/^\d+$/.test(trimmed)) {
-          return sendError(reply, request, 400, "VALIDATION_ERROR", "invalid points parameter");
-        }
-        const parsed = Number(trimmed);
-        if (!Number.isFinite(parsed) || parsed < 1) {
-          return sendError(reply, request, 400, "VALIDATION_ERROR", "invalid points parameter");
-        }
-        requestedPoints = Math.max(MIN_SCHEDULE_POINTS, Math.min(parsed, MAX_SCHEDULE_POINTS));
-      }
+      const query = request.query as { points?: number };
+      const requestedPoints = query.points ?? DEFAULT_SCHEDULE_POINTS;
 
       let stream;
       try {
