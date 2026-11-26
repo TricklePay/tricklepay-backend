@@ -10,7 +10,8 @@
 
 import { Prisma, type Stream } from "@prisma/client";
 
-import { prisma, withQueryTimeout } from "../db.js";
+import { prisma, withQueryTimeout, measureRepositoryCall } from "../db.js";
+import { parseStreamId } from "../lib/stream-id.js";
 import { indexedStreams } from "../metrics.js";
 
 export interface UpsertStreamInput {
@@ -52,8 +53,7 @@ export interface WithdrawalInput {
 
 export interface CancellationInput {
   streamId: bigint;
-  // The vested-but-unwithdrawn balance paid to the recipient as the stream was
-  // cancelled.
+  // The vested-but-unwithdrawn balance still claimable by the recipient after cancellation.
   recipientAmount: bigint;
   // Unix seconds at which the cancellation happened, which becomes the stream's
   // frozen end time.
@@ -68,6 +68,9 @@ export interface CancellationInput {
 // and was correctly ignored.
 export type ApplyResult = "applied" | "duplicate" | "missing";
 
+export type SortKey = "streamId" | "endTime" | "totalAmount" | "createdLedger";
+export type SortDirection = "asc" | "desc";
+
 export interface StreamFilter {
   ids?: bigint[];
   sender?: string;
@@ -75,11 +78,13 @@ export interface StreamFilter {
   token?: string;
   cancelled?: boolean;
   status?: "pending" | "streaming" | "completed" | "cancelled";
-  cursor?: bigint;
+  cursor?: string;
   limit?: number;
   offset?: number;
   minAmount?: bigint;
   maxAmount?: bigint;
+  sortKey?: SortKey;
+  sortDirection?: SortDirection;
 }
 
 export interface StreamListResult {
@@ -87,18 +92,67 @@ export interface StreamListResult {
   nextCursor?: string;
 }
 
-export function encodeCursor(streamId: bigint): string {
-  const payload = JSON.stringify({ streamId: streamId.toString() });
+interface CursorData {
+  streamId: bigint;
+  sortKey?: SortKey;
+  sortDirection?: SortDirection;
+  sortValue?: string;
+}
+
+export function encodeCursor(
+  streamId: bigint,
+  sortKey?: SortKey,
+  sortDirection?: SortDirection,
+  sortValue?: bigint | number,
+): string {
+  // The stream id is a bigint, which JSON.stringify cannot serialize, so it is
+  // written as a decimal string and parsed back in decodeCursor.
+  const data = {
+    streamId: streamId.toString(),
+    ...(sortKey && { sortKey }),
+    ...(sortDirection && { sortDirection }),
+    ...(sortValue !== undefined && { sortValue: sortValue.toString() }),
+  };
+  const payload = JSON.stringify(data);
   return Buffer.from(payload, "utf8").toString("base64url");
 }
 
-export function decodeCursor(raw: string): bigint | null {
+export function decodeCursor(raw: string): CursorData | null {
   try {
     const decoded = Buffer.from(raw, "base64url").toString("utf8");
     const parsed = JSON.parse(decoded);
     if (parsed && typeof parsed.streamId === "string") {
-      const value = BigInt(parsed.streamId);
-      if (value >= 0n) return value;
+      // The stream id must fit the database's signed BIGINT range (#796).
+      const streamId = parseStreamId(parsed.streamId);
+      if (streamId === null) return null;
+
+      const result: CursorData = { streamId };
+
+      if (parsed.sortKey) {
+        if (!["streamId", "endTime", "totalAmount", "createdLedger"].includes(parsed.sortKey)) {
+          return null;
+        }
+        result.sortKey = parsed.sortKey;
+      }
+
+      if (parsed.sortDirection) {
+        if (!["asc", "desc"].includes(parsed.sortDirection)) {
+          return null;
+        }
+        result.sortDirection = parsed.sortDirection;
+      }
+
+      if (parsed.sortValue !== undefined) {
+        // A sort value is re-parsed with BigInt() when the cursor is applied,
+        // so anything that is not a plain integer string is rejected here as
+        // an invalid cursor rather than failing later.
+        if (typeof parsed.sortValue !== "string" || !/^-?\d+$/.test(parsed.sortValue)) {
+          return null;
+        }
+        result.sortValue = parsed.sortValue;
+      }
+
+      return result;
     }
   } catch {
     // fall through to null
@@ -130,8 +184,9 @@ function notYetApplied(streamId: bigint, eventId: string): Prisma.StreamWhereInp
 // the reconciling write: it overwrites whatever the row held, so it needs no
 // replay guard, and it is authoritative regardless of which event prompted it.
 export async function upsertStream(input: UpsertStreamInput, tx: Prisma.TransactionClient = prisma): Promise<void> {
-  const totalAmount = decimal(input.totalAmount);
-  const withdrawn = decimal(input.withdrawn);
+  return measureRepositoryCall("upsertStream", async () => {
+    const totalAmount = decimal(input.totalAmount);
+    const withdrawn = decimal(input.withdrawn);
 
   await tx.stream.upsert({
     where: { streamId: input.streamId },
@@ -161,6 +216,7 @@ export async function upsertStream(input: UpsertStreamInput, tx: Prisma.Transact
       lastEventId: input.eventId,
     },
   });
+  });
 }
 
 // Records a stream from its `created` event alone. The insert is skipped if the
@@ -168,6 +224,7 @@ export async function upsertStream(input: UpsertStreamInput, tx: Prisma.Transact
 // had at creation, which must not overwrite withdrawals or a cancellation that
 // have since been applied to the row.
 export async function insertStream(input: InsertStreamInput, tx: Prisma.TransactionClient = prisma): Promise<ApplyResult> {
+  return measureRepositoryCall("insertStream", async () => {
   const result = await tx.stream.createMany({
     data: [
       {
@@ -194,12 +251,14 @@ export async function insertStream(input: InsertStreamInput, tx: Prisma.Transact
     return "applied";
   }
   return "duplicate";
+  });
 }
 
 // Applies a `withdrawn` event as a delta on the stored row. The event carries
 // only the amount moved, so the balance is incremented in the database rather
 // than recomputed, which needs no read of contract state.
 export async function applyWithdrawal(input: WithdrawalInput, tx: Prisma.TransactionClient = prisma): Promise<ApplyResult> {
+  return measureRepositoryCall("applyWithdrawal", async () => {
   const result = await tx.stream.updateMany({
     where: notYetApplied(input.streamId, input.eventId),
     data: {
@@ -211,19 +270,19 @@ export async function applyWithdrawal(input: WithdrawalInput, tx: Prisma.Transac
 
   if (result.count > 0) return "applied";
   return classifyMiss(input.streamId, tx);
+  });
 }
 
-// Applies a `cancelled` event. The contract freezes a cancelled stream by
-// setting its total to the amount vested at cancellation and its end time to
-// that moment; cancellation also settles both sides, paying the recipient their
-// vested-but-unwithdrawn balance and refunding the rest to the sender. So the
-// frozen total is what has been withdrawn so far plus the recipient's payout,
-// and `withdrawn` reaches it, leaving nothing further withdrawable.
+// Applies a `cancelled` event. The contract refunds the sender and freezes the
+// stream's vested total at the amount already withdrawn plus the recipient's
+// balance still claimable after cancellation. Withdrawn stays unchanged until
+// the recipient actually claims that balance.
 //
 // The read and guarded update run in a single transaction so a concurrent
 // withdrawal cannot change `withdrawn` between the two operations, which would
 // freeze the stream at a stale total.
 export async function applyCancellation(input: CancellationInput, tx: Prisma.TransactionClient = prisma): Promise<ApplyResult> {
+  return measureRepositoryCall("applyCancellation", async () => {
   const applyFn = async (t: Prisma.TransactionClient) => {
     const stored = await t.stream.findUnique({ where: { streamId: input.streamId } });
     if (!stored) return "missing";
@@ -234,7 +293,6 @@ export async function applyCancellation(input: CancellationInput, tx: Prisma.Tra
       where: { ...notYetApplied(input.streamId, input.eventId), withdrawn: stored.withdrawn },
       data: {
         totalAmount: frozenTotal,
-        withdrawn: frozenTotal,
         endTime: input.cancelledAt,
         cancelled: true,
         updatedLedger: input.ledger,
@@ -250,6 +308,7 @@ export async function applyCancellation(input: CancellationInput, tx: Prisma.Tra
     return applyFn(tx);
   }
   return prisma.$transaction(applyFn);
+  });
 }
 
 // Tells the two reasons a guarded update matched nothing apart: the stream was
@@ -263,7 +322,9 @@ async function classifyMiss(streamId: bigint, tx: Prisma.TransactionClient = pri
 }
 
 export async function getStream({ streamId }: { streamId: bigint }): Promise<Stream | null> {
-  return withQueryTimeout(prisma.stream.findUnique({ where: { streamId } }));
+  return measureRepositoryCall("getStream", () =>
+    withQueryTimeout(prisma.stream.findUnique({ where: { streamId } }))
+  );
 }
 
 // Repository naming convention: use `get` for one record, `list` for
@@ -290,13 +351,64 @@ function whereFromFilter(filter: StreamFilter, now?: bigint): Prisma.StreamWhere
   if (filter.recipient) where.recipient = filter.recipient;
   if (filter.token) where.token = filter.token;
   if (filter.cancelled !== undefined) where.cancelled = filter.cancelled;
-  if (filter.ids !== undefined || filter.cursor !== undefined) {
-    where.streamId = {
-      // PostgreSQL BIGINT cannot store the upper half of uint64. Those valid
-      // contract ids cannot match a row, so omit them before binding parameters.
-      ...(filter.ids === undefined ? {} : { in: filter.ids.filter((id) => id <= 9223372036854775807n) }),
-      ...(filter.cursor === undefined ? {} : { lt: filter.cursor }),
-    };
+
+  if (filter.ids !== undefined) {
+    // PostgreSQL BIGINT cannot store the upper half of uint64. Those valid
+    // contract ids cannot match a row, so omit them before binding parameters.
+    where.streamId = { in: filter.ids.filter((id) => id <= 9223372036854775807n) };
+  }
+
+  // Handle cursor-based pagination with sort awareness
+  if (filter.cursor) {
+    const cursorData = decodeCursor(filter.cursor);
+    if (cursorData) {
+      const sortKey = filter.sortKey ?? cursorData.sortKey ?? "streamId";
+      const sortDirection = filter.sortDirection ?? cursorData.sortDirection ?? "desc";
+
+      // Build the cursor condition based on the sort key
+      if (sortKey === "streamId") {
+        // Merge with the ids filter above instead of replacing it.
+        where.streamId = {
+          ...(where.streamId as Prisma.BigIntFilter | undefined),
+          ...(sortDirection === "desc" ? { lt: cursorData.streamId } : { gt: cursorData.streamId }),
+        };
+      } else if (cursorData.sortValue !== undefined) {
+        // For compound sort (sortKey + streamId tiebreaker), use OR condition
+        const sortValueBigInt = sortKey === "totalAmount"
+          ? BigInt(cursorData.sortValue)
+          : sortKey === "createdLedger"
+            ? Number(cursorData.sortValue)
+            : BigInt(cursorData.sortValue);
+
+        const sortField = sortKey === "totalAmount"
+          ? "totalAmount"
+          : sortKey === "createdLedger"
+            ? "createdLedger"
+            : "endTime";
+
+        const sortValueDecimal = sortKey === "totalAmount" || sortKey === "endTime"
+          ? decimal(sortValueBigInt as bigint)
+          : sortValueBigInt;
+
+        if (sortDirection === "desc") {
+          where.OR = [
+            { [sortField]: { lt: sortValueDecimal } },
+            {
+              [sortField]: sortValueDecimal,
+              streamId: { lt: cursorData.streamId },
+            },
+          ];
+        } else {
+          where.OR = [
+            { [sortField]: { gt: sortValueDecimal } },
+            {
+              [sortField]: sortValueDecimal,
+              streamId: { gt: cursorData.streamId },
+            },
+          ];
+        }
+      }
+    }
   }
 
   if (filter.minAmount !== undefined || filter.maxAmount !== undefined) {
@@ -319,10 +431,24 @@ export function orderByFromFilter(
   filter: StreamFilter,
 ): Prisma.StreamOrderByWithRelationInput[] {
   const orderBy: Prisma.StreamOrderByWithRelationInput[] = [];
+
+  // Address-based ordering (legacy behavior)
   if (filter.sender) orderBy.push({ sender: "asc" });
   else if (filter.recipient) orderBy.push({ recipient: "asc" });
   else if (filter.token) orderBy.push({ token: "asc" });
-  orderBy.push({ streamId: "desc" });
+
+  // Apply custom sort if specified
+  if (filter.sortKey && filter.sortKey !== "streamId") {
+    const direction = filter.sortDirection ?? "desc";
+    orderBy.push({ [filter.sortKey]: direction });
+  }
+
+  // streamId is always the final tiebreaker
+  const streamIdDirection = filter.sortKey && filter.sortKey !== "streamId"
+    ? filter.sortDirection ?? "desc"
+    : filter.sortDirection ?? "desc";
+  orderBy.push({ streamId: streamIdDirection });
+
   return orderBy;
 }
 
@@ -345,6 +471,7 @@ export function statusWhere(status: StreamStatus, now: bigint): Prisma.StreamWhe
 }
 
 export async function listStreams(filter: StreamFilter, now?: bigint): Promise<StreamListResult> {
+  return measureRepositoryCall("listStreams", async () => {
   const limit = filter.limit ?? 50;
   const useCursor = filter.cursor !== undefined;
   const take = limit + 1;
@@ -365,13 +492,31 @@ export async function listStreams(filter: StreamFilter, now?: bigint): Promise<S
 
   const streams = rows.slice(0, limit);
   const last = streams[streams.length - 1];
-  return { streams, nextCursor: encodeCursor(last.streamId) };
+
+  // Encode cursor with sort information
+  const sortKey = filter.sortKey ?? "streamId";
+  const sortDirection = filter.sortDirection ?? "desc";
+  const sortValue = sortKey === "endTime"
+    ? last.endTime
+    : sortKey === "totalAmount"
+      ? BigInt(last.totalAmount.toString())
+      : sortKey === "createdLedger"
+        ? last.createdLedger
+        : undefined;
+
+  return {
+    streams,
+    nextCursor: encodeCursor(last.streamId, sortKey, sortDirection, sortValue),
+  };
+  });
 }
 
 // Total number of streams matching the filter, ignoring limit and offset, so a
 // client can tell how many pages exist.
 export async function countStreams(filter: StreamFilter, now?: bigint): Promise<number> {
-  return withQueryTimeout(prisma.stream.count({ where: whereFromFilter(filter, now) }));
+  return measureRepositoryCall("countStreams", () =>
+    withQueryTimeout(prisma.stream.count({ where: whereFromFilter(filter, now) }))
+  );
 }
 
 export interface StreamAggregate {
@@ -384,6 +529,7 @@ export interface StreamAggregate {
 // over the decimal columns, so totals stay exact no matter how wide the
 // amounts get; they come back as Decimal rather than a JavaScript number.
 export async function aggregateStreams(where: Prisma.StreamWhereInput): Promise<StreamAggregate> {
+  return measureRepositoryCall("aggregateStreams", async () => {
   const result = await withQueryTimeout(
     prisma.stream.aggregate({
       where,
@@ -397,18 +543,22 @@ export async function aggregateStreams(where: Prisma.StreamWhereInput): Promise<
     totalAmount: result._sum.totalAmount ?? new Prisma.Decimal(0),
     withdrawn: result._sum.withdrawn ?? new Prisma.Decimal(0),
   };
+  });
 }
 
 export interface TokenSummary {
   token: string;
   count: number;
+  totalStreamed: string;
+  totalAmount: string;
   total: string;
 }
 
 // Groups streams by token and returns the distinct tokens with stream count
-// and total escrowed amount. The sums run in Postgres over decimal columns so
-// amounts stay exact.
+// and total streamed amount, including completed and cancelled streams. The
+// sums run in Postgres over decimal columns so amounts stay exact.
 export async function listTokens(): Promise<TokenSummary[]> {
+  return measureRepositoryCall("listTokens", async () => {
   const groups = await withQueryTimeout(
     prisma.stream.groupBy({
       by: ["token"],
@@ -418,11 +568,17 @@ export async function listTokens(): Promise<TokenSummary[]> {
     }),
   );
 
-  return groups.map((group) => ({
-    token: group.token,
-    count: group._count.streamId,
-    total: group._sum.totalAmount ? group._sum.totalAmount.toString() : "0",
-  }));
+  return groups.map((group) => {
+    const totalAmount = group._sum.totalAmount?.toString() ?? "0";
+    return {
+      token: group.token,
+      count: group._count.streamId,
+      totalStreamed: totalAmount,
+      totalAmount,
+      total: totalAmount,
+    };
+  });
+  });
 }
 
 // Returns incoming (recipient = address) and outgoing (sender = address) streams
@@ -430,10 +586,79 @@ export async function listTokens(): Promise<TokenSummary[]> {
 export async function getAccountStreams(
   address: string,
 ): Promise<{ incoming: Stream[]; outgoing: Stream[] }> {
+  return measureRepositoryCall("getAccountStreams", async () => {
   const [incoming, outgoing] = await Promise.all([
     withQueryTimeout(prisma.stream.findMany({ where: { recipient: address } })),
     withQueryTimeout(prisma.stream.findMany({ where: { sender: address } })),
   ]);
   return { incoming, outgoing };
+  });
+}
+
+export interface AccountTokenTotals {
+  totalAmount: string;
+  total: string;
+  withdrawn: string;
+  vested: string;
+  withdrawable: string;
+}
+
+export interface AccountDirectionSummary {
+  count: number;
+  byToken: Record<string, AccountTokenTotals>;
+}
+
+export async function getAccountSummary(
+  address: string,
+  now: bigint,
+): Promise<{ incoming: AccountDirectionSummary; outgoing: AccountDirectionSummary }> {
+  return measureRepositoryCall("getAccountSummary", async () => {
+    const rows = await withQueryTimeout(prisma.$queryRaw<Array<{
+      direction: "incoming" | "outgoing";
+      token: string;
+      count: bigint;
+      totalAmount: Prisma.Decimal;
+      withdrawn: Prisma.Decimal;
+      vested: Prisma.Decimal;
+      withdrawable: Prisma.Decimal;
+    }>>`
+      WITH matched AS (
+        SELECT 'incoming'::text AS direction, "token", "totalAmount", "withdrawn", "startTime", "endTime", "cliffTime"
+        FROM "Stream" WHERE "recipient" = ${address}
+        UNION ALL
+        SELECT 'outgoing'::text AS direction, "token", "totalAmount", "withdrawn", "startTime", "endTime", "cliffTime"
+        FROM "Stream" WHERE "sender" = ${address}
+      ), evaluated AS (
+        SELECT direction, "token", "totalAmount", "withdrawn",
+          CASE
+            WHEN ${now} < "cliffTime" OR ${now} < "startTime" THEN 0::numeric
+            WHEN ${now} >= "endTime" THEN "totalAmount"
+            ELSE trunc("totalAmount" * (${now} - "startTime")::numeric / ("endTime" - "startTime")::numeric)
+          END AS vested
+        FROM matched
+      )
+      SELECT direction, "token", COUNT(*) AS count,
+        SUM("totalAmount") AS "totalAmount",
+        SUM("withdrawn") AS withdrawn,
+        SUM(vested) AS vested,
+        SUM(GREATEST(vested - "withdrawn", 0)) AS withdrawable
+      FROM evaluated GROUP BY direction, "token"
+    `);
+
+    const empty = (): AccountDirectionSummary => ({ count: 0, byToken: {} });
+    const summary = { incoming: empty(), outgoing: empty() };
+    for (const row of rows) {
+      const totalAmount = row.totalAmount.toString();
+      summary[row.direction].count += Number(row.count);
+      summary[row.direction].byToken[row.token] = {
+        totalAmount,
+        total: totalAmount,
+        withdrawn: row.withdrawn.toString(),
+        vested: row.vested.toString(),
+        withdrawable: row.withdrawable.toString(),
+      };
+    }
+    return summary;
+  });
 }
 

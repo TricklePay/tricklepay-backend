@@ -1,0 +1,5 @@
+# oasdiff configuration file
+# Reference: https://github.com/Tufin/oasdiff
+
+# Configured for breaking change detection
+fail-on: ERR

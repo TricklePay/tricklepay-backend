@@ -131,3 +131,35 @@ decodes:
 ```bash
 npx vitest run tests/chain/events.test.ts
 ```
+
+## `contract-interface.txt`
+
+A plaintext representation of the TricklePay contract's event interface
+definitions, copied from the contracts repository. Each event lists its topics
+(indexed fields) and value map fields with their Soroban types. The fixture
+includes the commit hash of the contracts repository it was sourced from, so
+an operator knows which version of the contract it corresponds to.
+
+This fixture is used by `tests/chain/contract-interface.test.ts` to verify that
+the decoder handles every field defined in the contract spec. When the contract
+changes an event's fields, the test fails, prompting an update to either the
+decoder or the fixture.
+
+### Updating the fixture
+
+When the contract interface changes:
+
+1. Check out the `tricklepay-contracts` repository and locate the event
+   definitions (typically in `docs/interface.txt` or the contract source).
+2. Copy the event spec into this fixture, preserving the field names and types.
+3. Update the `Commit:` line with the actual commit hash from the contracts repo:
+   ```
+   // Commit: <actual-commit-hash>
+   ```
+4. Run the contract interface test to verify alignment:
+   ```bash
+   npx vitest run tests/chain/contract-interface.test.ts
+   ```
+5. If the contract added or removed fields, update `src/chain/events.ts` to
+   handle the new shape and adjust the assertions in `contract-interface.test.ts`
+   accordingly.

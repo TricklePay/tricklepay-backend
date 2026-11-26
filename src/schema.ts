@@ -22,6 +22,9 @@ export const STREAM_EVENT_SCHEMA_ID = "StreamEvent";
 export const STREAM_EVENT_HISTORY_RESPONSE_SCHEMA_ID = "StreamEventHistoryResponse";
 export const INDEXER_STATUS_SCHEMA_ID = "IndexerStatus";
 export const ERROR_SCHEMA_ID = "ApiError";
+export const PROBLEM_DETAILS_SCHEMA_ID = "ProblemDetails";
+export const RATE_LIMITED_RESPONSE_SCHEMA_ID = "RateLimitedResponse";
+export const SERVER_ERROR_RESPONSE_SCHEMA_ID = "ServerErrorResponse";
 export const API_INDEX_SCHEMA_ID = "ApiIndex";
 export const TOKEN_SUMMARY_SCHEMA_ID = "TokenSummary";
 export const TOKEN_LIST_RESPONSE_SCHEMA_ID = "TokenListResponse";
@@ -374,6 +377,11 @@ export const streamEventSchema = {
       nullable: true,
       description: "Ledger close time, in Unix seconds, for the event.",
     },
+    cumulativeWithdrawn: {
+      type: "string",
+      nullable: true,
+      description: "Running total of withdrawn tokens up to and including this event (uint128, decimal string). Only present when cumulative=true is requested.",
+    },
   },
 } as const;
 
@@ -390,8 +398,8 @@ export const streamEventHistoryResponseSchema = {
 export const tokenSummarySchema = {
   $id: TOKEN_SUMMARY_SCHEMA_ID,
   type: "object",
-  description: "A distinct token with its stream count and total escrowed amount.",
-  required: ["token", "count", "total"],
+  description: "A distinct token with its stream count and total streamed amount.",
+  required: ["token", "count", "totalStreamed", "totalAmount", "total"],
   properties: {
     token: {
       type: "string",
@@ -404,10 +412,22 @@ export const tokenSummarySchema = {
       minimum: 0,
       examples: [12],
     },
+    totalStreamed: {
+      type: "string",
+      description: "Sum of totalAmount over all streams for this token, including completed and cancelled streams (decimal base units).",
+      examples: ["1000000000000000"],
+    },
+    totalAmount: {
+      type: "string",
+      deprecated: true,
+      description:
+        "Deprecated alias for totalStreamed; use totalStreamed instead.",
+      examples: ["1000000000000000"],
+    },
     total: {
       type: "string",
-      description:
-        "Total amount escrowed across streams for this token (uint128, decimal string).",
+      deprecated: true,
+      description: "Deprecated alias for totalStreamed; use totalStreamed instead.",
       examples: ["1000000000000000"],
     },
   },
@@ -416,7 +436,7 @@ export const tokenSummarySchema = {
 export const tokenListResponseSchema = {
   $id: TOKEN_LIST_RESPONSE_SCHEMA_ID,
   type: "array",
-  description: "List of distinct tokens with their stream counts and total escrowed amounts.",
+  description: "List of distinct tokens with their stream counts and total streamed amounts.",
   items: { $ref: TOKEN_SUMMARY_SCHEMA_ID },
 } as const;
 
@@ -426,46 +446,29 @@ export const tokenListResponseSchema = {
 export const accountStreamSummarySchema = {
   $id: ACCOUNT_STREAM_SUMMARY_SCHEMA_ID,
   type: "object",
-  description: "Summary of stream counts and token totals for an address.",
-  required: [
-    "count",
-    "totalAmount",
-    "total",
-    "withdrawn",
-    "vested",
-    "withdrawable",
-  ],
+  description: "Stream count and amounts grouped by token for one direction.",
+  required: ["count", "byToken"],
   properties: {
     count: {
       type: "integer",
-      description: "Number of streams.",
+      description: "Number of streams in this direction across all tokens.",
       minimum: 0,
       examples: [3],
     },
-    totalAmount: {
-      type: "string",
-      description: "Total allocated tokens (uint128, decimal string).",
-      examples: ["100000000000000"],
-    },
-    total: {
-      type: "string",
-      description: "Total allocated tokens (alias for totalAmount, uint128, decimal string).",
-      examples: ["100000000000000"],
-    },
-    withdrawn: {
-      type: "string",
-      description: "Total tokens already withdrawn (uint128, decimal string).",
-      examples: ["25000000000000"],
-    },
-    vested: {
-      type: "string",
-      description: "Total tokens vested as of now (uint128, decimal string).",
-      examples: ["50000000000000"],
-    },
-    withdrawable: {
-      type: "string",
-      description: "Total tokens currently withdrawable (uint128, decimal string).",
-      examples: ["25000000000000"],
+    byToken: {
+      type: "object",
+      description: "Amount totals keyed by token contract address; no amounts from different tokens are added.",
+      additionalProperties: {
+        type: "object",
+        required: ["totalAmount", "total", "withdrawn", "vested", "withdrawable"],
+        properties: {
+          totalAmount: { type: "string", description: "Total allocated base units for this token." },
+          total: { type: "string", deprecated: true, description: "Deprecated alias for totalAmount." },
+          withdrawn: { type: "string", description: "Base units withdrawn for this token." },
+          vested: { type: "string", description: "Base units vested for this token as of now." },
+          withdrawable: { type: "string", description: "Base units currently withdrawable for this token." },
+        },
+      },
     },
   },
 } as const;
@@ -473,7 +476,7 @@ export const accountStreamSummarySchema = {
 export const accountSummaryResponseSchema = {
   $id: ACCOUNT_SUMMARY_RESPONSE_SCHEMA_ID,
   type: "object",
-  description: "Account summary containing incoming and outgoing stream totals.",
+  description: "Account summary containing incoming and outgoing counts with amount totals per token.",
   required: ["incoming", "outgoing"],
   properties: {
     incoming: { $ref: ACCOUNT_STREAM_SUMMARY_SCHEMA_ID },
@@ -494,11 +497,15 @@ export const indexerStatusSchema = {
   properties: {
     indexer: {
       type: "object",
-      required: ["initialized", "startLedger", "lastLedger", "cursor", "updatedAt", "consecutiveFailures", "nextPollAt"],
+      required: ["initialized", "running", "startLedger", "lastLedger", "cursor", "updatedAt", "consecutiveFailures", "nextPollAt"],
       properties: {
         initialized: {
           type: "boolean",
           description: "False until the indexer completes its first poll.",
+        },
+        running: {
+          type: "boolean",
+          description: "False while indexer startup is retrying or after it stops.",
         },
         startLedger: {
           type: "integer",
@@ -575,7 +582,8 @@ export const indexerStatusSchema = {
 export const apiErrorSchema = {
   $id: ERROR_SCHEMA_ID,
   type: "object",
-  description: "Error response.",
+  description:
+    "Legacy error response (code, error, requestId). When the client sends Accept: application/problem+json, ProblemDetails is returned instead with the same fields as top-level extension members.",
   required: ["code", "error", "requestId"],
   properties: {
     code: {
@@ -586,6 +594,7 @@ export const apiErrorSchema = {
         "RATE_LIMITED",
         "REQUEST_ERROR",
         "INTERNAL_SERVER_ERROR",
+        "SERVICE_UNAVAILABLE",
       ],
       description:
         "Stable machine-readable error category so clients can retry or " +
@@ -602,6 +611,125 @@ export const apiErrorSchema = {
       description:
         "Request id echoed from the x-request-id response header, for matching " +
         "this error to its server log entry.",
+      examples: ["req-1"],
+    },
+  },
+} as const;
+
+// ---------------------------------------------------------------------------
+// ProblemDetails — RFC 9457 response returned when the client opts in with
+// Accept: application/problem+json. The legacy fields remain top-level
+// extension members so existing clients keep reading the same names.
+// ---------------------------------------------------------------------------
+export const problemDetailsSchema = {
+  $id: PROBLEM_DETAILS_SCHEMA_ID,
+  type: "object",
+  description:
+    "RFC 9457 problem details. Returned with Content-Type application/problem+json when the client sends Accept: application/problem+json.",
+  required: ["type", "title", "status", "detail", "code", "error", "requestId"],
+  additionalProperties: true,
+  properties: {
+    type: {
+      type: "string",
+      format: "uri",
+      description: "URI identifying the error type.",
+      examples: ["https://api.tricklepay.example/errors/not_found"],
+    },
+    title: {
+      type: "string",
+      description: "Short, human-readable summary of the error type.",
+      examples: ["Not Found"],
+    },
+    status: {
+      type: "integer",
+      minimum: 400,
+      maximum: 599,
+      description: "HTTP status code.",
+      examples: [404],
+    },
+    detail: {
+      type: "string",
+      description: "Human-readable explanation specific to this occurrence.",
+      examples: ["Route GET /missing-path not found"],
+    },
+    code: {
+      type: "string",
+      enum: [
+        "VALIDATION_ERROR",
+        "NOT_FOUND",
+        "RATE_LIMITED",
+        "REQUEST_ERROR",
+        "INTERNAL_SERVER_ERROR",
+        "SERVICE_UNAVAILABLE",
+      ],
+      description: "Stable machine-readable error category.",
+      examples: ["NOT_FOUND"],
+    },
+    error: {
+      type: "string",
+      description: "Human-readable error message.",
+      examples: ["stream not found"],
+    },
+    requestId: {
+      type: "string",
+      description: "Request id echoed from the x-request-id response header.",
+      examples: ["req-1"],
+    },
+  },
+} as const;
+
+// ---------------------------------------------------------------------------
+// RateLimitedResponse — 429 Too Many Requests response.
+// ---------------------------------------------------------------------------
+export const rateLimitedResponseSchema = {
+  $id: RATE_LIMITED_RESPONSE_SCHEMA_ID,
+  type: "object",
+  description:
+    "Rate limited response. The client has exceeded the configured request rate limit. The 429 response includes a Retry-After header with the number of seconds until the client may retry.",
+  required: ["code", "error", "requestId"],
+  properties: {
+    code: {
+      type: "string",
+      enum: ["RATE_LIMITED"],
+      description: "Stable machine-readable error category.",
+      examples: ["RATE_LIMITED"],
+    },
+    error: {
+      type: "string",
+      description: "Human-readable error message.",
+      examples: ["rate limit exceeded"],
+    },
+    requestId: {
+      type: "string",
+      description: "Request id for matching this error to its server log entry.",
+      examples: ["req-1"],
+    },
+  },
+} as const;
+
+// ---------------------------------------------------------------------------
+// ServerErrorResponse — 500 Internal Server Error response.
+// ---------------------------------------------------------------------------
+export const serverErrorResponseSchema = {
+  $id: SERVER_ERROR_RESPONSE_SCHEMA_ID,
+  type: "object",
+  description: "Server error response. An unexpected server-side error occurred.",
+  required: ["code", "error", "requestId"],
+  properties: {
+    code: {
+      type: "string",
+      enum: ["INTERNAL_SERVER_ERROR"],
+      description: "Stable machine-readable error category.",
+      examples: ["INTERNAL_SERVER_ERROR"],
+    },
+    error: {
+      type: "string",
+      description: "Human-readable error message (redacted for server errors).",
+      examples: ["internal server error"],
+    },
+    requestId: {
+      type: "string",
+      description: "Request id for matching this error to its server log entry.",
       examples: ["req-1"],
     },
   },

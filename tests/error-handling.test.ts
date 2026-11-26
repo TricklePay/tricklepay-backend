@@ -35,7 +35,7 @@ describe("errorCodeForStatus (#73)", () => {
 
 describe("request rate limiting (#381)", () => {
   it("does not rate limit /health after /streams exhausts the client limit", async () => {
-    const app = await buildServer({ rateLimitMax: 3, rateLimitWindowMs: 5000 });
+    const app = await buildServer({ rateLimitListMax: 3, rateLimitListWindowMs: 5000 });
     app.get("/streams", async () => ({ streams: [] }));
 
     try {
@@ -111,6 +111,111 @@ describe("unmatched routes (404)", () => {
       error: "Route GET /this-route-does-not-exist not found",
       requestId: response.headers["x-request-id"],
     });
+  });
+});
+
+describe("problem details (#744)", () => {
+  it("keeps the legacy JSON envelope by default", async () => {
+    const app = await buildServer();
+    try {
+      const response = await app.inject({ method: "GET", url: "/missing-problem-default" });
+      expect(response.headers["content-type"]).toContain("application/json");
+      expect(response.headers["content-type"]).not.toContain("problem+json");
+      expect(response.json()).toEqual({
+        code: "NOT_FOUND",
+        error: "Route GET /missing-problem-default not found",
+        requestId: response.headers["x-request-id"],
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("returns RFC 9457 problem details when the client accepts them", async () => {
+    const app = await buildServer();
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: "/missing-problem-details",
+        headers: { accept: "application/problem+json" },
+      });
+
+      expect(response.statusCode).toBe(404);
+      expect(response.headers["content-type"]).toContain("application/problem+json");
+      expect(response.json()).toMatchObject({
+        type: "https://api.tricklepay.example/errors/not_found",
+        title: "Not Found",
+        status: 404,
+        detail: "Route GET /missing-problem-details not found",
+        code: "NOT_FOUND",
+        error: "Route GET /missing-problem-details not found",
+        requestId: response.headers["x-request-id"],
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("uses problem details for errors handled by the global handler", async () => {
+    const app = await buildServer();
+    const error = Object.assign(new Error("bad input"), { statusCode: 400 });
+    app.get("/problem-error", async () => {
+      throw error;
+    });
+
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: "/problem-error",
+        headers: { accept: "application/problem+json" },
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.headers["content-type"]).toContain("application/problem+json");
+      expect(response.json()).toMatchObject({
+        title: "Bad Request",
+        status: 400,
+        detail: "bad input",
+        code: "VALIDATION_ERROR",
+        requestId: response.headers["x-request-id"],
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("uses problem details for rate-limited responses and keeps Retry-After", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(10_000);
+    const app = await buildServer({ rateLimitMax: 1, rateLimitWindowMs: 5000 });
+    app.get("/rate-limited-problem", async () => ({ status: "ok" }));
+
+    try {
+      await app.inject({ method: "GET", url: "/rate-limited-problem" });
+      now.mockReturnValue(12_100);
+
+      const response = await app.inject({
+        method: "GET",
+        url: "/rate-limited-problem",
+        headers: { accept: "application/problem+json" },
+      });
+
+      expect(response.statusCode).toBe(429);
+      expect(response.headers["content-type"]).toContain("application/problem+json");
+      expect(response.headers["retry-after"]).toBe("3");
+      expect(response.json()).toMatchObject({
+        type: "https://api.tricklepay.example/errors/rate_limited",
+        title: "Too Many Requests",
+        status: 429,
+        detail: "rate limit exceeded",
+        code: "RATE_LIMITED",
+        error: "rate limit exceeded",
+        requestId: response.headers["x-request-id"],
+        group: "default",
+      });
+    } finally {
+      await app.close();
+      now.mockRestore();
+    }
   });
 });
 

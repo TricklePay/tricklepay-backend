@@ -16,6 +16,7 @@ import {
   eventsApplied,
   eventsFailed,
   indexerConsecutiveFailures,
+  indexerCursorRegressions,
   indexerLagLedgers,
   indexerNextPollAt,
   indexerPollLastSuccess,
@@ -37,6 +38,10 @@ import { indexedEventFromDecoded, recordIndexedEvent } from "../repositories/ind
 import { getIndexerPosition, saveIndexerPosition } from "../repositories/indexer-state.js";
 
 import { applyEvent } from "./apply.js";
+
+import { streamEventBus } from "../event-bus.js";
+
+import { getStream } from "../repositories/streams.js";
 
 // The loop's state between ticks: where to read from next, and how far the
 // indexer has actually got. `lastLedger` is carried across ticks because a page
@@ -65,6 +70,7 @@ export function isBacklogDrained(page: EventPage, requestedCursor?: string): boo
 // self-healing.
 export class Poller {
   private running = false;
+  private initialized = false;
   // Count of poll iterations that failed in a row. Drives the exponential
   // backoff: it grows with each consecutive failure and is cleared on the
   // first success, so a single transient blip does not leave the poller
@@ -98,6 +104,11 @@ export class Poller {
     return this.hasProgressed;
   }
 
+  /** True once startup has completed and the poll loop is active. */
+  isRunning(): boolean {
+    return this.running && this.initialized;
+  }
+
   /** Number of poll iterations that have failed consecutively since the last success. */
   getConsecutiveFailures(): number {
     return this.consecutiveFailures;
@@ -110,10 +121,29 @@ export class Poller {
 
   async start(): Promise<void> {
     this.running = true;
-    await refreshFailedEventBacklog();
-    let position = await this.resolveStart();
-
+    let position: IndexerState | undefined;
+    while (this.running && !position) {
+      try {
+        await refreshFailedEventBacklog();
+        position = await this.resolveStart();
+        this.consecutiveFailures = 0;
+        indexerConsecutiveFailures.set(0);
+      } catch (err) {
+        this.log.error({ err }, "indexer startup failed");
+        this.consecutiveFailures += 1;
+        indexerConsecutiveFailures.set(this.consecutiveFailures);
+        const delay = this.backoffDelay();
+        this.nextPollAtMs = Date.now() + delay;
+        indexerNextPollAt.set(Math.floor(this.nextPollAtMs / 1000));
+        await sleep(delay);
+        this.nextPollAtMs = 0;
+        indexerNextPollAt.set(0);
+      }
+    }
+    if (!this.running || !position) return;
+    this.initialized = true;
     await this.runLoop(position);
+    this.initialized = false;
   }
 
   /** Owns scheduling and failure backoff; one tick is deliberately separate. */
@@ -205,12 +235,14 @@ export class Poller {
     let current = position;
     let pages = 0;
     let events = 0;
+    let cursorRegressed = false;
 
     // `running` is checked between pages as well, so a stop during a long
     // backfill takes effect at the next page boundary instead of at the end of
     // the whole backlog.
     while (shouldContinue()) {
       let page: EventPage;
+      const requestedCursor = current.cursor;
       try {
         page = await getContractEvents(this.server, this.config.contractId, current);
       } catch (err) {
@@ -225,10 +257,12 @@ export class Poller {
       // corrupt state, so the tick stops and the next poll retries from the
       // last saved position.
       if (current.cursor !== undefined && page.cursor < current.cursor) {
+        indexerCursorRegressions.inc();
         this.log.warn(
           { previousCursor: current.cursor, regressedCursor: page.cursor },
           "cursor regression detected — skipping page",
         );
+        cursorRegressed = true;
         break;
       }
 
@@ -237,7 +271,7 @@ export class Poller {
       pages += 1;
       events += page.events.length;
 
-      const drained = isBacklogDrained(page, position.cursor);
+      const drained = isBacklogDrained(page, requestedCursor);
       if (drained) break;
 
       // A cap keeps one tick from running forever on a huge backlog. The cursor
@@ -262,6 +296,8 @@ export class Poller {
     if (events > 0) {
       this.hasProgressed = true;
     }
+
+    if (cursorRegressed) return current;
 
     // A tick that reaches here completed without throwing, so the poller is
     // alive. Operators use the timestamp to tell a quiet chain (still polling
@@ -355,6 +391,25 @@ export class Poller {
       // never claimed as processed on the strength of a write that failed.
       nextState.lastLedger = Math.max(nextState.lastLedger, event.ledger);
       eventsApplied.inc({ kind: event.kind, outcome });
+
+      // Emit the stream update for SSE subscribers after successful apply
+      if (outcome === "applied" || outcome === "reconciled") {
+        try {
+          const updatedStream = await getStream({ streamId: event.streamId });
+          if (updatedStream) {
+            streamEventBus.emitStreamUpdate({
+              streamId: event.streamId,
+              kind: event.kind,
+              stream: updatedStream,
+              eventId: event.id,
+              ledger: event.ledger,
+            });
+          }
+        } catch (err) {
+          // SSE emission failure should not fail the indexer tick
+          this.log.warn({ err, streamId: event.streamId.toString() }, "failed to emit SSE update");
+        }
+      }
     }
 
     // Record the highest ledger actually applied, not the RPC chain head.

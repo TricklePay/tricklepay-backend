@@ -2,11 +2,35 @@
 
 This document defines the versioning policy, stability guarantees, and change management procedures for the TricklePay Backend HTTP API.
 
+## Current API Version
+
+**The TricklePay API is now served under the `/v1` prefix for all stable endpoints.**
+
+- **Versioned Endpoints (Stable)**: All production endpoints are available under `/v1/*`:
+  - `/v1/` — API index
+  - `/v1/health` — Liveness check
+  - `/v1/ready` — Readiness check
+  - `/v1/status` — Indexer progress
+  - `/v1/streams` — List streams
+  - `/v1/streams/summary` — Stream summary by status
+  - `/v1/streams/:id` — Single stream detail
+  - `/v1/streams/:id/events` — Stream event history
+  - `/v1/streams/:id/schedule` — Vesting schedule
+  - `/v1/accounts/:address/summary` — Account stream summary
+  - `/v1/tokens` — List distinct tokens
+  - `/v1/metrics` — Prometheus metrics
+
+- **Unversioned Endpoints (Deprecated)**: The original unversioned paths (`/streams`, `/status`, etc.) remain functional but are **deprecated**. They are marked as deprecated in the OpenAPI specification and will be removed in a future major version. Clients should migrate to `/v1/*` endpoints.
+
+- **Documentation**: The OpenAPI specification is served at `/docs`, `/docs/json`, and `/docs/yaml`. The specification includes both versioned and unversioned routes, with the unversioned routes clearly marked as deprecated.
+
+---
+
 ## Stability Expectation
 
 The TricklePay API is a contract between the backend service, the web client (`tricklepay-frontend`), indexers, and third-party integrations.
 
-- **Current API Status**: The following endpoints represent **v1 (stable)**: `/`, `/health`, `/ready`, `/status`, `/streams`, `/streams/summary`, `/streams/:id`, `/streams/:id/events`, `/streams/:id/schedule`, `/metrics`, and `/docs`.
+- **Current API Status**: All `/v1/*` endpoints represent the **stable v1 API**. The unversioned endpoints are maintained for backwards compatibility during the transition period.
 - **Specification**: The authoritative API specification is served live via OpenAPI 3.0 at `/docs`, `/docs/json`, and `/docs/yaml`.
 
 ---
@@ -30,6 +54,17 @@ A change is considered **breaking** if it requires client authors to modify thei
 
 ---
 
+## Automated Breaking Change Detection in CI
+
+Every pull request is automatically checked for breaking changes to the OpenAPI specification using `oasdiff` in `.github/workflows/openapi-diff.yml`.
+
+- **Automated comparison**: The pull request's OpenAPI document is compared against `main`. Any breaking change (such as removed fields, altered types, or changed route paths) fails the CI check.
+- **Acknowledging breaking changes**: If a breaking change is intended as part of a planned deprecation or major version release:
+  1. Add the `allow-breaking-changes` label to the pull request.
+  2. Document the change and migration path in `CHANGELOG.md`.
+
+---
+
 ## Communication and Deprecation Process
 
 When a breaking change is deemed necessary:
@@ -37,10 +72,30 @@ When a breaking change is deemed necessary:
 1. **Advance Deprecation Notice**:
    - Deprecations will be documented in [CHANGELOG.md](../CHANGELOG.md) and flagged in the OpenAPI schema (`deprecated: true`).
    - Deprecated features will remain functional for at least one minor release cycle before removal.
+   - The unversioned API paths are currently deprecated and will be removed in v2.0.0. Clients should migrate to `/v1/*` endpoints.
 
 2. **Major Version Bumping & Path Prefixing**:
    - Breaking API revisions will bump the major version in `package.json` following [SemVer](https://semver.org/).
    - Major API redesigns will introduce versioned path prefixes (e.g., `/v2/streams`) to allow parallel operation while clients migrate.
+   - The current stable API is served under `/v1/*`. Future breaking changes will introduce `/v2/*` while `/v1/*` continues to function.
 
 3. **Changelog Documentation**:
    - Every release includes a detailed list of additions, changes, fixes, and migration guides in `CHANGELOG.md`.
+
+---
+
+## Migration Guide: Unversioned → /v1
+
+To migrate from the deprecated unversioned endpoints to the stable `/v1` API:
+
+1. **Update all API calls** to include the `/v1` prefix:
+   - `GET /streams` → `GET /v1/streams`
+   - `GET /streams/:id` → `GET /v1/streams/:id`
+   - `GET /status` → `GET /v1/status`
+   - etc.
+
+2. **Test your integration** against the `/v1` endpoints to ensure compatibility.
+
+3. **No schema changes**: The response schemas, query parameters, and headers are identical between unversioned and `/v1` endpoints during the transition period.
+
+4. **Timeline**: Unversioned endpoints will be removed in the next major version (v2.0.0). Plan your migration accordingly.

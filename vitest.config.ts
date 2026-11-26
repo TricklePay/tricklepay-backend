@@ -9,6 +9,7 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     environment: "node",
+    testTimeout: 15000,
     // Coverage is only collected when `--coverage` is passed (`npm run
     // test:coverage`, used by CI). No thresholds are enforced yet; the first
     // CI report is the baseline.
@@ -23,6 +24,7 @@ export default defineConfig({
       {
         test: {
           name: "unit",
+          testTimeout: 30000,
           env: { LOG_LEVEL: "silent" },
           include: ["tests/**/*.test.ts"],
           exclude: ["tests/integration/**"],

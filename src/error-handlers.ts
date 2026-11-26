@@ -11,6 +11,7 @@ import type { FastifyError, FastifyInstance } from "fastify";
 
 import { QueryTimeoutError } from "./db.js";
 import { errorCodeForStatus, redactErrorMessage } from "./error-redaction.js";
+import { sendError } from "./lib/response.js";
 import { REQUEST_ID_HEADER } from "./request-id.js";
 
 /**
@@ -26,6 +27,10 @@ export function registerErrorHandlers(app: FastifyInstance): void {
   // reach the client (#74); the original error is logged server-side with
   // the request id for diagnosis.
   app.setErrorHandler((err: FastifyError, request, reply) => {
+    if (reply.sent) {
+      return;
+    }
+
     const isDatabaseError =
       err instanceof QueryTimeoutError ||
       (typeof err.message === "string" &&
@@ -35,14 +40,8 @@ export function registerErrorHandlers(app: FastifyInstance): void {
 
     if (isDatabaseError) {
       request.log.error({ err }, "database unavailable");
-      void reply
-        .status(503)
-        .header("Retry-After", "30")
-        .send({
-          code: "SERVICE_UNAVAILABLE",
-          error: "internal server error",
-          requestId: request.id,
-        });
+      void reply.header("Retry-After", "30");
+      sendError(reply, request, 503, "SERVICE_UNAVAILABLE", "internal server error");
       return;
     }
 
@@ -57,20 +56,18 @@ export function registerErrorHandlers(app: FastifyInstance): void {
       statusCode >= 500
         ? "internal server error"
         : redactErrorMessage(err.message);
-    void reply.status(statusCode).send({
-      code: errorCodeForStatus(statusCode),
-      error: message,
-      requestId: request.id,
-    });
+    sendError(reply, request, statusCode, errorCodeForStatus(statusCode), message);
   });
 
   // Unmatched routes bypass the error handler, so they get their own handler
   // with the request id attached like every other error response.
   app.setNotFoundHandler((request, reply) => {
-    void reply.status(404).send({
-      code: errorCodeForStatus(404),
-      error: `Route ${request.method} ${request.url} not found`,
-      requestId: request.id,
-    });
+    sendError(
+      reply,
+      request,
+      404,
+      errorCodeForStatus(404),
+      `Route ${request.method} ${request.url} not found`,
+    );
   });
 }

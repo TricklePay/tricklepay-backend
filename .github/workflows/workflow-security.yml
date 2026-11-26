@@ -1,0 +1,44 @@
+name: Workflow Security (zizmor)
+
+# Scans GitHub Actions workflow files for security risks with zizmor (#774)
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - '.zizmor.yml'
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+      - '.zizmor.yml'
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  zizmor:
+    name: zizmor
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Run zizmor
+        uses: woodruffw/zizmor-action@v1
+        with:
+          config: .zizmor.yml
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload SARIF report
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: results.sarif
+          category: zizmor

@@ -17,10 +17,16 @@ import { buildSwaggerConfig, swaggerUiConfig } from "./api-spec.js";
 
 import {
   DEFAULT_RATE_LIMIT_MAX,
+  DEFAULT_RATE_LIMIT_WINDOW_MS,
+  DEFAULT_RATE_LIMIT_DETAIL_MAX,
+  DEFAULT_RATE_LIMIT_DETAIL_WINDOW_MS,
+  DEFAULT_RATE_LIMIT_LIST_MAX,
+  DEFAULT_RATE_LIMIT_LIST_WINDOW_MS,
+  DEFAULT_RATE_LIMIT_SUMMARY_MAX,
+  DEFAULT_RATE_LIMIT_SUMMARY_WINDOW_MS,
   DEFAULT_CONNECTION_TIMEOUT_MS,
   DEFAULT_KEEP_ALIVE_TIMEOUT_MS,
   DEFAULT_REQUEST_TIMEOUT_MS,
-  DEFAULT_RATE_LIMIT_WINDOW_MS,
   DEFAULT_READY_MAX_STALENESS_MS,
   DEFAULT_READINESS_RETRY_AFTER_SECONDS,
   DEFAULT_COMPRESSION_THRESHOLD_BYTES,
@@ -28,7 +34,11 @@ import {
   type Config,
 } from "./config.js";
 
+import { createRateLimiterHook } from "./rate-limiter.js";
+
 import { errorCodeForStatus } from "./error-redaction.js";
+
+import { requestSignalStorage } from "./lib/request-context.js";
 
 import { registerErrorHandlers } from "./error-handlers.js";
 
@@ -51,6 +61,12 @@ import { registerRequestIdHook } from "./request-id-hook.js";
 import { registerSharedSchemas } from "./schema-registration.js";
 
 import { registerSecurityHeaders } from "./security-headers.js";
+
+declare module "fastify" {
+  interface FastifyInstance {
+    apiRoutes: Array<{ method: string; url: string; schema?: { hide?: boolean } }>;
+  }
+}
 
 // Request-id sanitisation lives in `./request-id.ts`, the echo hook in
 // `./request-id-hook.ts`, error redaction in `./error-redaction.ts`, error
@@ -99,12 +115,19 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
     // logger, so it lands in every structured request log line as `reqId`.
     genReqId: (req) =>
       sanitizeRequestId(req.headers[REQUEST_ID_HEADER]) ?? randomUUID(),
-    querystringParser: parseQueryString,
+    routerOptions: {
+      querystringParser: parseQueryString,
+    },
     // Fastify's default Ajv strips properties a schema forbids with
     // `additionalProperties: false`. Turn that off so an unknown or misspelt
     // query parameter (`limt=5`) is rejected with a 400 instead of silently
     // changing paging results.
     ajv: { customOptions: { removeAdditional: false } },
+  });
+
+  app.decorate("apiRoutes", [] as Array<{ method: string; url: string; schema?: { hide?: boolean } }>);
+  app.addHook("onRoute", (route) => {
+    app.apiRoutes.push({ method: route.method as string, url: route.url, schema: route.schema as { hide?: boolean } | undefined });
   });
 
   // Echo the request id header on every response. Registered as the first
@@ -121,7 +144,9 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
   // footgun. The parser itself must never throw: it runs during routing, where
   // an exception bypasses Fastify's error handler and crashes the process.
   app.addHook("onRequest", async (request, reply) => {
-    const rawQuery = request.raw.url?.split("?")[1] ?? "";
+    const rawUrl = request.raw.url ?? "";
+    const queryStart = rawUrl.indexOf("?");
+    const rawQuery = queryStart === -1 ? "" : rawUrl.slice(queryStart + 1);
 
     if (config?.queryStringLimit && rawQuery.length > config.queryStringLimit) {
       void reply.status(400).send({
@@ -146,64 +171,56 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
     }
   });
 
-  const clientWindows = new Map<string, { requests: number; resetAt: number }>();
-  const maxTrackedClients = config?.maxTrackedRateLimitClients ?? 10_000;
-
-  app.addHook("onRequest", async (request, reply) => {
-    const now = Date.now();
-
-    // Liveness, readiness, and Prometheus scrape traffic must remain available
-    // when application traffic from the same peer exhausts its rate limit.
-    const pathname = request.raw.url?.split("?")[0];
-    if (pathname === "/health" || pathname === "/ready" || pathname === "/metrics") {
-      return;
-    }
-
-    // Allowlisted addresses are never counted or limited.
-    if (rateLimitAllowlist.length > 0 && isAllowlistedAddress(request.ip, rateLimitAllowlist)) {
-      return;
-    }
-
-    let window = clientWindows.get(request.ip);
-
-    if (!window || window.resetAt <= now) {
-      if (window) {
-        clientWindows.delete(request.ip);
-      } else if (clientWindows.size >= maxTrackedClients) {
-        for (const [ip, trackedWindow] of clientWindows) {
-          if (trackedWindow.resetAt <= now) clientWindows.delete(ip);
-        }
-        if (clientWindows.size >= maxTrackedClients) {
-          const oldestIp = clientWindows.keys().next().value;
-          if (oldestIp !== undefined) clientWindows.delete(oldestIp);
-        }
-      }
-      window = { requests: 0, resetAt: now + rateLimitWindowMs };
-    }
-
-    clientWindows.delete(request.ip);
-    clientWindows.set(request.ip, window);
-
-    if (window.requests >= rateLimitMax) {
-      const retryAfter = Math.max(1, Math.ceil((window.resetAt - now) / 1000));
-      return reply
-        .header("Retry-After", String(retryAfter))
-        .status(429)
-        .send({
-          code: errorCodeForStatus(429),
-          error: "rate limit exceeded",
-          requestId: request.id,
-        });
-    }
-
-    window.requests += 1;
+  // Per-route-group rate limiting
+  const rateLimiter = createRateLimiterHook({
+    groups: {
+      detail: {
+        max: config?.rateLimitDetailMax ?? DEFAULT_RATE_LIMIT_DETAIL_MAX,
+        windowMs: config?.rateLimitDetailWindowMs ?? DEFAULT_RATE_LIMIT_DETAIL_WINDOW_MS,
+      },
+      list: {
+        max: config?.rateLimitListMax ?? DEFAULT_RATE_LIMIT_LIST_MAX,
+        windowMs: config?.rateLimitListWindowMs ?? DEFAULT_RATE_LIMIT_LIST_WINDOW_MS,
+      },
+      summary: {
+        max: config?.rateLimitSummaryMax ?? DEFAULT_RATE_LIMIT_SUMMARY_MAX,
+        windowMs: config?.rateLimitSummaryWindowMs ?? DEFAULT_RATE_LIMIT_SUMMARY_WINDOW_MS,
+      },
+      default: {
+        max: config?.rateLimitMax ?? DEFAULT_RATE_LIMIT_MAX,
+        windowMs: config?.rateLimitWindowMs ?? DEFAULT_RATE_LIMIT_WINDOW_MS,
+      },
+    },
+    maxTrackedClients: config?.maxTrackedRateLimitClients ?? 10_000,
+    allowlist: rateLimitAllowlist,
   });
+  app.addHook("onRequest", rateLimiter);
 
-  if (config?.requestTimeoutMs) {
-    const timeoutMs = config.requestTimeoutMs;
+  // Single request timeout mechanism that cancels the handler (#675).
+  // When requestTimeoutMs is configured, an onRequest hook sets a timer and binds
+  // an AbortController across the request lifecycle via AsyncLocalStorage (requestSignalStorage).
+  // If the timeout expires before a reply is sent:
+  // 1. The AbortController aborts, signalling cooperative cancellation.
+  // 2. A 408 response is sent.
+  // 3. Database queries wrapped by withQueryTimeout stop waiting immediately.
+  // 4. The handler terminates without sending a duplicate reply or logging an error.
+  const timeoutMs = config?.requestTimeoutMs;
+  if (timeoutMs && timeoutMs > 0) {
     app.addHook("onRequest", (request, reply, done) => {
+      const ac = new AbortController();
+      (request as any).abortController = ac;
+
+      const originalSend = reply.send.bind(reply);
+      reply.send = function (payload?: any) {
+        if (this.sent && (ac.signal.aborted || (this.request.raw as any).destroyed)) {
+          return this;
+        }
+        return originalSend(payload);
+      };
+
       const timer = setTimeout(() => {
         if (!reply.sent) {
+          ac.abort(new Error("request timeout"));
           void reply.status(408).send({
             code: errorCodeForStatus(408),
             error: "request timeout",
@@ -211,13 +228,25 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
           });
         }
       }, timeoutMs);
-      void reply.raw.on("finish", () => clearTimeout(timer));
-      done();
+
+      const cleanup = () => clearTimeout(timer);
+      void reply.raw.on("finish", cleanup);
+      void reply.raw.on("close", cleanup);
+
+      requestSignalStorage.run(ac.signal, () => done());
+    });
+  } else {
+    app.addHook("onRequest", (request, reply, done) => {
+      const ac = new AbortController();
+      (request as any).abortController = ac;
+      requestSignalStorage.run(ac.signal, () => done());
     });
   }
 
   // Add X-Indexer-Lag-Ledgers header to read responses.
-  registerIndexerLagHook(app);
+  registerIndexerLagHook(app, {
+    stalenessThresholdMs: config?.readyMaxStalenessMs ?? DEFAULT_READY_MAX_STALENESS_MS,
+  });
 
   // Record every response against the Prometheus counters and histograms.
   await registerMetricsPlugin(app);
@@ -226,31 +255,32 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
   // every error response.
   registerErrorHandlers(app);
 
-  const configuredCorsOrigin = process.env.CORS_ORIGIN?.trim();
+  const configuredCorsOrigin = config?.corsOrigin;
   const corsOrigin =
     configuredCorsOrigin === undefined
       ? true
-      : configuredCorsOrigin === ""
-        ? false
-        : (origin: string | undefined, cb: (err: Error | null, allow: boolean) => void) => {
-            if (!origin || origin === configuredCorsOrigin) {
-              cb(null, true);
-            } else {
-              cb(null, false);
-            }
-          };
+      : (origin: string | undefined, cb: (err: Error | null, allow: boolean) => void) => {
+          cb(null, !origin || origin === configuredCorsOrigin);
+        };
 
   // The web client fetches this API from the browser, so it is always a
   // cross-origin caller once the two run on separate ports or hosts. The data
   // served here is public and read-only, so any origin is reflected by
-  // default; set CORS_ORIGIN to pin deployments to a known frontend. A blank
-  // value disables browser access altogether, rather than passing an empty
-  // origin string through to the CORS plugin. Not awaited because Fastify
+  // default; set CORS_ORIGIN to pin deployments to a known frontend. Blank
+  // values are treated as unset by loadConfig. Not awaited because Fastify
   // defers plugin loading until ready/listen, which keeps this builder
   // synchronous for its callers.
   void app.register(cors, {
     origin: corsOrigin,
     allowedHeaders: ["*"],
+    exposedHeaders: [
+      "ETag",
+      "Retry-After",
+      "X-Request-Id",
+      "Link",
+      "X-Indexer-Lag-Ledgers",
+      "X-Data-Stale",
+    ],
   });
 
   // Compress responses at or above the configured threshold when the client

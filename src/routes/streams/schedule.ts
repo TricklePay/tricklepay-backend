@@ -5,7 +5,7 @@ import type { FastifyInstance } from "fastify";
 import { QueryTimeoutError } from "../../db.js";
 import { ifNoneMatchMatches, strongEtag } from "../../lib/etag.js";
 import { sendError } from "../../lib/response.js";
-import { parseStreamId } from "../../lib/stream-id.js";
+import { isStreamIdOutOfRange, parseStreamId } from "../../lib/stream-id.js";
 import {
   computeSchedulePoints,
   DEFAULT_SCHEDULE_POINTS,
@@ -13,7 +13,12 @@ import {
   MIN_SCHEDULE_POINTS,
 } from "../../lib/stream-schedule.js";
 import { getStream } from "../../repositories/streams.js";
-import { ERROR_SCHEMA_ID, STREAM_SCHEDULE_RESPONSE_SCHEMA_ID } from "../../schema.js";
+import {
+  ERROR_SCHEMA_ID,
+  RATE_LIMITED_RESPONSE_SCHEMA_ID,
+  SERVER_ERROR_RESPONSE_SCHEMA_ID,
+  STREAM_SCHEDULE_RESPONSE_SCHEMA_ID,
+} from "../../schema.js";
 
 export function registerStreamScheduleRoute(app: FastifyInstance): void {
   app.get(
@@ -23,14 +28,17 @@ export function registerStreamScheduleRoute(app: FastifyInstance): void {
         summary: "Get stream vesting schedule",
         description:
           "Returns evenly spaced points along the stream's vesting curve between start and end, " +
-          "with the cliff step included, suitable for client-side charting.",
+          "with the cliff step included, suitable for client-side charting. " +
+          "Points outside 2–100 are rejected with 400.",
         tags: ["streams"],
         params: {
           type: "object",
           required: ["id"],
           properties: {
             id: {
-              type: "string",
+              type: "integer",
+              minimum: MIN_SCHEDULE_POINTS,
+              maximum: MAX_SCHEDULE_POINTS,
               description: "Stream id (uint64, decimal string).",
               examples: ["42"],
             },
@@ -52,6 +60,8 @@ export function registerStreamScheduleRoute(app: FastifyInstance): void {
           304: { type: "null" },
           400: { $ref: ERROR_SCHEMA_ID },
           404: { $ref: ERROR_SCHEMA_ID },
+          429: { $ref: RATE_LIMITED_RESPONSE_SCHEMA_ID },
+          500: { $ref: SERVER_ERROR_RESPONSE_SCHEMA_ID },
         },
       },
     },
@@ -59,23 +69,14 @@ export function registerStreamScheduleRoute(app: FastifyInstance): void {
       const { id } = request.params as { id: string };
       const streamId = parseStreamId(id);
       if (streamId === null) {
+        if (isStreamIdOutOfRange(id)) {
+          return sendError(reply, request, 404, "NOT_FOUND", "stream not found");
+        }
         return sendError(reply, request, 400, "VALIDATION_ERROR", "invalid stream id");
       }
 
-      const query = request.query as { points?: string; count?: string; limit?: string };
-      const rawPoints = query.points ?? query.count ?? query.limit;
-      let requestedPoints = DEFAULT_SCHEDULE_POINTS;
-      if (rawPoints !== undefined) {
-        const trimmed = rawPoints.trim();
-        if (trimmed.length === 0 || !/^\d+$/.test(trimmed)) {
-          return sendError(reply, request, 400, "VALIDATION_ERROR", "invalid points parameter");
-        }
-        const parsed = Number(trimmed);
-        if (!Number.isFinite(parsed) || parsed < 1) {
-          return sendError(reply, request, 400, "VALIDATION_ERROR", "invalid points parameter");
-        }
-        requestedPoints = Math.max(MIN_SCHEDULE_POINTS, Math.min(parsed, MAX_SCHEDULE_POINTS));
-      }
+      const query = request.query as { points?: number };
+      const requestedPoints = query.points ?? DEFAULT_SCHEDULE_POINTS;
 
       let stream;
       try {

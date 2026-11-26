@@ -18,6 +18,13 @@ import { getIndexerPosition, hasIndexerProgress } from "./repositories/indexer-s
 
 import { serviceVersion } from "./version.js";
 
+import {
+  rateLimitedResponseSchema,
+  RATE_LIMITED_RESPONSE_SCHEMA_ID,
+  serverErrorResponseSchema,
+  SERVER_ERROR_RESPONSE_SCHEMA_ID,
+} from "./schema.js";
+
 /**
  * Registers the `/health` (liveness) and `/ready` (readiness) routes on
  * `app`. These routes do not depend on any route-level plugin and can be
@@ -36,6 +43,9 @@ export function registerHealthRoutes(
   readinessRetryAfterSeconds: number = DEFAULT_READINESS_RETRY_AFTER_SECONDS,
   readyMaxStalenessMs = DEFAULT_READY_MAX_STALENESS_MS,
 ): void {
+  if (!app.getSchema(RATE_LIMITED_RESPONSE_SCHEMA_ID)) app.addSchema(rateLimitedResponseSchema);
+  if (!app.getSchema(SERVER_ERROR_RESPONSE_SCHEMA_ID)) app.addSchema(serverErrorResponseSchema);
+
   app.get(
     "/health",
     {
@@ -56,6 +66,12 @@ export function registerHealthRoutes(
                   "Service version from the package manifest, for distinguishing binaries during rolling releases.",
               },
             },
+          },
+          429: {
+            $ref: RATE_LIMITED_RESPONSE_SCHEMA_ID,
+          },
+          500: {
+            $ref: SERVER_ERROR_RESPONSE_SCHEMA_ID,
           },
         },
       },
@@ -89,6 +105,12 @@ export function registerHealthRoutes(
                 },
               },
             },
+          },
+          429: {
+            $ref: RATE_LIMITED_RESPONSE_SCHEMA_ID,
+          },
+          500: {
+            $ref: SERVER_ERROR_RESPONSE_SCHEMA_ID,
           },
           503: {
             type: "object",

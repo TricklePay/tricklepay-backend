@@ -26,6 +26,10 @@ import {
   streamViewSchema,
   STREAM_VIEW_SCHEMA_ID,
   TOKEN_LIST_RESPONSE_SCHEMA_ID,
+  rateLimitedResponseSchema,
+  RATE_LIMITED_RESPONSE_SCHEMA_ID,
+  serverErrorResponseSchema,
+  SERVER_ERROR_RESPONSE_SCHEMA_ID,
   TOKEN_SUMMARY_SCHEMA_ID,
   tokenListResponseSchema,
   tokenSummarySchema,
@@ -77,6 +81,8 @@ export async function streamRoutes(
     app.addSchema(streamScheduleResponseSchema);
   }
   if (!app.getSchema(ERROR_SCHEMA_ID)) app.addSchema(apiErrorSchema);
+  if (!app.getSchema(RATE_LIMITED_RESPONSE_SCHEMA_ID)) app.addSchema(rateLimitedResponseSchema);
+  if (!app.getSchema(SERVER_ERROR_RESPONSE_SCHEMA_ID)) app.addSchema(serverErrorResponseSchema);
 
   registerListStreamsRoute(app);
   registerStreamSummaryRoute(app, summaryCacheTtlMs);

@@ -37,6 +37,21 @@ function optional(name: string, fallback: string): string {
   return value && value.trim() !== "" ? value : fallback;
 }
 
+function corsOrigin(): string | undefined {
+  const value = process.env.CORS_ORIGIN?.trim();
+  if (!value) return undefined;
+  try {
+    const url = new URL(value);
+    const local = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+    if (url.origin === value && (url.protocol === "https:" || (local && url.protocol === "http:"))) {
+      return value;
+    }
+  } catch {
+    // Report the same actionable error for malformed URLs.
+  }
+  throw new Error("CORS_ORIGIN must be a single HTTPS origin (HTTP allowed for localhost)");
+}
+
 function integer(name: string, fallback: number): number {
   const raw = process.env[name];
   if (!raw || raw.trim() === "") return fallback;
@@ -91,6 +106,15 @@ export const DEFAULT_READY_MAX_STALENESS_MS = 0;
 // by server.ts when registering the rate-limit plugin.
 export const DEFAULT_RATE_LIMIT_MAX = 100;
 export const DEFAULT_RATE_LIMIT_WINDOW_MS = 60_000;
+
+// Per-route-group rate limits. These are the defaults; each can be overridden
+// via environment variables.
+export const DEFAULT_RATE_LIMIT_DETAIL_MAX = 200;
+export const DEFAULT_RATE_LIMIT_DETAIL_WINDOW_MS = 60_000;
+export const DEFAULT_RATE_LIMIT_LIST_MAX = 50;
+export const DEFAULT_RATE_LIMIT_LIST_WINDOW_MS = 60_000;
+export const DEFAULT_RATE_LIMIT_SUMMARY_MAX = 20;
+export const DEFAULT_RATE_LIMIT_SUMMARY_WINDOW_MS = 60_000;
 
 export const DEFAULT_CONNECTION_TIMEOUT_MS = 10_000;
 export const DEFAULT_KEEP_ALIVE_TIMEOUT_MS = 72_000;
@@ -239,6 +263,7 @@ export function defaultPublicBaseUrl(host: string, port: number): string {
 export interface Config {
   readonly port: number;
   readonly host: string;
+  readonly corsOrigin?: string;
   readonly publicBaseUrl: string;
   readonly databaseUrl: string;
   readonly network: string;
@@ -261,6 +286,12 @@ export interface Config {
   readonly trustedProxies: readonly string[];
   readonly rateLimitMax?: number;
   readonly rateLimitWindowMs?: number;
+  readonly rateLimitDetailMax?: number;
+  readonly rateLimitDetailWindowMs?: number;
+  readonly rateLimitListMax?: number;
+  readonly rateLimitListWindowMs?: number;
+  readonly rateLimitSummaryMax?: number;
+  readonly rateLimitSummaryWindowMs?: number;
   readonly readyMaxStalenessMs: number;
   readonly rateLimitAllowlist: readonly string[];
   readonly maxTrackedRateLimitClients?: number;
@@ -268,6 +299,9 @@ export interface Config {
   // Optional bearer token for the metrics endpoint. When set, /metrics requires
   // a matching Bearer token; when unset it is unauthenticated.
   readonly metricsToken?: string;
+  // Optional bearer token for admin endpoints. When set, /admin/* endpoints are
+  // registered and require this token; when unset they are not registered.
+  readonly adminToken?: string;
   // Whether to serve the interactive Swagger UI at /docs. When false, only
   // /docs/json and /docs/yaml are available. Default: true.
   readonly enableDocsUi: boolean;
@@ -303,11 +337,23 @@ export function loadConfig(): Config {
   );
 
   const port = integer("PORT", 3000);
+  if (port < 1 || port > 65535) {
+    throw new Error("PORT must be between 1 and 65535");
+  }
+  const bodyLimit = integer("BODY_LIMIT", 1048576);
+  if (bodyLimit < 1) {
+    throw new Error("BODY_LIMIT must be at least 1");
+  }
+  const queryStringLimit = integer("QUERY_STRING_LIMIT", 2048);
+  if (queryStringLimit < 1) {
+    throw new Error("QUERY_STRING_LIMIT must be at least 1");
+  }
   const host = optional("HOST", "0.0.0.0");
 
   return {
     port,
     host,
+    corsOrigin: corsOrigin(),
     publicBaseUrl: optional("PUBLIC_BASE_URL", defaultPublicBaseUrl(host, port)),
     databaseUrl: required("DATABASE_URL"),
     network,
@@ -331,8 +377,8 @@ export function loadConfig(): Config {
       "STREAM_SUMMARY_CACHE_TTL_MS",
       DEFAULT_STREAM_SUMMARY_CACHE_TTL_MS,
     ),
-    bodyLimit: integer("BODY_LIMIT", 1048576), // 1MB default
-    queryStringLimit: integer("QUERY_STRING_LIMIT", 2048), // 2KB default
+    bodyLimit,
+    queryStringLimit,
     connectionTimeoutMs: integer("CONNECTION_TIMEOUT_MS", DEFAULT_CONNECTION_TIMEOUT_MS),
     keepAliveTimeoutMs: integer("KEEP_ALIVE_TIMEOUT_MS", DEFAULT_KEEP_ALIVE_TIMEOUT_MS),
     requestTimeoutMs: integer("REQUEST_TIMEOUT_MS", DEFAULT_REQUEST_TIMEOUT_MS),
@@ -344,6 +390,12 @@ export function loadConfig(): Config {
     trustedProxies: parseTrustedProxies(process.env.TRUSTED_PROXIES),
     rateLimitMax,
     rateLimitWindowMs,
+    rateLimitDetailMax: integer("RATE_LIMIT_DETAIL_MAX", DEFAULT_RATE_LIMIT_DETAIL_MAX),
+    rateLimitDetailWindowMs: integer("RATE_LIMIT_DETAIL_WINDOW_MS", DEFAULT_RATE_LIMIT_DETAIL_WINDOW_MS),
+    rateLimitListMax: integer("RATE_LIMIT_LIST_MAX", DEFAULT_RATE_LIMIT_LIST_MAX),
+    rateLimitListWindowMs: integer("RATE_LIMIT_LIST_WINDOW_MS", DEFAULT_RATE_LIMIT_LIST_WINDOW_MS),
+    rateLimitSummaryMax: integer("RATE_LIMIT_SUMMARY_MAX", DEFAULT_RATE_LIMIT_SUMMARY_MAX),
+    rateLimitSummaryWindowMs: integer("RATE_LIMIT_SUMMARY_WINDOW_MS", DEFAULT_RATE_LIMIT_SUMMARY_WINDOW_MS),
     // Staleness threshold for the /ready endpoint. 0 = disabled.
     readyMaxStalenessMs: integer("READY_MAX_STALENESS_MS", DEFAULT_READY_MAX_STALENESS_MS),
     // Addresses that bypass the rate limiter entirely (#allowlist).
@@ -351,6 +403,7 @@ export function loadConfig(): Config {
     readinessRetryAfterSeconds,
     // An empty value means "no token", preserving the unauthenticated default.
     metricsToken: process.env.METRICS_TOKEN?.trim() || undefined,
+    adminToken: process.env.ADMIN_TOKEN?.trim() || undefined,
     // The UI is on by default; ENABLE_DOCS_UI=false serves only the spec.
     enableDocsUi: boolean("ENABLE_DOCS_UI", true),
   };
@@ -415,6 +468,7 @@ export function describeConfig(config: Config): LoggedConfig {
     keepAliveTimeoutMs: config.keepAliveTimeoutMs,
     requestTimeoutMs: config.requestTimeoutMs,
     host: config.host,
+    corsOrigin: config.corsOrigin,
     publicBaseUrl: config.publicBaseUrl,
     // The only field carrying a secret.
     databaseUrl: redactDatabaseUrl(config.databaseUrl),
@@ -435,11 +489,18 @@ export function describeConfig(config: Config): LoggedConfig {
     // Undefined when rate limiting is not configured; pino omits the field.
     rateLimitMax: config.rateLimitMax,
     rateLimitWindowMs: config.rateLimitWindowMs,
+    rateLimitDetailMax: config.rateLimitDetailMax,
+    rateLimitDetailWindowMs: config.rateLimitDetailWindowMs,
+    rateLimitListMax: config.rateLimitListMax,
+    rateLimitListWindowMs: config.rateLimitListWindowMs,
+    rateLimitSummaryMax: config.rateLimitSummaryMax,
+    rateLimitSummaryWindowMs: config.rateLimitSummaryWindowMs,
     readyMaxStalenessMs: config.readyMaxStalenessMs,
     rateLimitAllowlist: config.rateLimitAllowlist,
     maxTrackedRateLimitClients: config.maxTrackedRateLimitClients,
     // Never log the secret itself, only whether one is configured.
     metricsToken: config.metricsToken ? "[redacted]" : undefined,
+    adminToken: config.adminToken ? "[redacted]" : undefined,
     enableDocsUi: config.enableDocsUi,
     readinessRetryAfterSeconds: config.readinessRetryAfterSeconds,
   };

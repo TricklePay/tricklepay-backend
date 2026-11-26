@@ -14,9 +14,24 @@
 // ---------------------------------------------------------------------------
 
 import { describeConfig, loadConfig } from "./config.js";
+import { isMainModule } from "./lib/cli-args.js";
 
-function main(): void {
-  console.log(JSON.stringify(describeConfig(loadConfig()), null, 2));
+export function printConfig(stdout: NodeJS.WritableStream = process.stdout): void {
+  const config = loadConfig();
+  const described = describeConfig(config);
+  stdout.write(JSON.stringify(described, null, 2) + "\n");
 }
 
-main();
+export function main(): void {
+  try {
+    printConfig(process.stdout);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`failed to print configuration: ${message}\n`);
+    process.exitCode = 1;
+  }
+}
+
+if (isMainModule(import.meta.url)) {
+  main();
+}

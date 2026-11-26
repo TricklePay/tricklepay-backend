@@ -299,6 +299,12 @@ export const indexerPollSuccess = new Counter(
   "Total successful indexer poll iterations.",
 );
 
+/** RPC pages whose cursor moved behind the saved position. */
+export const indexerCursorRegressions = new Counter(
+  "tricklepay_indexer_cursor_regressions_total",
+  "Total RPC pages rejected for a regressed cursor.",
+);
+
 /** Unix timestamp (seconds) of the last successful poll. 0 before the first. */
 export const indexerPollLastSuccess = new Gauge(
   "tricklepay_indexer_poll_last_success_timestamp_seconds",
@@ -342,6 +348,14 @@ export const indexerNextPollAt = new Gauge(
 export const databaseQueryDuration = new Histogram(
   "tricklepay_database_query_duration_ms",
   "Time spent executing a database query in milliseconds.",
+);
+
+/** Repository function execution durations in milliseconds, by function name. */
+export const repositoryQueryDuration = new Histogram(
+  "tricklepay_repository_query_duration_ms",
+  "Time spent in repository functions in milliseconds.",
+  ["function"],
+  [1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000], // milliseconds
 );
 
 // HTTP ----------------------------------------------------------------------

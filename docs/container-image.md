@@ -1,15 +1,13 @@
 # Container Image
 
-The root `Dockerfile` builds the backend in two stages:
+The root `Dockerfile` builds two distinct container images using a multi-stage process:
 
-1. The `node:22-alpine` build stage installs the locked dependencies, generates
-   the Prisma client, and compiles the TypeScript sources into `dist/`. This is
-   newer than the minimum Node version the service supports — see
-   [node-version-policy.md](node-version-policy.md) for why the two differ.
-2. The runtime stage contains the production `node_modules`, compiled `dist/`,
-   the Prisma schema and migrations, and `package.json`.
+1. **Build stage (`AS build`)**: installs all dependencies, generates the Prisma client, and compiles the TypeScript sources into `dist/`. This uses `node:22-alpine` (see [node-version-policy.md](node-version-policy.md)).
+2. **Production dependencies stage (`AS prod-deps`)**: installs production-only dependencies (`npm ci --omit=dev --ignore-scripts`) and carries over the generated Prisma client artifacts from the build stage.
+3. **Migration image (`AS migrate`)**: a dedicated, one-shot migration image containing the Prisma CLI, schema, migrations, and dependencies. Its default entrypoint executes `npx prisma migrate deploy`.
+4. **Runtime API image (`AS runtime`)**: the default production service image containing only production dependencies, compiled `dist/`, Prisma schema, and `package.json`. Dev dependencies (such as TypeScript, Vitest, and the Prisma CLI) are excluded to minimize the runtime image footprint and attack surface.
 
-The runtime image starts as the non-root `node` user provided by the official
+The runtime API image starts as the non-root `node` user provided by the official
 Node Alpine image. Its entrypoint is the container command:
 
 ```text
@@ -18,12 +16,31 @@ node dist/index.js
 
 The service listens on `PORT` (default `3000`) on `HOST` (default `0.0.0.0`).
 The image declares port `3000`; configure the platform mapping if `PORT` is
-changed. Database migrations are applied by the deployment command before the
-server starts when using the repository's Docker Compose setup.
+changed.
+
+## Database Migration Path
+
+Database migrations should be executed before starting or rolling out the API service:
+
+- **Docker Compose**: The `docker-compose.yml` file defines a dedicated `migrate` service (`target: migrate`) that runs `prisma migrate deploy` ahead of the `api` service. The `api` service specifies `depends_on: { migrate: { condition: service_completed_successfully } }`, ensuring migrations complete successfully before the application starts.
+- **Standalone Docker**:
+  ```bash
+  # Build and run the migration image
+  docker build --target migrate -t tricklepay-migrate:latest .
+  docker run --rm -e DATABASE_URL="$DATABASE_URL" tricklepay-migrate:latest
+  ```
+- **Kubernetes / ECS**: Run the migration image (`target: migrate`) as an init container or pre-deployment task before the API pods or tasks start.
+
+## Dockerfile Linting with Hadolint
+
+The repository enforces Dockerfile best practices and security rules using [`hadolint`](https://github.com/hadolint/hadolint) in CI via `.github/workflows/container.yml`.
+
+- **Failure threshold**: The failure threshold is configured to `warning` in `.hadolint.yaml`. Any violation at severity `warning` or `error` fails the CI check.
+- **Rules configuration**: Configuration is stored in `.hadolint.yaml`. Rules that do not apply to our Alpine-based Node container (such as Debian-specific `DL3008` for `apt-get` and `DL3018` for `apk add` version pinning) are explicitly documented and ignored.
 
 ## Base image tag policy
 
-Both stages use `node:22-alpine`: a floating tag that tracks the newest Node 22
+All stages use `node:22-alpine`: a floating tag that tracks the newest Node 22
 release on the current Alpine base.
 
 - **Major version pinned, patch floating.** The tag names the Node major that
@@ -50,10 +67,10 @@ release on the current Alpine base.
 [`.github/workflows/container.yml`](../.github/workflows/container.yml) runs on
 every pull request and on pushes to `main`. It never pushes an image.
 
-- **Build and health check.** Builds the image, applies the migrations with
-  the image's own Prisma CLI against a PostgreSQL service container, starts the
-  service, and waits up to 180 seconds for Docker to report the
-  `HEALTHCHECK` as `healthy`. If the container exits, turns `unhealthy` or
+- **Build and health check.** Builds the dedicated migration image (`target: migrate`),
+  applies migrations against a PostgreSQL service container, builds the runtime API
+  image (`target: runtime`), starts the service, and waits up to 180 seconds for Docker
+  to report the `HEALTHCHECK` as `healthy`. If the container exits, turns `unhealthy` or
   runs out of time, the job fails and prints `docker inspect` state and the
   container logs. Startup verifies the public testnet Soroban RPC, so the job
   needs outbound network access to `soroban-testnet.stellar.org`.
@@ -94,10 +111,9 @@ SBOM; the image SBOM uses the version Trivy emits).
 | npm dependencies | `tricklepay-backend-npm.cdx.json` | `npm sbom` from npm 10.9.2 (`NPM_SBOM_VERSION`), run with `--package-lock-only` | `sbom` job in `ci.yml` (artifact `sbom-npm`) and `release.yml` |
 | Container image | `tricklepay-backend-image.cdx.json` | Trivy, at the pinned `TRIVY_IMAGE` version | `scan` job in `container.yml` (artifact `sbom-image`) and `release.yml` |
 
-The npm SBOM covers the whole lockfile, including dev dependencies, because
-the runtime image carries the build stage's full `node_modules`. The tool
-version that produced each file is also recorded in its `metadata.tools`.
-Both files are attached to every GitHub release.
+The npm SBOM covers the whole lockfile, documenting both runtime dependencies
+and build-time tooling. The tool version that produced each file is also
+recorded in its `metadata.tools`. Both files are attached to every GitHub release.
 
 ## Published images
 
@@ -125,3 +141,60 @@ two SBOMs. Deploy by digest rather than by tag, because tags can move:
 ```text
 ghcr.io/tricklepay/tricklepay-backend@sha256:<digest from the release notes>
 ```
+
+
+# Container Image Verification
+
+TricklePay container images are published to GitHub Container Registry (GHCR).
+
+Release images are signed using Sigstore Cosign keyless signing and include
+GitHub build provenance attestations.
+
+## Image
+
+```bash
+docker pull ghcr.io/TricklePay/tricklepay-backend:<tag>
+```
+
+## Verify image signature
+
+Install Cosign:
+
+https://docs.sigstore.dev/cosign/system_config/installation/
+
+Verify the image signature using the release workflow identity:
+
+```bash
+cosign verify \
+  --certificate-identity-regexp='https://github.com/TricklePay/tricklepay-backend/.github/workflows/.*@refs/tags/.*' \
+  --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+  ghcr.io/TricklePay/tricklepay-backend:<tag>
+```
+
+## Verify build provenance
+
+Install GitHub CLI:
+
+https://cli.github.com/
+
+Verify the image's build provenance:
+
+```bash
+gh attestation verify \
+  oci://ghcr.io/TricklePay/tricklepay-backend:<tag> \
+  --owner TricklePay
+```
+
+## Verify by digest
+
+For stronger reproducibility, verify an immutable image digest instead of a mutable tag.
+
+```bash
+cosign verify \
+  --certificate-identity-regexp='https://github.com/TricklePay/tricklepay-backend/.github/workflows/.*@refs/tags/.*' \
+  --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+  ghcr.io/TricklePay/tricklepay-backend@sha256:<digest>
+```
+
+Consumers should verify signatures and provenance before deploying
+release images in production.

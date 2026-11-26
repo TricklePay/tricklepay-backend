@@ -24,6 +24,8 @@ Listed alphabetically by file name, ignoring case.
 - [backfill-duration.md](backfill-duration.md): Explains what determines how long an indexer backfill takes, how to estimate remaining progress, and the metric that shows it.
 - [CONFIGURATION.md](CONFIGURATION.md): How configuration is loaded from the process environment and the optional `.env` file, which of the two wins when they disagree, and the variables that are read outside `loadConfig()`.
 - [container-image.md](container-image.md): What the two-stage Dockerfile builds, what the runtime image contains, and how the container starts; the base image tag policy; the CI build, health check and vulnerability scan; SBOMs; and the images published to GHCR on release tags.
+- [code-scanning.md](code-scanning.md): CodeQL static analysis for JavaScript and TypeScript, when it runs, and where to view alerts on GitHub.
+- [csv-export-design.md](csv-export-design.md): Design specification for CSV export support on `GET /streams` via `Accept: text/csv` header, covering RFC 4180 compliance, field formatting, content negotiation, and spreadsheet compatibility.
 - [DATABASE.md](DATABASE.md): Supported PostgreSQL versions and compatibility requirements; this is about the database server, whereas [database-schema.md](database-schema.md) documents the tables the application creates.
 - [database-migrations.md](database-migrations.md): Prisma workflow for creating, reviewing, and applying schema migrations.
 - [database-outage-runbook.md](database-outage-runbook.md): Operator checklist for database outage symptoms, relevant metrics, automatic recovery behavior, and actions for unresolved event failures.
@@ -39,14 +41,17 @@ Listed alphabetically by file name, ignoring case.
 - [indexer-stalled-runbook.md](indexer-stalled-runbook.md): Operator checklist for diagnosing a stalled indexer using `/status`, `/metrics`, and application logs, followed by ordered recovery steps.
 - [indexer-start-ledger.md](indexer-start-ledger.md): Guide for choosing the `INDEXER_START_LEDGER` configuration value for new deployments, explaining the trade-offs between backfill duration and historical data completeness.
 - [INDEXER_VERIFICATION.md](INDEXER_VERIFICATION.md): Procedure for comparing the indexed database state with on-chain state to detect drift caused by missed events or reorgs.
+- [load-testing.md](load-testing.md): Guide for running the load test script that seeds 100,000 streams and benchmarks query performance (list, filters, cursor pagination, aggregations) with recorded p95 latencies and advisory thresholds.
 - [local-network.md](local-network.md): Configuration and setup for running the indexer and API against a local Stellar/Soroban development network.
 - [logging.md](logging.md): Pino log structure, severity levels, standard fields, and how request logs are correlated.
+- [multi-contract-design.md](multi-contract-design.md): Design specification for indexing multiple stream contracts simultaneously, covering schema changes, API filters, per-contract cursors, and backward compatibility.
 - [node-version-policy.md](node-version-policy.md): States the minimum supported, CI-tested, and production Node versions, and why `.nvmrc` deliberately pins the floor rather than matching the Dockerfile.
 - [openapi-client-generation.md](openapi-client-generation.md): Guide for generating a typed TypeScript client from the `/docs/json` OpenAPI document, and why amount and time fields are decimal strings rather than numbers.
 - [poll-tick-sequence.md](poll-tick-sequence.md): Mermaid sequence diagram of a single poll tick, from fetching a page of events through decoding, applying, recording failures, and saving the new position.
 - [resource-footprint.md](resource-footprint.md): Indicative deployment sizing, per-process Prisma connection usage, and how retained event volume affects PostgreSQL storage growth.
 - [public-url-and-metrics-token.md](public-url-and-metrics-token.md): Setting `PUBLIC_BASE_URL` behind a reverse proxy and its effect on `/docs/json`, and scraping a `METRICS_TOKEN`-protected `/metrics` from Prometheus, with defaults and failure behaviour.
 - [query-parameters.md](query-parameters.md): Decision record for repeated query parameters: why a parameter given more than once is rejected with `400` rather than silently using the first or last value.
+- [rate-limiting.md](rate-limiting.md): Per-route-group rate limiting guide, including default limits, configuration, and troubleshooting for different endpoint categories (detail, list, summary).
 - [request-ids.md](request-ids.md): Documentation on Request ID behavior, client-supplied header validation (`x-request-id`), and traceability in responses and logs.
 - [request-lifecycle.md](request-lifecycle.md): End-to-end path of an HTTP request from connection through routing, validation, handlers, and response serialization.
 - [request-size-limits.md](request-size-limits.md): Documentation on request body and query string size limits, including defaults, configuration, and rejection behavior.
@@ -54,6 +59,8 @@ Listed alphabetically by file name, ignoring case.
 - [response-headers.md](response-headers.md): Table of which `Cache-Control`, `ETag`, and other headers each endpoint sets, and why, matched against the route code.
 - [shutdown-ordering.md](shutdown-ordering.md): Ordered `SIGTERM`/`SIGINT` shutdown sequence and why each step must complete before the next.
 - [test-coverage.md](test-coverage.md): How unit test coverage is measured and reported in CI, and the recorded baseline figures.
+- [verification-cli-design.md](verification-cli-design.md): Design specification for the `npm run verify-streams` CLI tool that automates verification of indexed database state against on-chain state, including sampling strategies, output formats, and monitoring integration.
+- [webhook-design.md](webhook-design.md): Design specification for webhook notification system that delivers real-time stream events (created, withdrawn, cancelled) to registered HTTP endpoints with HMAC signatures, automatic retries, and SSRF protection.
 
 ## When to add a new document here
 

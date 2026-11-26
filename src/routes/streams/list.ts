@@ -5,7 +5,7 @@ import type { FastifyInstance } from "fastify";
 import { sendError } from "../../lib/response.js";
 import { ifNoneMatchMatches, weakEtagFromBody } from "../../lib/etag.js";
 import { parsePagination } from "../../lib/pagination.js";
-import { mapStreamResponse } from "../../lib/stream-view.js";
+import { mapStreamResponse, parseFields } from "../../lib/stream-view.js";
 import { parseStreamId } from "../../lib/stream-id.js";
 import {
   parseAmount,
@@ -15,7 +15,12 @@ import {
 import { normalizeAddress } from "../../lib/address.js";
 import { nowSeconds } from "../../lib/time.js";
 import { countStreams, decodeCursor, listStreams } from "../../repositories/streams.js";
-import { ERROR_SCHEMA_ID, STREAM_LIST_RESPONSE_SCHEMA_ID } from "../../schema.js";
+import {
+  ERROR_SCHEMA_ID,
+  RATE_LIMITED_RESPONSE_SCHEMA_ID,
+  SERVER_ERROR_RESPONSE_SCHEMA_ID,
+  STREAM_LIST_RESPONSE_SCHEMA_ID,
+} from "../../schema.js";
 
 // Above this offset a scan gets expensive enough that callers should page
 // through results in order or narrow them with filters instead.
@@ -39,6 +44,9 @@ interface ListStreamsQuery {
   cursor?: string;
   minAmount?: string;
   maxAmount?: string;
+  sort?: string;
+  sortDirection?: "asc" | "desc";
+  fields?: string;
 }
 
 export function registerListStreamsRoute(app: FastifyInstance): void {
@@ -135,6 +143,28 @@ export function registerListStreamsRoute(app: FastifyInstance): void {
               description: "Filter streams with total amount less than or equal to this value (non-negative integer string).",
               examples: ["10000000"],
             },
+            sort: {
+              type: "string",
+              enum: ["streamId", "endTime", "totalAmount", "createdLedger"],
+              description:
+                "Sort key for server-side ordering. streamId (default): descending stream id, " +
+                "endTime: stream end time, totalAmount: total stream amount, createdLedger: ledger where stream was created. " +
+                "Cursors encode the sort key for stable pagination. " +
+                "Performance note: streamId uses existing compound indexes when combined with sender/recipient/token filters. " +
+                "Other sort keys may require full table scans on large datasets without dedicated indexes.",
+              examples: ["endTime"],
+            },
+            sortDirection: {
+              type: "string",
+              enum: ["asc", "desc"],
+              description: "Sort direction. Defaults to desc. Applies to the sort key; streamId tiebreaker follows the same direction.",
+              examples: ["desc"],
+            },
+            fields: {
+              type: "string",
+              description: "Comma-separated list of fields to include in each stream object. Valid fields: id, sender, recipient, token, totalAmount, withdrawn, vested, withdrawable, locked, progress, startTime, endTime, cliffTime, cancelled, status, createdLedger, updatedLedger. Omit to return all fields.",
+              examples: ["id,status,withdrawable"],
+            },
           },
           additionalProperties: false,
         },
@@ -142,6 +172,8 @@ export function registerListStreamsRoute(app: FastifyInstance): void {
           200: { $ref: STREAM_LIST_RESPONSE_SCHEMA_ID },
           304: { type: "null" },
           400: { $ref: ERROR_SCHEMA_ID },
+          429: { $ref: RATE_LIMITED_RESPONSE_SCHEMA_ID },
+          500: { $ref: SERVER_ERROR_RESPONSE_SCHEMA_ID },
         },
       },
     },
@@ -150,13 +182,36 @@ export function registerListStreamsRoute(app: FastifyInstance): void {
 
       const { limit, offset } = parsePagination(query);
 
-      let cursor: bigint | undefined;
+      let cursor: string | undefined;
       if (query.cursor !== undefined) {
         const decoded = decodeCursor(query.cursor);
         if (decoded === null) {
           return sendError(reply, request, 400, "VALIDATION_ERROR", "invalid cursor");
         }
-        cursor = decoded;
+        cursor = query.cursor;
+      }
+
+      // Validate and parse sort parameters
+      let sortKey: "streamId" | "endTime" | "totalAmount" | "createdLedger" | undefined;
+      if (query.sort !== undefined) {
+        if (!["streamId", "endTime", "totalAmount", "createdLedger"].includes(query.sort)) {
+          return sendError(
+            reply,
+            request,
+            400,
+            "VALIDATION_ERROR",
+            "sort must be one of: streamId, endTime, totalAmount, createdLedger",
+          );
+        }
+        sortKey = query.sort as "streamId" | "endTime" | "totalAmount" | "createdLedger";
+      }
+
+      let sortDirection: "asc" | "desc" | undefined;
+      if (query.sortDirection !== undefined) {
+        if (!["asc", "desc"].includes(query.sortDirection)) {
+          return sendError(reply, request, 400, "VALIDATION_ERROR", "sortDirection must be asc or desc");
+        }
+        sortDirection = query.sortDirection;
       }
 
       const usingCursor = cursor !== undefined;
@@ -178,9 +233,11 @@ export function registerListStreamsRoute(app: FastifyInstance): void {
         token?: string;
         cancelled?: boolean;
         status?: "pending" | "streaming" | "completed" | "cancelled";
-        cursor?: bigint;
+        cursor?: string;
         minAmount?: bigint;
         maxAmount?: bigint;
+        sortKey?: "streamId" | "endTime" | "totalAmount" | "createdLedger";
+        sortDirection?: "asc" | "desc";
       } = {};
       if (query.ids !== undefined) {
         const parts = query.ids.split(",");
@@ -220,6 +277,10 @@ export function registerListStreamsRoute(app: FastifyInstance): void {
 
       filter.cursor = cursor;
       
+      // Set sort parameters
+      filter.sortKey = sortKey;
+      filter.sortDirection = sortDirection;
+      
       // Parse amount filters
       const minAmount = parseAmount(query.minAmount);
       if (query.minAmount !== undefined && minAmount === null) {
@@ -234,6 +295,18 @@ export function registerListStreamsRoute(app: FastifyInstance): void {
       filter.maxAmount = maxAmount ?? undefined;
 
       const includeTotal = parseIncludeTotal(query.includeTotal);
+
+      // Parse and validate fields parameter
+      const fields = parseFields(query.fields);
+      if (query.fields !== undefined && fields === null) {
+        return sendError(
+          reply,
+          request,
+          400,
+          "VALIDATION_ERROR",
+          "invalid fields parameter: one or more field names are not recognized",
+        );
+      }
 
       const now = nowSeconds();
 
@@ -251,14 +324,18 @@ export function registerListStreamsRoute(app: FastifyInstance): void {
       // Built once and reused for both the ETag and the returned body so the
       // digest is derived from exactly the bytes the client would receive.
       const body = {
-        streams: listResult.streams.map((s) => mapStreamResponse(s)),
+        streams: listResult.streams.map((s) => mapStreamResponse(s, undefined, fields)),
         ...(total === undefined ? {} : { total }),
         ...(listResult.nextCursor === undefined ? {} : { nextCursor: listResult.nextCursor }),
         limit,
         offset: usingCursor ? 0 : offset,
       };
 
-      const etag = weakEtagFromBody(body);
+      // ETag includes the fields selection so different field sets get different tags
+      const etagInput = query.fields
+        ? { ...body, _fields: query.fields }
+        : body;
+      const etag = weakEtagFromBody(etagInput);
       reply.header("ETag", etag);
 
       if (ifNoneMatchMatches(request.headers["if-none-match"], etag)) {
