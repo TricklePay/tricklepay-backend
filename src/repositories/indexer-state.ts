@@ -60,7 +60,7 @@ export async function getIndexerPosition(): Promise<StoredPosition | null> {
 // move forward only; the caller carries it across ticks and raises it as
 // events are applied, so a poll that applied nothing leaves it where it was.
 export async function saveIndexerPosition(position: IndexerPosition): Promise<void> {
-  return measureRepositoryCall("saveIndexerPosition", () =>
+  await measureRepositoryCall("saveIndexerPosition", () =>
     prisma.indexerState.upsert({
       where: { id: STATE_ID },
       create: { id: STATE_ID, ...position },

@@ -1,0 +1,12 @@
+# Hadolint configuration
+# Documentation: https://github.com/hadolint/hadolint
+
+# Fail the check for warnings and errors
+failure-threshold: warning
+
+# Documented rationale for ignored rules:
+# DL3008: Pin versions in apt-get (Base images use Alpine Linux, not Debian/apt)
+# DL3018: Pin versions in apk add (Package versions vary across Alpine patches)
+ignored:
+  - DL3008
+  - DL3018

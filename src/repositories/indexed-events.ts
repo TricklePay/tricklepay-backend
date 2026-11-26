@@ -125,7 +125,7 @@ export async function recordIndexedEvent(
   record: IndexedEventRecord,
   tx?: Prisma.TransactionClient,
 ): Promise<void> {
-  return measureRepositoryCall("recordIndexedEvent", () => {
+  await measureRepositoryCall("recordIndexedEvent", () => {
     const db = tx ?? prisma;
     return db.indexedEvent.createMany({
       data: record as unknown as Prisma.IndexedEventCreateManyInput,

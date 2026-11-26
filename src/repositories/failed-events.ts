@@ -35,7 +35,7 @@ export interface FailedEventInput {
 // failures increment `failureCount` and refresh `error` rather than inserting
 // duplicate rows. `firstFailedAt` is only written on the initial insert.
 export async function recordFailedEvent(input: FailedEventInput): Promise<void> {
-  return measureRepositoryCall("recordFailedEvent", () =>
+  await measureRepositoryCall("recordFailedEvent", () =>
     prisma.failedEvent.upsert({
       where: { eventId: input.eventId },
       create: {

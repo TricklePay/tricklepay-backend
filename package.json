@@ -21,6 +21,7 @@
     "print-config": "tsx src/print-config.ts",
     "load-test": "tsx scripts/load-test-queries.ts",
     "depcheck": "depcheck",
+    "export:openapi": "tsx scripts/export-openapi.ts",
     "postinstall": "prisma generate",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev"

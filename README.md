@@ -17,6 +17,7 @@ For guides and technical documentation, see the [Documentation Index](docs/READM
 
 ## Table of Contents
 
+- [Architecture](#architecture)
 - [How it works](#how-it-works)
 - [Documentation](#documentation)
 - [Database schema](#database-schema)
@@ -40,6 +41,53 @@ For guides and technical documentation, see the [Documentation Index](docs/READM
 - [Troubleshooting](#troubleshooting)
 - [Related repositories](#related-repositories)
 - [License](#license)
+
+## Architecture
+
+The following diagram illustrates the components of the TricklePay backend service, their process boundaries, and the direction of connections between the HTTP server, the indexer poller, the Postgres database, Soroban RPC, and the Prometheus scraper.
+
+```mermaid
+graph TD
+    subgraph Clients ["External Observers & Clients"]
+        WebClient["Web Client / API Consumers"]
+        Prometheus["Prometheus Scraper"]
+    end
+
+    subgraph ServiceProcess ["TricklePay Service (Single Node.js Process)"]
+        direction TB
+        HttpServer["HTTP Server<br/>(Fastify Read API)"]
+        Poller["Poller / Indexer<br/>(Event Polling Loop)"]
+    end
+
+    subgraph Storage ["Persistent Store"]
+        Postgres[("PostgreSQL Database<br/>(Prisma ORM)")]
+    end
+
+    subgraph ExternalNetwork ["Stellar Network"]
+        SorobanRPC["Soroban RPC Node<br/>(Contract Events & State)"]
+    end
+
+    WebClient -->|"GET /v1/streams, /status, /health<br/>(live vesting calculation)"| HttpServer
+    Prometheus -->|"GET /v1/metrics<br/>(Prometheus metrics scrape)"| HttpServer
+
+    HttpServer -->|"Read streams, state & health checks<br/>(SQL read queries)"| Postgres
+    Poller -->|"Poll contract events & reconcile streams<br/>(RPC calls)"| SorobanRPC
+    Poller -->|"Write mirror events, streams & cursor state<br/>(atomic transactions)"| Postgres
+
+    classDef sharedProcess fill:#e0f2fe,stroke:#0284c7,stroke-width:2px;
+    class HttpServer,Poller sharedProcess;
+```
+
+> **Process Boundary Note:** The **HTTP Server** and the **Indexer/Poller** run concurrently in the **same Node.js process**. They share memory and connection pools while running independent asynchronous event loops.
+
+### Technical Architecture Documentation
+For in-depth explanations of individual subsystems, refer to the guides in [`docs/`](docs/):
+- **[Request Lifecycle](docs/request-lifecycle.md)**: End-to-end trace of an HTTP request through Fastify plugins, validation, service layer, and database.
+- **[Poll Tick Sequence](docs/poll-tick-sequence.md)**: Sequence diagram of a single indexer poll tick fetching, decoding, applying, and committing events.
+- **[Database Schema](docs/database-schema.md)**: Stored tables (`Stream`, `IndexerState`, `IndexedEvent`, `FailedEvent`) and mirror semantics.
+- **[Derived Figures](docs/derived-figures.md)**: Rationale and algorithms for computing live vested and withdrawable amounts.
+- **[Local Network Setup](docs/local-network.md)**: Running and testing against local Postgres and Soroban RPC nodes.
+- **[Indexer Failure Policy](docs/indexer-failure-policy.md)**: Failure handling, atomic rollbacks, and error recording.
 
 ## How it works
 
