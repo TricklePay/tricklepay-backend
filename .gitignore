@@ -1,6 +1,7 @@
 node_modules/
 dist/
 coverage/
+.lycheecache
 .env
 *.log
 .DS_Store
