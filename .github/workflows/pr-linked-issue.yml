@@ -1,0 +1,110 @@
+name: Validate Linked Issue
+
+on:
+  pull_request:
+    types:
+      - opened
+      - edited
+      - reopened
+      - synchronize
+
+permissions:
+  contents: read
+  issues: read
+
+jobs:
+  check-linked-issue:
+    name: Require Single Open Linked Issue
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate linked issue in PR body
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          REPO_FULL_NAME: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node -e '
+          const body = process.env.PR_BODY ?? "";
+          const repo = process.env.REPO_FULL_NAME;
+          const token = process.env.GITHUB_TOKEN;
+
+          // Match GitHub closing keywords followed by #<number> (or bare # at end of "Closes #")
+          const closingRefRegex = /\b(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)\s+#(\d+)?/gi;
+          const matches = [...body.matchAll(closingRefRegex)];
+
+          if (matches.length === 0) {
+            console.error(
+              "Error: Pull request body must link an issue using a closing keyword (e.g., \"Closes #123\")."
+            );
+            process.exit(1);
+          }
+
+          const issueNumbers = [];
+          for (const match of matches) {
+            const rawNum = match[1];
+            if (!rawNum) {
+              console.error(
+                `Error: Found incomplete closing reference "${match[0].trim()}" with no issue number.`
+              );
+              process.exit(1);
+            }
+            const num = Number(rawNum);
+            if (!issueNumbers.includes(num)) {
+              issueNumbers.push(num);
+            }
+          }
+
+          if (issueNumbers.length > 1) {
+            console.error(
+              `Error: Pull request references multiple closing issues (${issueNumbers.map((n) => `#${n}`).join(", ")}). Please link a single issue.`
+            );
+            process.exit(1);
+          }
+
+          const issueNumber = issueNumbers[0];
+          const [owner, name] = repo.split("/");
+          const url = `https://api.github.com/repos/${owner}/${name}/issues/${issueNumber}`;
+
+          (async () => {
+            const headers = {
+              Accept: "application/vnd.github+json",
+              "User-Agent": "tricklepay-pr-issue-check",
+            };
+            if (token) {
+              headers.Authorization = `Bearer ${token}`;
+            }
+
+            const res = await fetch(url, { headers });
+
+            if (res.status === 404) {
+              console.error(`Error: Referenced issue #${issueNumber} does not exist in ${repo}.`);
+              process.exit(1);
+            }
+
+            if (!res.ok) {
+              console.error(
+                `Error: Failed to fetch issue #${issueNumber} from GitHub API (HTTP ${res.status}).`
+              );
+              process.exit(1);
+            }
+
+            const issue = await res.json();
+
+            // GitHub Issues API also returns PRs under /issues/{n}; reject if it is a PR
+            if (issue.pull_request) {
+              console.error(`Error: #${issueNumber} is a pull request, not an issue.`);
+              process.exit(1);
+            }
+
+            if (issue.state !== "open") {
+              console.error(
+                `Error: Referenced issue #${issueNumber} ("${issue.title}") is already ${issue.state}.`
+              );
+              process.exit(1);
+            }
+
+            console.log(`Verified open linked issue #${issueNumber}: "${issue.title}"`);
+          })().catch((err) => {
+            console.error(`Error validating issue #${issueNumber}:`, err.message);
+            process.exit(1);
+          });
+        '
