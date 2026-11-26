@@ -1,0 +1,52 @@
+# Maps changed paths to the repository's existing area labels. Used by
+# .github/workflows/labeler.yml, which only reads the list of changed files
+# from the pull request metadata and never checks out the pull request code.
+
+api:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'src/routes/**'
+          - 'src/schema*.ts'
+          - 'src/api-spec.ts'
+          - 'src/error-handlers.ts'
+          - 'src/rate-limiter.ts'
+
+database:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'prisma/**'
+          - 'src/db.ts'
+          - 'src/repositories/**'
+
+docker:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'Dockerfile'
+          - '.dockerignore'
+          - 'docker-compose*.yml'
+          - '.github/workflows/container.yml'
+
+observability:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'src/logger.ts'
+          - 'src/metrics*.ts'
+          - 'src/request-id*.ts'
+          - 'src/health-routes.ts'
+
+testing:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'tests/**'
+          - 'vitest.config.ts'
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'docs/**'
+          - '*.md'
+
+github_actions:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '.github/**'

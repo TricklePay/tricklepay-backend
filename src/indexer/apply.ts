@@ -3,6 +3,7 @@ import type { Prisma } from "@prisma/client";
 import { rpc } from "@stellar/stellar-sdk";
 
 import { fetchStream } from "../chain/contract.js";
+
 import type { StreamEvent } from "../chain/events.js";
 
 import {
@@ -13,74 +14,31 @@ import {
   type ApplyResult,
 } from "../repositories/streams.js";
 
-export type ApplyOutcome =
-  | "applied"
-  | "duplicate"
-  | "reconciled"
-  | "missing";
+// What applying an event did to the stored mirror. `reconciled` means the
+// event's own data could not be used and full contract state was read instead;
+// `missing` means the stream is neither stored nor on chain, so there was
+// nothing to write.
+export type ApplyOutcome = "applied" | "duplicate" | "reconciled" | "missing";
+
+type EventHandler<E extends StreamEvent = StreamEvent> = (
+  server: rpc.Server,
+  contractId: string,
+  networkPassphrase: string,
+  event: E,
+  tx?: Prisma.TransactionClient,
+) => Promise<ApplyOutcome>;
 
 type CreatedEvent = Extract<StreamEvent, { kind: "created" }>;
 type WithdrawnEvent = Extract<StreamEvent, { kind: "withdrawn" }>;
 type CancelledEvent = Extract<StreamEvent, { kind: "cancelled" }>;
 
-interface EventContext {
-  server: rpc.Server;
-  contractId: string;
-  networkPassphrase: string;
-  tx?: Prisma.TransactionClient;
-}
-
-/**
- * Applies stream events to the local indexed database.
- *
- * `applied`      - Event was successfully applied.
- * `duplicate`     - Event was already processed.
- * `reconciled`   - Local state was rebuilt from on-chain state.
- * `missing`       - Stream was unavailable locally and on-chain.
- */
-export async function applyEvent(
-  server: rpc.Server,
-  contractId: string,
-  networkPassphrase: string,
-  event: StreamEvent,
-  tx?: Prisma.TransactionClient,
-): Promise<ApplyOutcome> {
-  const context: EventContext = {
-    server,
-    contractId,
-    networkPassphrase,
-    tx,
-  };
-
-  switch (event.kind) {
-    case "created":
-      return handleCreated(event, context);
-
-    case "withdrawn":
-      return handleWithdrawn(event, context);
-
-    case "cancelled":
-      return handleCancelled(event, context);
-
-    default: {
-      // Exhaustiveness guard: compilation fails if a new event kind
-      // is introduced but not handled here.
-      const exhaustiveCheck: never = event;
-      throw new Error(`Unhandled stream event: ${exhaustiveCheck}`);
-    }
-  }
-}
-
-/**
- * Creation events contain the complete stream state, so no RPC
- * reconciliation is necessary.
- */
-async function handleCreated(
-  event: CreatedEvent,
-  { tx }: EventContext,
-): Promise<ApplyOutcome> {
-  return insertStream(
-    {
+const eventHandlers: {
+  created: EventHandler<CreatedEvent>;
+  withdrawn: EventHandler<WithdrawnEvent>;
+  cancelled: EventHandler<CancelledEvent>;
+} = {
+  created: async (_server, _contractId, _networkPassphrase, event, tx) =>
+    insertStream({
       streamId: event.streamId,
       sender: event.sender,
       recipient: event.recipient,
@@ -91,100 +49,76 @@ async function handleCreated(
       cliffTime: event.cliffTime,
       ledger: event.ledger,
       eventId: event.id,
-    },
-    tx,
-  );
-}
+    }, tx),
 
-/**
- * Withdrawal events carry a delta that can be applied to an existing row.
- * Reconciliation is only required when the stream is missing locally.
- */
-async function handleWithdrawn(
-  event: WithdrawnEvent,
-  context: EventContext,
+  withdrawn: async (server, contractId, networkPassphrase, event, tx) =>
+    orReconcile(
+      await applyWithdrawal({
+        streamId: event.streamId,
+        amount: event.amount,
+        ledger: event.ledger,
+        eventId: event.id,
+      }, tx),
+      server, contractId, networkPassphrase, event, tx,
+    ),
+
+  cancelled: async (server, contractId, networkPassphrase, event, tx) =>
+    orReconcile(
+      await applyCancellation({
+        streamId: event.streamId,
+        recipientAmount: event.recipientAmount,
+        cancelledAt: event.closedAt,
+        ledger: event.ledger,
+        eventId: event.id,
+      }, tx),
+      server, contractId, networkPassphrase, event, tx,
+    ),
+};
+
+// Applies a decoded event by writing what the event itself carries. `created`
+// carries the whole stream, and `withdrawn` and `cancelled` carry deltas the
+// stored row can absorb, so the ordinary path is a single database write and no
+// network round-trip. That is what makes a backfill cheap: the cost of an
+// historical event is one query, not one RPC simulation.
+//
+// Every write is guarded on the event id, so replaying a page of events — which
+// happens whenever the indexer restarts before its cursor is saved — applies
+// each event at most once.
+export async function applyEvent(
+  server: rpc.Server,
+  contractId: string,
+  networkPassphrase: string,
+  event: StreamEvent,
+  tx?: Prisma.TransactionClient
 ): Promise<ApplyOutcome> {
-  const { tx } = context;
-
-  const result = await applyWithdrawal(
-    {
-      streamId: event.streamId,
-      amount: event.amount,
-      ledger: event.ledger,
-      eventId: event.id,
-    },
-    tx,
-  );
-
-  return reconcileIfMissing(result, event, context);
+  const handler = eventHandlers[event.kind] as EventHandler<typeof event>;
+  return handler(server, contractId, networkPassphrase, event, tx);
 }
 
-/**
- * Cancellation events carry cancellation data that can be applied
- * directly to the local stream mirror.
- */
-async function handleCancelled(
-  event: CancelledEvent,
-  context: EventContext,
-): Promise<ApplyOutcome> {
-  const { tx } = context;
-
-  const result = await applyCancellation(
-    {
-      streamId: event.streamId,
-      recipientAmount: event.recipientAmount,
-      cancelledAt: event.closedAt,
-      ledger: event.ledger,
-      eventId: event.id,
-    },
-    tx,
-  );
-
-  return reconcileIfMissing(result, event, context);
-}
-
-/**
- * Delta events cannot be applied when the local stream row is absent.
- *
- * In that case, read the authoritative contract state and rebuild
- * the local mirror. Subsequent events can use the normal delta path.
- */
-async function reconcileIfMissing(
+// A delta only makes sense against a row that exists. When one arrives for an
+// unknown stream — an indexer backfilling from a ledger after the stream was
+// created, or one whose row was lost — full state is read from the contract and
+// written whole. This is the only path that still calls the chain, and it runs
+// once per stream rather than once per event: afterwards the row is present and
+// later deltas apply straight to it.
+async function orReconcile(
   result: ApplyResult,
-  event: WithdrawnEvent | CancelledEvent,
-  context: EventContext,
+  server: rpc.Server,
+  contractId: string,
+  networkPassphrase: string,
+  event: StreamEvent,
+  tx?: Prisma.TransactionClient
 ): Promise<ApplyOutcome> {
-  if (result !== "missing") {
-    return result;
-  }
+  if (result !== "missing") return result;
 
-  const {
-    server,
-    contractId,
-    networkPassphrase,
-    tx,
-  } = context;
+  const onChain = await fetchStream(server, contractId, networkPassphrase, event.streamId);
+  if (!onChain) return "missing";
 
-  const onChainStream = await fetchStream(
-    server,
-    contractId,
-    networkPassphrase,
-    event.streamId,
-  );
-
-  if (!onChainStream) {
-    return "missing";
-  }
-
-  await upsertStream(
-    {
-      streamId: event.streamId,
-      ...onChainStream,
-      ledger: event.ledger,
-      eventId: event.id,
-    },
-    tx,
-  );
-
+  await upsertStream({
+    streamId: event.streamId,
+    ...onChain,
+    ledger: event.ledger,
+    eventId: event.id,
+  }, tx);
   return "reconciled";
 }
