@@ -414,13 +414,14 @@ export async function aggregateStreams(where: Prisma.StreamWhereInput): Promise<
 export interface TokenSummary {
   token: string;
   count: number;
+  totalStreamed: string;
   totalAmount: string;
   total: string;
 }
 
 // Groups streams by token and returns the distinct tokens with stream count
-// and total escrowed amount. The sums run in Postgres over decimal columns so
-// amounts stay exact.
+// and total streamed amount, including completed and cancelled streams. The
+// sums run in Postgres over decimal columns so amounts stay exact.
 export async function listTokens(): Promise<TokenSummary[]> {
   return measureRepositoryCall("listTokens", async () => {
   const groups = await withQueryTimeout(
@@ -437,6 +438,7 @@ export async function listTokens(): Promise<TokenSummary[]> {
     return {
       token: group.token,
       count: group._count.streamId,
+      totalStreamed: totalAmount,
       totalAmount,
       total: totalAmount,
     };
@@ -455,6 +457,73 @@ export async function getAccountStreams(
     withQueryTimeout(prisma.stream.findMany({ where: { sender: address } })),
   ]);
   return { incoming, outgoing };
+  });
+}
+
+export interface AccountTokenTotals {
+  totalAmount: string;
+  total: string;
+  withdrawn: string;
+  vested: string;
+  withdrawable: string;
+}
+
+export interface AccountDirectionSummary {
+  count: number;
+  byToken: Record<string, AccountTokenTotals>;
+}
+
+export async function getAccountSummary(
+  address: string,
+  now: bigint,
+): Promise<{ incoming: AccountDirectionSummary; outgoing: AccountDirectionSummary }> {
+  return measureRepositoryCall("getAccountSummary", async () => {
+    const rows = await withQueryTimeout(prisma.$queryRaw<Array<{
+      direction: "incoming" | "outgoing";
+      token: string;
+      count: bigint;
+      totalAmount: Prisma.Decimal;
+      withdrawn: Prisma.Decimal;
+      vested: Prisma.Decimal;
+      withdrawable: Prisma.Decimal;
+    }>>`
+      WITH matched AS (
+        SELECT 'incoming'::text AS direction, "token", "totalAmount", "withdrawn", "startTime", "endTime", "cliffTime"
+        FROM "Stream" WHERE "recipient" = ${address}
+        UNION ALL
+        SELECT 'outgoing'::text AS direction, "token", "totalAmount", "withdrawn", "startTime", "endTime", "cliffTime"
+        FROM "Stream" WHERE "sender" = ${address}
+      ), evaluated AS (
+        SELECT direction, "token", "totalAmount", "withdrawn",
+          CASE
+            WHEN ${now} < "cliffTime" OR ${now} < "startTime" THEN 0::numeric
+            WHEN ${now} >= "endTime" THEN "totalAmount"
+            ELSE trunc("totalAmount" * (${now} - "startTime")::numeric / ("endTime" - "startTime")::numeric)
+          END AS vested
+        FROM matched
+      )
+      SELECT direction, "token", COUNT(*) AS count,
+        SUM("totalAmount") AS "totalAmount",
+        SUM("withdrawn") AS withdrawn,
+        SUM(vested) AS vested,
+        SUM(GREATEST(vested - "withdrawn", 0)) AS withdrawable
+      FROM evaluated GROUP BY direction, "token"
+    `);
+
+    const empty = (): AccountDirectionSummary => ({ count: 0, byToken: {} });
+    const summary = { incoming: empty(), outgoing: empty() };
+    for (const row of rows) {
+      const totalAmount = row.totalAmount.toString();
+      summary[row.direction].count += Number(row.count);
+      summary[row.direction].byToken[row.token] = {
+        totalAmount,
+        total: totalAmount,
+        withdrawn: row.withdrawn.toString(),
+        vested: row.vested.toString(),
+        withdrawable: row.withdrawable.toString(),
+      };
+    }
+    return summary;
   });
 }
 
