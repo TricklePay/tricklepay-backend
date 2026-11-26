@@ -2,11 +2,13 @@
 FROM node:22-alpine AS build
 WORKDIR /app
 COPY package*.json ./
-# npm ci runs the postinstall hook (prisma generate), which needs the schema,
-# so copy it before installing. Copying only prisma/ keeps the dependency
-# layer cached across source-only changes.
+# Install without running dependency lifecycle scripts, then generate the
+# Prisma client explicitly. Generation needs the schema, so copy it first.
+# Copying only prisma/ keeps the dependency layer cached across source-only
+# changes.
 COPY prisma ./prisma
-RUN npm ci
+RUN npm ci --ignore-scripts
+RUN npx prisma generate
 COPY . .
 RUN npm run build
 

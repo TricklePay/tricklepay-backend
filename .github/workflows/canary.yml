@@ -36,7 +36,10 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
 
-      - run: npm ci
+      - run: npm ci --ignore-scripts
+
+      - name: Generate Prisma client
+        run: npx prisma generate
 
       - name: List the updates being tested
         run: |

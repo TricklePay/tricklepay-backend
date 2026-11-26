@@ -35,7 +35,8 @@ jobs:
       - name: Generate PR OpenAPI Document
         working-directory: pr
         run: |
-          npm ci
+          npm ci --ignore-scripts
+          npx prisma generate
           npm run export:openapi ../pr-openapi.json
 
       - name: Checkout base branch (main)
@@ -52,7 +53,8 @@ jobs:
       - name: Generate Base OpenAPI Document
         working-directory: base
         run: |
-          npm ci
+          npm ci --ignore-scripts
+          npx prisma generate
           if grep -q '"export:openapi"' package.json; then
             npm run export:openapi ../base-openapi.json
           else
