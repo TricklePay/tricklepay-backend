@@ -1407,7 +1407,7 @@ current template — copy it and fill in the required values.
 | `RATE_LIMIT_ALLOWLIST` | No | - | Client addresses that bypass the rate limiter entirely (never counted, never sent a `429`). Comma-separated list of IPv4/IPv6 addresses or IPv4 CIDR blocks, e.g. `10.0.0.5,10.0.1.0/24,::1`; whitespace around entries is ignored. IPv6 CIDR blocks are not supported, and an invalid entry or a prefix outside `0`–`32` fails startup. Matched against the resolved client address, so behind a proxy it only works together with `TRUSTED_PROXIES`. Unset or empty exempts no one. See [docs/rate-limiting.md](docs/rate-limiting.md). |
 | `TRUSTED_PROXIES` | No | - | Comma-separated list of trusted reverse-proxy addresses or IPv4 CIDR blocks. Forwarded headers are ignored when unset. |
 | `READINESS_RETRY_AFTER_SECONDS` | No | `5` | Seconds advertised in the `Retry-After` header when `GET /ready` returns 503, so orchestrators and load balancers know when to probe again. |
-| `READY_MAX_STALENESS_MS` | No | `0` | Maximum age in milliseconds of the indexer position before `GET /ready` returns 503 with `indexer position is stale`. `0` disables the staleness check. |
+| `READY_MAX_STALENESS_MS` | No | `0` | Maximum age in milliseconds of the indexer position before `GET /ready` returns 503 with `indexer position is stale`. When positive, also controls the threshold for the `X-Data-Stale` header on data routes. `0` disables both checks. |
 | `INDEXER_POLL_INTERVAL_MS` | No | `5000` | Milliseconds between polls of the chain. |
 | `INDEXER_BACKOFF_MAX_MS` | No | `60000` | Maximum poll retry delay (ms) on RPC failures. |
 | `INDEXER_START_LEDGER` | No | `0` | Ledger to begin indexing from. `0` starts at the chain's latest ledger. |
@@ -1529,7 +1529,7 @@ is preserved.
 
 **One origin only:** the setting does not accept a comma-separated list, a wildcard, or a regular expression. If you need to allow several origins, put a reverse proxy in front of the service and handle the CORS logic there.
 
-**What browsers can read:** when an origin is allowed, `@fastify/cors` sets `Access-Control-Allow-Origin` to the matched origin. No additional headers are explicitly exposed, so browsers can access only the [CORS-safelisted response headers](https://developer.mozilla.org/en-US/docs/Glossary/CORS-safelisted_response_header) (`Cache-Control`, `Content-Language`, `Content-Length`, `Content-Type`, `Expires`, `Last-Modified`, `Pragma`). Custom headers such as `ETag`, `x-request-id`, and `X-Indexer-Lag-Ledgers` are **not** exposed by default and cannot be read from browser JavaScript.
+**What browsers can read:** when an origin is allowed, `@fastify/cors` sets `Access-Control-Allow-Origin` to the matched origin. Custom response headers `X-Indexer-Lag-Ledgers` and `X-Data-Stale` are explicitly exposed through `Access-Control-Expose-Headers`, so browser JavaScript can read them. Other custom headers such as `ETag` and `x-request-id` are **not** exposed and cannot be read from browser JavaScript. The [CORS-safelisted response headers](https://developer.mozilla.org/en-US/docs/Glossary/CORS-safelisted_response_header) (`Cache-Control`, `Content-Language`, `Content-Length`, `Content-Type`, `Expires`, `Last-Modified`, `Pragma`) are always accessible.
 
 **Preflight requests:** browsers send an `OPTIONS` preflight before cross-origin requests that use non-simple methods or headers. The plugin answers these with `204 No Content` and the appropriate `Access-Control-Allow-Methods` and `Access-Control-Allow-Headers` headers.
 

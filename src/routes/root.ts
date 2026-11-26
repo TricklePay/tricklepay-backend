@@ -5,7 +5,14 @@ import type { FastifyInstance } from "fastify";
 
 import type { Config } from "../config.js";
 
-import { API_INDEX_SCHEMA_ID, apiIndexSchema } from "../schema.js";
+import {
+  API_INDEX_SCHEMA_ID,
+  apiIndexSchema,
+  rateLimitedResponseSchema,
+  RATE_LIMITED_RESPONSE_SCHEMA_ID,
+  serverErrorResponseSchema,
+  SERVER_ERROR_RESPONSE_SCHEMA_ID,
+} from "../schema.js";
 
 const DESCRIPTIONS: Record<string, string> = {
   "GET /": "API index",
@@ -34,13 +41,15 @@ const FALLBACK_ENDPOINTS = Object.entries(DESCRIPTIONS).map(([key, description])
 export function rootRoutes(config: Config) {
   return async (app: FastifyInstance): Promise<void> => {
     if (!app.getSchema(API_INDEX_SCHEMA_ID)) app.addSchema(apiIndexSchema);
+    if (!app.getSchema(RATE_LIMITED_RESPONSE_SCHEMA_ID)) app.addSchema(rateLimitedResponseSchema);
+    if (!app.getSchema(SERVER_ERROR_RESPONSE_SCHEMA_ID)) app.addSchema(serverErrorResponseSchema);
     if (!app.hasDecorator("apiRoutes")) {
       app.decorate("apiRoutes", [] as Array<{ method: string; url: string; schema?: { hide?: boolean } }>);
       app.addHook("onRoute", (route) => {
         app.apiRoutes.push({ method: route.method as string, url: route.url, schema: route.schema as { hide?: boolean } | undefined });
       });
     }
-    app.get("/", { schema: { response: { 200: { $ref: API_INDEX_SCHEMA_ID } } } }, async (request) => {
+    app.get("/", { schema: { response: { 200: { $ref: API_INDEX_SCHEMA_ID }, 429: { $ref: RATE_LIMITED_RESPONSE_SCHEMA_ID }, 500: { $ref: SERVER_ERROR_RESPONSE_SCHEMA_ID } } } }, async (request) => {
       // Determine if we're on the /v1 prefix by checking the path
       const isV1 = request.routeOptions.url?.startsWith("/v1") ?? false;
       const prefix = isV1 ? "/v1" : "";

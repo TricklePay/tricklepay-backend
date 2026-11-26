@@ -11,6 +11,7 @@
 
 import type { FastifyRequest, FastifyReply } from "fastify";
 import { errorCodeForStatus } from "./error-redaction.js";
+import { sendError } from "./lib/response.js";
 
 export type RouteGroup = "detail" | "list" | "summary" | "default";
 
@@ -129,15 +130,11 @@ export function createRateLimiterHook(config: RateLimiterConfig) {
     // Check if limit is exceeded
     if (window.requests >= limits.max) {
       const retryAfter = Math.max(1, Math.ceil((window.resetAt - now) / 1000));
-      return reply
-        .header("Retry-After", String(retryAfter))
-        .status(429)
-        .send({
-          code: errorCodeForStatus(429),
-          error: "rate limit exceeded",
-          group,
-          requestId: request.id,
-        });
+      void reply.header("Retry-After", String(retryAfter));
+      sendError(reply, request, 429, errorCodeForStatus(429), "rate limit exceeded", {
+        group,
+      });
+      return;
     }
 
     // Increment request count

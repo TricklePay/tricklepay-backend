@@ -244,7 +244,9 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
   }
 
   // Add X-Indexer-Lag-Ledgers header to read responses.
-  registerIndexerLagHook(app);
+  registerIndexerLagHook(app, {
+    stalenessThresholdMs: config?.readyMaxStalenessMs ?? DEFAULT_READY_MAX_STALENESS_MS,
+  });
 
   // Record every response against the Prometheus counters and histograms.
   await registerMetricsPlugin(app);
@@ -277,6 +279,7 @@ export async function buildServer(config?: Partial<Config>): Promise<FastifyInst
       "X-Request-Id",
       "Link",
       "X-Indexer-Lag-Ledgers",
+      "X-Data-Stale",
     ],
   });
 

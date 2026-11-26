@@ -9,7 +9,14 @@ import { getIndexerPosition } from "../repositories/indexer-state.js";
 
 import type { Poller } from "../indexer/poller.js";
 
-import { INDEXER_STATUS_SCHEMA_ID, indexerStatusSchema } from "../schema.js";
+import {
+  INDEXER_STATUS_SCHEMA_ID,
+  indexerStatusSchema,
+  rateLimitedResponseSchema,
+  RATE_LIMITED_RESPONSE_SCHEMA_ID,
+  serverErrorResponseSchema,
+  SERVER_ERROR_RESPONSE_SCHEMA_ID,
+} from "../schema.js";
 
 // The default TTL for the server-side status cache. Kept short (2 s) so
 
@@ -84,6 +91,8 @@ export async function statusRoutes(
   const cache = makeStatusCache(ttlMs);
 
   if (!app.getSchema(INDEXER_STATUS_SCHEMA_ID)) app.addSchema(indexerStatusSchema);
+  if (!app.getSchema(RATE_LIMITED_RESPONSE_SCHEMA_ID)) app.addSchema(rateLimitedResponseSchema);
+  if (!app.getSchema(SERVER_ERROR_RESPONSE_SCHEMA_ID)) app.addSchema(serverErrorResponseSchema);
 
   app.get(
     "/status",
@@ -95,6 +104,8 @@ export async function statusRoutes(
         tags: ["indexer"],
         response: {
           200: { $ref: INDEXER_STATUS_SCHEMA_ID },
+          429: { $ref: RATE_LIMITED_RESPONSE_SCHEMA_ID },
+          500: { $ref: SERVER_ERROR_RESPONSE_SCHEMA_ID },
         },
       },
     },

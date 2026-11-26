@@ -6,7 +6,12 @@ import { normalizeAddress } from "../../lib/address.js";
 import { sendError } from "../../lib/response.js";
 import { nowSeconds } from "../../lib/time.js";
 import { getAccountSummary } from "../../repositories/streams.js";
-import { ACCOUNT_SUMMARY_RESPONSE_SCHEMA_ID, ERROR_SCHEMA_ID } from "../../schema.js";
+import {
+  ACCOUNT_SUMMARY_RESPONSE_SCHEMA_ID,
+  ERROR_SCHEMA_ID,
+  RATE_LIMITED_RESPONSE_SCHEMA_ID,
+  SERVER_ERROR_RESPONSE_SCHEMA_ID,
+} from "../../schema.js";
 
 export function registerAccountSummaryRoute(app: FastifyInstance): void {
   app.get(
@@ -32,6 +37,8 @@ export function registerAccountSummaryRoute(app: FastifyInstance): void {
         response: {
           200: { $ref: ACCOUNT_SUMMARY_RESPONSE_SCHEMA_ID },
           400: { $ref: ERROR_SCHEMA_ID },
+          429: { $ref: RATE_LIMITED_RESPONSE_SCHEMA_ID },
+          500: { $ref: SERVER_ERROR_RESPONSE_SCHEMA_ID },
         },
       },
     },

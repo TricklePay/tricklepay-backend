@@ -4,7 +4,35 @@ Every API failure returned by the TricklePay backend includes a stable, machine-
 
 ## Response Shape
 
-Error responses are returned as a JSON object with the following structure:
+Error responses support both the legacy JSON format and RFC 9457 problem details. The format returned depends on the client's `Accept` header:
+
+### RFC 9457 Problem Details (`application/problem+json`)
+
+When the client sends `Accept: application/problem+json`, the response is returned with `Content-Type: application/problem+json` and follows RFC 9457:
+
+```json
+{
+  "type": "https://api.tricklepay.example/errors/not_found",
+  "title": "Not Found",
+  "status": 404,
+  "detail": "Route GET /missing-path not found",
+  "code": "NOT_FOUND",
+  "error": "Route GET /missing-path not found",
+  "requestId": "client-trace-42"
+}
+```
+
+- `type`: A URI identifying the error type.
+- `title`: A short summary of the error type.
+- `status`: The HTTP status code.
+- `detail`: A human-readable error message.
+- `code`, `error`, `requestId`: The existing field names, kept as top-level RFC 9457 extension members for backward compatibility.
+
+Route-specific extras such as the rate-limit `group` are also top-level extension members.
+
+### Legacy Format (application/json)
+
+When the client does not send `Accept: application/problem+json`, the response uses the legacy format:
 
 ```json
 {
@@ -29,6 +57,7 @@ The table below lists every HTTP status code the service can return and the `cod
 | `413` | `REQUEST_ERROR` | The request body exceeds the configured `BODY_LIMIT` (default 1 MiB). |
 | `429` | `RATE_LIMITED` | The client has exceeded the configured request rate limit. The response includes a `Retry-After` header with the number of seconds until the window resets. Clients should back off and retry after that interval. |
 | `500` | `INTERNAL_SERVER_ERROR` | An unexpected server-side error. The original error is logged internally with the request ID; the client receives a safe, redacted message. |
+| `503` | `SERVICE_UNAVAILABLE` | The backing database is unavailable. The response includes `Retry-After: 30`. |
 
 ### Example: 400 Validation Error
 
