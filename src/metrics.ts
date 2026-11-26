@@ -299,6 +299,12 @@ export const indexerPollSuccess = new Counter(
   "Total successful indexer poll iterations.",
 );
 
+/** RPC pages whose cursor moved behind the saved position. */
+export const indexerCursorRegressions = new Counter(
+  "tricklepay_indexer_cursor_regressions_total",
+  "Total RPC pages rejected for a regressed cursor.",
+);
+
 /** Unix timestamp (seconds) of the last successful poll. 0 before the first. */
 export const indexerPollLastSuccess = new Gauge(
   "tricklepay_indexer_poll_last_success_timestamp_seconds",

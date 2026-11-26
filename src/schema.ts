@@ -506,11 +506,15 @@ export const indexerStatusSchema = {
   properties: {
     indexer: {
       type: "object",
-      required: ["initialized", "startLedger", "lastLedger", "cursor", "updatedAt", "consecutiveFailures", "nextPollAt"],
+      required: ["initialized", "running", "startLedger", "lastLedger", "cursor", "updatedAt", "consecutiveFailures", "nextPollAt"],
       properties: {
         initialized: {
           type: "boolean",
           description: "False until the indexer completes its first poll.",
+        },
+        running: {
+          type: "boolean",
+          description: "False while indexer startup is retrying or after it stops.",
         },
         startLedger: {
           type: "integer",
